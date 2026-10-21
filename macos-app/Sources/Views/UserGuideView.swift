@@ -27,13 +27,14 @@ public struct UserGuideView: View {
             .background(Color(red: 0.1, green: 0.1, blue: 0.12))
             
             // Picker
-            Picker("", selection: $selectedTab) {
-                Text("Keyboard Shortcuts").tag(0)
-                Text("Dead Key '^°' Guide").tag(1)
-                Text("RPN Stack Manual").tag(2)
-                Text("Examples").tag(3)
+            Picker("Guide Selection", selection: $selectedTab) {
+                Text("Keyboard Shortcuts").tag(0 as Int)
+                Text("Dead Key '^°' Guide").tag(1 as Int)
+                Text("RPN Stack Manual").tag(2 as Int)
+                Text("Examples").tag(3 as Int)
             }
             .pickerStyle(SegmentedPickerStyle())
+            .labelsHidden()
             .padding(.horizontal)
             .padding(.vertical, 8)
             

@@ -58,7 +58,7 @@ public struct CalculatorView: View {
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.gray)
                         
-                        Toggle("", isOn: Binding(
+                        Toggle("Power Switch", isOn: Binding<Bool>(
                             get: { engine.powerOn },
                             set: { _ in
                                 AudioPlayer.shared.playSwitchSound()
