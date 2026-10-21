@@ -38,7 +38,7 @@ export default function App() {
         e.preventDefault();
         dispatch({ type: 'CL_X' });
         triggerKeyHighlight('clx');
-      } else if (key === 'Escape') {
+      } else if (key === 'Escape' || key === 'Delete') {
         e.preventDefault();
         dispatch({ type: 'CLR' });
         triggerKeyHighlight('clr');
@@ -58,15 +58,37 @@ export default function App() {
         e.preventDefault();
         dispatch({ type: 'BINARY_OP', payload: '/' });
         triggerKeyHighlight('div');
-      } else if (key === '^') {
+      } else if (key === '^' || key === 'Dead' || e.code === 'Backquote' || key.toLowerCase() === 'y' || key === '**') {
+        // European layout '^°' produces key === 'Dead' or code === 'Backquote'.
+        // Also support '^', 'y' (for x^y), and '**'.
         e.preventDefault();
         dispatch({ type: 'BINARY_OP', payload: 'pow' });
         triggerKeyHighlight('pow');
-      } else if (key.toLowerCase() === 'r') {
+      } else if (key.toLowerCase() === 'v') {
+        e.preventDefault();
+        dispatch({ type: 'UNARY_OP', payload: 'sqrt' });
+        triggerKeyHighlight('sqrt');
+      } else if (key.toLowerCase() === 'g') {
+        e.preventDefault();
+        dispatch({ type: 'UNARY_OP', payload: 'log' });
+        triggerKeyHighlight('log');
+      } else if (key.toLowerCase() === 'h') {
+        e.preventDefault();
+        dispatch({ type: 'UNARY_OP', payload: 'ln' });
+        triggerKeyHighlight('ln');
+      } else if (key.toLowerCase() === 'd') {
+        e.preventDefault();
+        dispatch({ type: 'UNARY_OP', payload: 'exp' });
+        triggerKeyHighlight('exp');
+      } else if (key.toLowerCase() === 'u') {
+        e.preventDefault();
+        dispatch({ type: 'UNARY_OP', payload: 'inv' });
+        triggerKeyHighlight('inv');
+      } else if (key.toLowerCase() === 'r' || key.toLowerCase() === 'q') {
         e.preventDefault();
         dispatch({ type: 'ROLL_DOWN' });
         triggerKeyHighlight('roll');
-      } else if (key.toLowerCase() === 'x') {
+      } else if (key.toLowerCase() === 'x' || key.toLowerCase() === 'w') {
         e.preventDefault();
         dispatch({ type: 'SWAP' });
         triggerKeyHighlight('swap');
@@ -82,7 +104,7 @@ export default function App() {
         e.preventDefault();
         dispatch({ type: 'UNARY_OP', payload: 'tan' });
         triggerKeyHighlight('tan');
-      } else if (key.toLowerCase() === 'a') {
+      } else if (key.toLowerCase() === 'a' || key.toLowerCase() === 'i') {
         e.preventDefault();
         dispatch({ type: 'ARC_TOGGLE' });
         triggerKeyHighlight('arc');
@@ -90,7 +112,7 @@ export default function App() {
         e.preventDefault();
         dispatch({ type: 'STO' });
         triggerKeyHighlight('sto');
-      } else if (key.toLowerCase() === 'l') {
+      } else if (key.toLowerCase() === 'l' || key.toLowerCase() === 'k') {
         e.preventDefault();
         dispatch({ type: 'RCL' });
         triggerKeyHighlight('rcl');
@@ -102,7 +124,7 @@ export default function App() {
         e.preventDefault();
         dispatch({ type: 'PI' });
         triggerKeyHighlight('pi');
-      } else if (key.toLowerCase() === 'n') {
+      } else if (key.toLowerCase() === 'n' || key === '~') {
         e.preventDefault();
         dispatch({ type: 'CH_S' });
         triggerKeyHighlight('chs');
@@ -141,7 +163,7 @@ export default function App() {
               onClick={() => setIsKeyGuideOpen(true)}
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 transition-colors flex items-center space-x-1.5"
             >
-              <span>Shortcuts Guide</span>
+              <span>User Guide & Shortcuts</span>
             </button>
             <button
               onClick={() => dispatch({ type: 'CLR' })}

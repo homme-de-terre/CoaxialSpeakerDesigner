@@ -105,7 +105,7 @@ export default function HP35Calculator({ state, dispatch, activePressedKey, onOp
           <button
             onClick={onOpenKeyGuide}
             className="text-slate-900 hover:text-black transition-colors"
-            title="Keyboard Shortcuts Map"
+            title="User Guide & Keyboard Shortcuts"
           >
             <HelpCircle size={16} />
           </button>
