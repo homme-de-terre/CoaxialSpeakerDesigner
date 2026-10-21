@@ -1,11 +1,10 @@
 import SwiftUI
 
 public struct UserGuideView: View {
-    @Binding var isPresented: Bool
-    @State private var selectedTab: Int = 0
+    @ObservedObject var engine: RPNEngine
     
-    public init(isPresented: Binding<Bool>) {
-        self._isPresented = isPresented
+    public init(engine: RPNEngine) {
+        self.engine = engine
     }
     
     public var body: some View {
@@ -17,7 +16,7 @@ public struct UserGuideView: View {
                 Text("HP-35 macOS User Manual & Shortcuts")
                     .font(.system(size: 14, weight: .bold))
                 Spacer()
-                Button(action: { isPresented = false }) {
+                Button(action: { engine.showUserGuide = false }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.gray)
                 }
@@ -28,10 +27,10 @@ public struct UserGuideView: View {
             
             // Native Custom Segmented Control (100% Type Safe & Version Independent)
             HStack(spacing: 4) {
-                GuideTabButton(title: "Shortcuts", index: 0, selectedTab: $selectedTab)
-                GuideTabButton(title: "Dead Key '^°'", index: 1, selectedTab: $selectedTab)
-                GuideTabButton(title: "RPN Manual", index: 2, selectedTab: $selectedTab)
-                GuideTabButton(title: "Examples", index: 3, selectedTab: $selectedTab)
+                GuideTabButton(title: "Shortcuts", index: 0, engine: engine)
+                GuideTabButton(title: "Dead Key '^°'", index: 1, engine: engine)
+                GuideTabButton(title: "RPN Manual", index: 2, engine: engine)
+                GuideTabButton(title: "Examples", index: 3, engine: engine)
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -39,11 +38,11 @@ public struct UserGuideView: View {
             // Content
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if selectedTab == 0 {
+                    if engine.selectedGuideTab == 0 {
                         ShortcutsTabView()
-                    } else if selectedTab == 1 {
+                    } else if engine.selectedGuideTab == 1 {
                         DeadKeyGuideTabView()
-                    } else if selectedTab == 2 {
+                    } else if engine.selectedGuideTab == 2 {
                         RPNManualTabView()
                     } else {
                         ExamplesTabView()
@@ -61,21 +60,21 @@ public struct UserGuideView: View {
 struct GuideTabButton: View {
     let title: String
     let index: Int
-    @Binding var selectedTab: Int
+    @ObservedObject var engine: RPNEngine
     
     var body: some View {
-        Button(action: { selectedTab = index }) {
+        Button(action: { engine.selectedGuideTab = index }) {
             Text(title)
-                .font(.system(size: 11, weight: selectedTab == index ? .bold : .medium))
+                .font(.system(size: 11, weight: engine.selectedGuideTab == index ? .bold : .medium))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
-                .background(selectedTab == index ? Color.orange.opacity(0.3) : Color.white.opacity(0.08))
-                .foregroundColor(selectedTab == index ? .orange : .gray)
+                .background(engine.selectedGuideTab == index ? Color.orange.opacity(0.3) : Color.white.opacity(0.08))
+                .foregroundColor(engine.selectedGuideTab == index ? .orange : .gray)
                 .cornerRadius(6)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(selectedTab == index ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
+                        .stroke(engine.selectedGuideTab == index ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
                 )
         }
         .buttonStyle(PlainButtonStyle())

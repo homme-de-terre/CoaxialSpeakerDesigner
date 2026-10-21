@@ -2,9 +2,7 @@ import SwiftUI
 
 public struct CalculatorView: View {
     @StateObject private var engine = RPNEngine()
-    @State private var keyboardMonitor = KeyboardMonitor()
-    @State private var activeKeyPressed: String = ""
-    @State private var showUserGuide: Bool = false
+    @StateObject private var monitorHolder = KeyboardMonitorHolder()
     
     public init() {}
     
@@ -36,7 +34,7 @@ public struct CalculatorView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     
-                    Button(action: { showUserGuide = true }) {
+                    Button(action: { engine.showUserGuide = true }) {
                         Image(systemName: "questionmark.circle.fill")
                             .font(.system(size: 13))
                             .foregroundColor(.black)
@@ -100,7 +98,7 @@ public struct CalculatorView: View {
                 SevenSegmentLEDView(engine: engine)
                 
                 // Keypad Grid
-                KeypadView(engine: engine, activeKeyPressed: activeKeyPressed)
+                KeypadView(engine: engine, activeKeyPressed: engine.activeKeyPressed)
             }
             .padding(16)
             .frame(width: 320)
@@ -117,15 +115,23 @@ public struct CalculatorView: View {
         .padding(20)
         .background(Color(red: 0.08, green: 0.09, blue: 0.11))
         .onAppear {
-            keyboardMonitor.startMonitoring(engine: engine) { keyId in
-                self.activeKeyPressed = keyId
+            monitorHolder.monitor.startMonitoring(engine: engine) { keyId in
+                engine.activeKeyPressed = keyId
             }
         }
         .onDisappear {
-            keyboardMonitor.stopMonitoring()
+            monitorHolder.monitor.stopMonitoring()
         }
-        .sheet(isPresented: $showUserGuide) {
-            UserGuideView(isPresented: $showUserGuide)
+        .sheet(isPresented: Binding<Bool>(
+            get: { engine.showUserGuide },
+            set: { engine.showUserGuide = $0 }
+        )) {
+            UserGuideView(engine: engine)
         }
     }
+}
+
+public class KeyboardMonitorHolder: ObservableObject {
+    public let monitor = KeyboardMonitor()
+    public init() {}
 }

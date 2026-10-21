@@ -45,6 +45,11 @@ public class RPNEngine: ObservableObject {
     
     @Published public var history: [HistoryItem] = []
     
+    // UI State Properties (eliminates @State macro reliance for compiler compatibility)
+    @Published public var activeKeyPressed: String = ""
+    @Published public var showUserGuide: Bool = false
+    @Published public var selectedGuideTab: Int = 0
+    
     public init() {}
     
     // MARK: - Display Formatting
