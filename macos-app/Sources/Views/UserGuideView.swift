@@ -26,15 +26,13 @@ public struct UserGuideView: View {
             .padding()
             .background(Color(red: 0.1, green: 0.1, blue: 0.12))
             
-            // Picker
-            Picker("Guide Selection", selection: $selectedTab) {
-                Text("Keyboard Shortcuts").tag(0 as Int)
-                Text("Dead Key '^°' Guide").tag(1 as Int)
-                Text("RPN Stack Manual").tag(2 as Int)
-                Text("Examples").tag(3 as Int)
+            // Native Custom Segmented Control (100% Type Safe & Version Independent)
+            HStack(spacing: 4) {
+                GuideTabButton(title: "Shortcuts", index: 0, selectedTab: $selectedTab)
+                GuideTabButton(title: "Dead Key '^°'", index: 1, selectedTab: $selectedTab)
+                GuideTabButton(title: "RPN Manual", index: 2, selectedTab: $selectedTab)
+                GuideTabButton(title: "Examples", index: 3, selectedTab: $selectedTab)
             }
-            .pickerStyle(SegmentedPickerStyle())
-            .labelsHidden()
             .padding(.horizontal)
             .padding(.vertical, 8)
             
@@ -57,6 +55,30 @@ public struct UserGuideView: View {
         .frame(width: 520, height: 420)
         .background(Color(red: 0.14, green: 0.15, blue: 0.18))
         .foregroundColor(.white)
+    }
+}
+
+struct GuideTabButton: View {
+    let title: String
+    let index: Int
+    @Binding var selectedTab: Int
+    
+    var body: some View {
+        Button(action: { selectedTab = index }) {
+            Text(title)
+                .font(.system(size: 11, weight: selectedTab == index ? .bold : .medium))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
+                .background(selectedTab == index ? Color.orange.opacity(0.3) : Color.white.opacity(0.08))
+                .foregroundColor(selectedTab == index ? .orange : .gray)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(selectedTab == index ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
