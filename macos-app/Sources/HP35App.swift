@@ -5,9 +5,7 @@ struct HP35App: App {
     var body: some Scene {
         WindowGroup {
             CalculatorView()
-                .navigationTitle("HP-35 RPN Scientific Calculator Simulator")
+                .frame(minWidth: 680, minHeight: 520)
         }
-        .windowStyle(HiddenTitleBarWindowStyle())
-        .windowResizability(.contentSize)
     }
 }
