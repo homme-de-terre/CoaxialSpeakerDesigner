@@ -41,19 +41,19 @@ public enum StuffingLevel: String, CaseIterable, Identifiable, Codable, Sendable
 
 /// Parameters and computed physics metrics for a closed/sealed loudspeaker enclosure.
 public struct SealedCabinet: Codable, Sendable {
-    public var alignment: AlignmentType = .targetF3
+    public var alignment: AlignmentType = .butterworth
     public var targetF3: Double = 55.0   // Target lower -3 dB cutoff frequency (Hz)
     public var targetQtc: Double = 0.707 // Target total system Q (Qtc)
-    public var stuffing: StuffingLevel = .medium
+    public var stuffing: StuffingLevel = .none
     public var enclosureLossQb: Double = 7.0 // Enclosure absorption loss Q (typically 5.0 - 10.0, default 7.0)
     public var isManualVolumeOverride: Bool = false
     public var manualNetVolumeLiters: Double = 25.0
 
     public init(
-        alignment: AlignmentType = .targetF3,
+        alignment: AlignmentType = .butterworth,
         targetF3: Double = 55.0,
         targetQtc: Double = 0.7071,
-        stuffing: StuffingLevel = .medium,
+        stuffing: StuffingLevel = .none,
         enclosureLossQb: Double = 7.0,
         isManualVolumeOverride: Bool = false,
         manualNetVolumeLiters: Double = 25.0

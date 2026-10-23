@@ -96,7 +96,7 @@ export default function App() {
   const [alignment, setAlignment] = useState('butterworth'); // 'butterworth' | 'bessel' | 'critical' | 'custom' | 'targetF3'
   const [targetF3, setTargetF3] = useState(58.0);
   const [customQtc, setCustomQtc] = useState(0.707);
-  const [stuffingGain, setStuffingGain] = useState(1.18); // 1.00 (Unfilled), 1.10 (Light), 1.18 (Medium), 1.25 (Heavy)
+  const [stuffingGain, setStuffingGain] = useState(1.00); // 1.00 (Unfilled / Standard Vb), 1.10 (Light), 1.18 (Medium), 1.25 (Heavy)
   const [qb, setQb] = useState(7.0);
   const [manualVbOverride, setManualVbOverride] = useState(false);
   const [manualVbLiters, setManualVbLiters] = useState(25.0);
