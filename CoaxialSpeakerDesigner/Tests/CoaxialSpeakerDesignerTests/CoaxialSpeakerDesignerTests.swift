@@ -108,4 +108,45 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertEqual(ts.le, 0.75, accuracy: 0.05)
         XCTAssertEqual(ts.spl, 91.0, accuracy: 0.1)
     }
+
+    func testBCDatasheetTableParser() {
+        let parser = DatasheetParser()
+        let bcSampleText = """
+        15CXN88
+        100.0 dB
+        106.0 dB
+        40 Hz
+        5.0 Ω
+        0.26
+        10.3
+        0.25
+        178.0 dm3
+        855.0 cm2
+        8.5 mm
+        1.05 mH
+        PARAMETERS
+        Resonance Frequency
+        Re
+        Qes
+        Qms
+        Qts
+        Vas
+        Sd
+        Xmax
+        Le
+        """
+
+        let ts = parser.parseTSFromText(bcSampleText)
+        XCTAssertEqual(ts.fs, 40.0, accuracy: 0.1)
+        XCTAssertEqual(ts.qes, 0.26, accuracy: 0.01)
+        XCTAssertEqual(ts.qms, 10.3, accuracy: 0.1)
+        XCTAssertEqual(ts.qts, 0.25, accuracy: 0.01)
+        XCTAssertEqual(ts.vas, 178.0, accuracy: 0.1)
+        XCTAssertEqual(ts.re, 5.0, accuracy: 0.1)
+        XCTAssertEqual(ts.le, 1.05, accuracy: 0.05)
+        XCTAssertEqual(ts.spl, 100.0, accuracy: 0.1)
+
+        let tw = parser.parseTweeterFromText(bcSampleText)
+        XCTAssertEqual(tw.spl, 106.0, accuracy: 0.1)
+    }
 }

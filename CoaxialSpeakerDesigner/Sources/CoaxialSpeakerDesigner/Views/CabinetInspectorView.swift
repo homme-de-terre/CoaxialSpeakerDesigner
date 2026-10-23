@@ -166,24 +166,36 @@ public struct CabinetInspectorView: View {
                         ]
 
                         ForEach(targets, id: \.0) { target in
-                            let ratio = target.1 / max(viewModel.driver.wooferTS.qts, 0.01)
-                            let a = max(pow(ratio, 2) - 1.0, 0.05)
-                            let acVb = viewModel.driver.wooferTS.vas / a
-                            let physVb = acVb / viewModel.cabinet.stuffing.volumeGainFactor
-                            let physFt = physVb / 28.3168
-                            let f_c = viewModel.driver.wooferTS.fs * sqrt(1.0 + a)
-                            let k_val = 1.0 - (1.0 / (2.0 * pow(target.1, 2)))
-                            let f3_val = f_c * sqrt(k_val + sqrt(pow(k_val, 2) + 1.0))
+                            if target.1 <= viewModel.driver.wooferTS.qts {
+                                GridRow {
+                                    Text(target.0).bold().foregroundColor(.secondary)
+                                    Text(String(format: "%.3f", target.1))
+                                    Text("N/A (Qtc ≤ Qts)").italic().foregroundColor(.secondary)
+                                    Text("-").foregroundColor(.secondary)
+                                    Text("-").foregroundColor(.secondary)
+                                    Text("-").foregroundColor(.secondary)
+                                }
+                                .font(.caption)
+                            } else {
+                                let ratio = target.1 / max(viewModel.driver.wooferTS.qts, 0.01)
+                                let a = pow(ratio, 2) - 1.0
+                                let acVb = viewModel.driver.wooferTS.vas / a
+                                let physVb = acVb / viewModel.cabinet.stuffing.volumeGainFactor
+                                let physFt = physVb / 28.3168
+                                let f_c = viewModel.driver.wooferTS.fs * sqrt(1.0 + a)
+                                let k_val = 1.0 - (1.0 / (2.0 * pow(target.1, 2)))
+                                let f3_val = f_c * sqrt(k_val + sqrt(pow(k_val, 2) + 1.0))
 
-                            GridRow {
-                                Text(target.0).bold().foregroundColor(.blue)
-                                Text(String(format: "%.3f", target.1))
-                                Text(String(format: "%.2f L", physVb)).bold()
-                                Text(String(format: "%.2f ft³", physFt))
-                                Text(String(format: "%.1f Hz", f_c))
-                                Text(String(format: "%.1f Hz", f3_val)).bold().foregroundColor(.green)
+                                GridRow {
+                                    Text(target.0).bold().foregroundColor(.blue)
+                                    Text(String(format: "%.3f", target.1))
+                                    Text(String(format: "%.2f L", physVb)).bold()
+                                    Text(String(format: "%.2f ft³", physFt))
+                                    Text(String(format: "%.1f Hz", f_c))
+                                    Text(String(format: "%.1f Hz", f3_val)).bold().foregroundColor(.green)
+                                }
+                                .font(.caption)
                             }
-                            .font(.caption)
                         }
                     }
                     .padding(6)

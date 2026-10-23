@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { parseDatasheetFromURL } from './utils/datasheetParser';
 import { 
   Speaker, Volume2, Shield, Settings, Sliders, Cpu, FileText, Download, 
   Link, Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap
@@ -92,9 +93,10 @@ export default function App() {
   });
 
   // Sealed Cabinet State
-  const [alignment, setAlignment] = useState('butterworth'); // 'butterworth' | 'bessel' | 'critical' | 'custom'
+  const [alignment, setAlignment] = useState('butterworth'); // 'butterworth' | 'bessel' | 'critical' | 'custom' | 'targetF3'
   const [targetF3, setTargetF3] = useState(58.0);
   const [customQtc, setCustomQtc] = useState(0.707);
+  const [stuffingGain, setStuffingGain] = useState(1.18); // 1.00 (Unfilled), 1.10 (Light), 1.18 (Medium), 1.25 (Heavy)
   const [qb, setQb] = useState(7.0);
   const [manualVbOverride, setManualVbOverride] = useState(false);
   const [manualVbLiters, setManualVbLiters] = useState(25.0);
@@ -121,39 +123,56 @@ export default function App() {
 
   // --- Sealed Cabinet Computations ---
   const cabinetCalculations = useMemo(() => {
+    // Determine effective Qts
+    const effectiveQts = (ts.qts && ts.qts > 0)
+      ? ts.qts
+      : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35);
+
     let alpha = 1.0;
+    let warningMsg = "";
+
     if (manualVbOverride) {
-      const acousticVb = manualVbLiters * 1.18;
+      const acousticVb = manualVbLiters * stuffingGain;
       alpha = ts.vas / Math.max(acousticVb, 0.1);
     } else if (alignment === 'targetF3') {
       const r = Math.pow(targetF3 / Math.max(ts.fs, 1.0), 2);
-      const q2 = Math.pow(ts.qts, 2);
+      const q2 = Math.pow(effectiveQts, 2);
       const term = 2.0 * r * r + (r / Math.max(q2, 1e-4));
       const x = Math.sqrt(term) - r;
-      alpha = Math.max(x - 1.0, 0.05);
+      alpha = x - 1.0;
+
+      if (alpha <= 0) {
+        alpha = 0.05;
+        warningMsg = `Target f3 (${targetF3} Hz) is below the physical cutoff limit for a sealed box with this woofer (Fs=${ts.fs} Hz, Qts=${effectiveQts.toFixed(3)}). Box volume would be infinite.`;
+      }
     } else {
       let activeQtc = 0.7071;
       if (alignment === 'bessel') activeQtc = 0.5774;
       else if (alignment === 'critical') activeQtc = 0.500;
       else if (alignment === 'custom') activeQtc = customQtc;
 
-      const ratio = activeQtc / Math.max(ts.qts, 0.01);
-      alpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
+      if (activeQtc <= effectiveQts) {
+        warningMsg = `Target Qtc (${activeQtc.toFixed(3)}) is <= driver Qts (${effectiveQts.toFixed(3)}). A sealed enclosure cannot reduce driver Q. Minimum possible Qtc is ${effectiveQts.toFixed(3)}.`;
+        alpha = 0.05;
+      } else {
+        const ratio = activeQtc / effectiveQts;
+        alpha = Math.pow(ratio, 2) - 1.0;
+      }
     }
 
-    const acousticVb = manualVbOverride ? (manualVbLiters * 1.18) : (ts.vas / alpha);
-    const physicalVb = manualVbOverride ? manualVbLiters : (acousticVb / 1.18);
+    const acousticVb = manualVbOverride ? (manualVbLiters * stuffingGain) : (ts.vas / alpha);
+    const physicalVb = manualVbOverride ? manualVbLiters : (acousticVb / stuffingGain);
     const physicalCuFt = physicalVb / 28.3168;
 
     const fc = ts.fs * Math.sqrt(1 + alpha);
-    const actualQtc = ts.qts * Math.sqrt(1 + alpha);
+    const actualQtc = effectiveQts * Math.sqrt(1 + alpha);
 
     const k = 1.0 - (1.0 / (2.0 * actualQtc * actualQtc));
     const factor = Math.sqrt(k + Math.sqrt(k * k + 1.0));
     const actualF3 = fc * factor;
 
-    return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3 };
-  }, [ts, alignment, targetF3, customQtc, manualVbOverride, manualVbLiters]);
+    return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, warningMsg };
+  }, [ts, alignment, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
 
   // --- Passive Crossover Component Calculations ---
   const crossoverComponents = useMemo(() => {
@@ -487,18 +506,39 @@ export default function App() {
   const handleFetchDatasheet = async () => {
     if (!datasheetURL) return;
     setIsLoadingURL(true);
-    setStatusMsg("");
+    setStatusMsg("Fetching and parsing PDF/datasheet...");
     try {
-      // Simulate parser response for demo URLs
-      setTimeout(() => {
-        setTs(prev => ({ ...prev, fs: 46.5, qes: 0.35, qms: 4.9, vas: 29.5, re: 6.1, le: 0.82 }));
-        setDriverName("Parsed Coaxial Driver (from URL)");
-        setIsLoadingURL(false);
-        setStatusMsg("Datasheet specs successfully extracted!");
-      }, 1000);
-    } catch (e) {
+      const parsed = await parseDatasheetFromURL(datasheetURL);
+      if (parsed && parsed.ts) {
+        const computedQts = parsed.ts.qts || (parsed.ts.qes && parsed.ts.qms ? (parsed.ts.qes * parsed.ts.qms) / (parsed.ts.qes + parsed.ts.qms) : prev.qts);
+        setTs(prev => ({
+          ...prev,
+          fs: parsed.ts.fs || prev.fs,
+          qes: parsed.ts.qes || prev.qes,
+          qms: parsed.ts.qms || prev.qms,
+          qts: parseFloat(computedQts.toFixed(3)),
+          vas: parsed.ts.vas || prev.vas,
+          re: parsed.ts.re || prev.re,
+          le: parsed.ts.le || prev.le,
+          spl: parsed.ts.spl || prev.spl,
+          xmax: parsed.ts.xmax || prev.xmax
+        }));
+        if (parsed.driverName) {
+          setDriverName(parsed.driverName);
+        }
+        if (parsed.tweeter) {
+          if (parsed.tweeter.spl) setTweeterSpl(parsed.tweeter.spl);
+          if (parsed.tweeter.re) setTweeterRe(parsed.tweeter.re);
+        }
+        setStatusMsg(`Successfully extracted specs for ${parsed.driverName || 'driver'}`);
+      } else {
+        setStatusMsg("Could not parse parameters from datasheet.");
+      }
+    } catch (err) {
+      console.error(err);
+      setStatusMsg("Failed to fetch or parse URL datasheet.");
+    } finally {
       setIsLoadingURL(false);
-      setStatusMsg("Failed to fetch URL datasheet.");
     }
   };
 
@@ -548,11 +588,23 @@ export default function App() {
             </div>
             <div>
               <label className="text-slate-400">Qes</label>
-              <input type="number" step="0.01" value={ts.qes} onChange={(e) => setTs({ ...ts, qes: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <input type="number" step="0.01" value={ts.qes} onChange={(e) => {
+                const newQes = +e.target.value;
+                const newQts = (newQes > 0 && ts.qms > 0) ? (newQes * ts.qms) / (newQes + ts.qms) : ts.qts;
+                setTs({ ...ts, qes: newQes, qts: parseFloat(newQts.toFixed(3)) });
+              }} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
             </div>
             <div>
               <label className="text-slate-400">Qms</label>
-              <input type="number" step="0.1" value={ts.qms} onChange={(e) => setTs({ ...ts, qms: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <input type="number" step="0.1" value={ts.qms} onChange={(e) => {
+                const newQms = +e.target.value;
+                const newQts = (ts.qes > 0 && newQms > 0) ? (ts.qes * newQms) / (ts.qes + newQms) : ts.qts;
+                setTs({ ...ts, qms: newQms, qts: parseFloat(newQts.toFixed(3)) });
+              }} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+            </div>
+            <div>
+              <label className="text-slate-400">Qts (Total Q)</label>
+              <input type="number" step="0.01" value={ts.qts} onChange={(e) => setTs({ ...ts, qts: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
             </div>
             <div>
               <label className="text-slate-400">Vas (Liters)</label>
@@ -628,6 +680,14 @@ export default function App() {
                   <span>Restart Simulation</span>
                 </button>
               </div>
+
+              {cabinetCalculations.warningMsg && (
+                <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 p-4 rounded-xl text-xs flex items-start space-x-2.5">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span>{cabinetCalculations.warningMsg}</span>
+                </div>
+              )}
+
               <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-4">
                 <div>
                   <label className="text-slate-400 text-xs">Alignment Design Mode</label>
@@ -639,26 +699,140 @@ export default function App() {
                     <option value="custom">Custom Qtc Alignment</option>
                   </select>
                 </div>
+
+                {alignment === 'targetF3' && (
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400">Target Lower -3 dB Cut-off Frequency (f3): {targetF3} Hz</label>
+                    <input type="range" min="30" max="120" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
+                  </div>
+                )}
+
+                {alignment === 'custom' && (
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400">Target Total System Q (Qtc): {customQtc.toFixed(3)}</label>
+                    <input type="range" min="0.35" max="1.20" step="0.01" value={customQtc} onChange={(e) => setCustomQtc(+e.target.value)} className="w-full mt-2" />
+                  </div>
+                )}
+
                 <div>
-                  <label className="text-xs font-semibold text-slate-400">Target Lower -3 dB Cut-off Frequency (f3): {targetF3} Hz</label>
-                  <input type="range" min="30" max="100" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
+                  <label className="text-slate-400 text-xs">Acoustic Polyfill Stuffing Level</label>
+                  <select value={stuffingGain} onChange={(e) => setStuffingGain(+e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-2 text-white mt-1 text-xs">
+                    <option value={1.00}>Unfilled / Minimal (0% Acoustic Volume Gain)</option>
+                    <option value={1.10}>Light Lining (+10% Acoustic Volume Gain)</option>
+                    <option value={1.18}>Medium Polyfill (+18% Acoustic Volume Gain)</option>
+                    <option value={1.25}>Heavy 100% Polyfill (+25% Acoustic Volume Gain)</option>
+                  </select>
                 </div>
-                <button
-                  onClick={() => setTargetF3(prev => prev)}
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs py-2.5 rounded-lg flex items-center justify-center space-x-2 transition mt-2"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>Restart Simulation with Updated Parameters</span>
-                </button>
-                <div className="grid grid-cols-2 gap-4 text-xs pt-4 border-t border-slate-800">
-                  <div className="bg-slate-800 p-4 rounded-lg">
-                    <p className="text-slate-400">Required Net Volume (Vb)</p>
-                    <p className="text-2xl font-bold text-blue-400 mt-1">{cabinetCalculations.vb.toFixed(2)} L</p>
+
+                <div className="pt-2">
+                  <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={manualVbOverride}
+                      onChange={(e) => setManualVbOverride(e.target.checked)}
+                      className="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span>Manual Enclosure Volume Override (Vb)</span>
+                  </label>
+                  {manualVbOverride && (
+                    <div className="mt-2 flex items-center space-x-3 text-xs">
+                      <span className="text-slate-400">Net Internal Volume:</span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={manualVbLiters}
+                        onChange={(e) => setManualVbLiters(+e.target.value)}
+                        className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-white w-24"
+                      />
+                      <span className="text-slate-400">Liters ({(manualVbLiters / 28.3168).toFixed(2)} ft³)</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs pt-4 border-t border-slate-800">
+                  <div className="bg-slate-800 p-3.5 rounded-lg">
+                    <p className="text-slate-400">Physical Box Volume (Vb)</p>
+                    <p className="text-xl font-bold text-blue-400 mt-1">{cabinetCalculations.vb.toFixed(2)} L</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{cabinetCalculations.physicalCuFt.toFixed(2)} cu ft</p>
                   </div>
-                  <div className="bg-slate-800 p-4 rounded-lg">
+                  <div className="bg-slate-800 p-3.5 rounded-lg">
+                    <p className="text-slate-400">Effective Acoustic Volume</p>
+                    <p className="text-xl font-bold text-teal-400 mt-1">{cabinetCalculations.acousticVb.toFixed(2)} L</p>
+                  </div>
+                  <div className="bg-slate-800 p-3.5 rounded-lg">
                     <p className="text-slate-400">System Resonance (Fc)</p>
-                    <p className="text-2xl font-bold text-emerald-400 mt-1">{cabinetCalculations.fc.toFixed(1)} Hz</p>
+                    <p className="text-xl font-bold text-emerald-400 mt-1">{cabinetCalculations.fc.toFixed(1)} Hz</p>
                   </div>
+                  <div className="bg-slate-800 p-3.5 rounded-lg">
+                    <p className="text-slate-400">Total System Q (Qtc)</p>
+                    <p className="text-xl font-bold text-purple-400 mt-1">{cabinetCalculations.actualQtc.toFixed(3)}</p>
+                  </div>
+                  <div className="bg-slate-800 p-3.5 rounded-lg">
+                    <p className="text-slate-400">Cutoff Frequency (f3)</p>
+                    <p className="text-xl font-bold text-green-400 mt-1">{cabinetCalculations.actualF3.toFixed(1)} Hz</p>
+                  </div>
+                  <div className="bg-slate-800 p-3.5 rounded-lg">
+                    <p className="text-slate-400">Compliance Ratio (α)</p>
+                    <p className="text-xl font-bold text-indigo-400 mt-1">{cabinetCalculations.alpha.toFixed(2)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sizing Comparison Matrix Table */}
+              <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 space-y-3 text-xs">
+                <h3 className="font-bold text-slate-200">Qtc vs Box Volume Sizing Matrix for {driverName}</h3>
+                <p className="text-slate-400 text-[11px]">Comparison of required physical box volumes and resulting cutoff frequencies across target alignments for driver Qts = {cabinetCalculations.effectiveQts.toFixed(3)}:</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-slate-300">
+                    <thead className="text-[11px] text-slate-400 uppercase border-b border-slate-800">
+                      <tr>
+                        <th className="py-2 px-2">Alignment</th>
+                        <th className="py-2 px-2">Target Qtc</th>
+                        <th className="py-2 px-2">Physical Vb (L)</th>
+                        <th className="py-2 px-2">Physical Vb (cu ft)</th>
+                        <th className="py-2 px-2">Resonance (Fc)</th>
+                        <th className="py-2 px-2">Cutoff (f3)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {[
+                        ["Butterworth B2", 0.7071],
+                        ["Bessel Alignment", 0.5774],
+                        ["Critically Damped", 0.5000],
+                        ["Extended Low Q", 0.4500],
+                        ["Large Box Low Q", 0.4000]
+                      ].map(([name, targetQ]) => {
+                        const effQ = cabinetCalculations.effectiveQts;
+                        if (targetQ <= effQ) {
+                          return (
+                            <tr key={name} className="text-slate-500">
+                              <td className="py-2 px-2 font-medium">{name}</td>
+                              <td className="py-2 px-2">{targetQ.toFixed(4)}</td>
+                              <td className="py-2 px-2 italic" colSpan="4">N/A (Target Qtc ≤ Driver Qts {effQ.toFixed(3)})</td>
+                            </tr>
+                          );
+                        }
+                        const ratio = targetQ / effQ;
+                        const a = Math.pow(ratio, 2) - 1.0;
+                        const acVb = ts.vas / a;
+                        const physVb = acVb / stuffingGain;
+                        const physFt = physVb / 28.3168;
+                        const f_c = ts.fs * Math.sqrt(1.0 + a);
+                        const k_val = 1.0 - (1.0 / (2.0 * Math.pow(targetQ, 2)));
+                        const f3_val = f_c * Math.sqrt(k_val + Math.sqrt(Math.pow(k_val, 2) + 1.0));
+                        return (
+                          <tr key={name}>
+                            <td className="py-2 px-2 font-medium text-blue-400">{name}</td>
+                            <td className="py-2 px-2">{targetQ.toFixed(4)}</td>
+                            <td className="py-2 px-2 font-semibold text-white">{physVb.toFixed(2)} L</td>
+                            <td className="py-2 px-2">{physFt.toFixed(2)} ft³</td>
+                            <td className="py-2 px-2">{f_c.toFixed(1)} Hz</td>
+                            <td className="py-2 px-2 font-bold text-green-400">{f3_val.toFixed(1)} Hz</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
