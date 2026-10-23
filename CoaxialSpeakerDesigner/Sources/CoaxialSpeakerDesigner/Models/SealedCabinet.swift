@@ -75,26 +75,32 @@ public struct SealedCabinet: Codable, Sendable {
             return ts.vas / max(acousticVb, 0.1)
         }
 
+        let effectiveQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
+
         switch alignment {
         case .targetF3:
             let r = pow(targetF3 / max(ts.fs, 1.0), 2)
-            let q2 = pow(ts.qts, 2)
-            guard q2 > 0 else { return 1.0 }
-            let term = 2.0 * r * r + (r / q2)
-            let x = sqrt(term) - r
-            let alpha = x - 1.0
+            let q2 = pow(effectiveQts, 2)
+            let disc = 2.0 * r * r - (r / max(q2, 1e-4))
+            if disc <= 0 {
+                return 0.05
+            }
+            let y = r + sqrt(disc)
+            let alpha = y - 1.0
             return max(alpha, 0.05)
 
         case .butterworth, .bessel, .criticallyDamped:
             if let targetQ = alignment.targetQtc {
-                let ratio = targetQ / max(ts.qts, 0.01)
+                if targetQ <= effectiveQts { return 0.05 }
+                let ratio = targetQ / max(effectiveQts, 0.01)
                 let alpha = pow(ratio, 2) - 1.0
                 return max(alpha, 0.05)
             }
             return 1.0
 
         case .customQtc:
-            let ratio = targetQtc / max(ts.qts, 0.01)
+            if targetQtc <= effectiveQts { return 0.05 }
+            let ratio = targetQtc / max(effectiveQts, 0.01)
             let alpha = pow(ratio, 2) - 1.0
             return max(alpha, 0.05)
         }
@@ -137,8 +143,9 @@ public struct SealedCabinet: Codable, Sendable {
 
     /// Effective Total System Q (Qtc) inside enclosure
     public func actualQtc(for ts: WooferTSParameters) -> Double {
+        let effectiveQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
         let alpha = computedComplianceAlpha(for: ts)
-        return ts.qts * sqrt(1.0 + alpha)
+        return effectiveQts * sqrt(1.0 + alpha)
     }
 
     /// Mechanical Q inside enclosure taking enclosure absorption loss Qb into account
@@ -154,9 +161,9 @@ public struct SealedCabinet: Codable, Sendable {
         let fc = computedResonanceFc(for: ts)
         let qtc = actualQtc(for: ts)
         guard qtc > 0 else { return fc }
-        let b = 1.0 - (1.0 / (2.0 * pow(qtc, 2)))
-        let factor = sqrt(b + sqrt(pow(b, 2) + 1.0))
-        return fc * factor
+        let b = (1.0 / pow(qtc, 2)) - 2.0
+        let x = (b + sqrt(b * b + 4.0)) / 2.0
+        return fc * sqrt(x)
     }
 
     /// Complex transfer function transformation H_cab(s) of the driver inside the closed cabinet at frequency f.

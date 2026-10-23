@@ -131,19 +131,26 @@ export default function App() {
     let alpha = 1.0;
     let warningMsg = "";
 
+    const minFeasibleF3 = ts.fs * (0.7071 / Math.max(effectiveQts, 0.01));
+
     if (manualVbOverride) {
       const acousticVb = manualVbLiters * stuffingGain;
       alpha = ts.vas / Math.max(acousticVb, 0.1);
     } else if (alignment === 'targetF3') {
       const r = Math.pow(targetF3 / Math.max(ts.fs, 1.0), 2);
       const q2 = Math.pow(effectiveQts, 2);
-      const term = 2.0 * r * r + (r / Math.max(q2, 1e-4));
-      const x = Math.sqrt(term) - r;
-      alpha = x - 1.0;
-
-      if (alpha <= 0) {
+      const disc = 2.0 * r * r - (r / Math.max(q2, 1e-4));
+      if (disc <= 0) {
         alpha = 0.05;
-        warningMsg = `Target f3 (${targetF3} Hz) is below the physical cutoff limit for a sealed box with this woofer (Fs=${ts.fs} Hz, Qts=${effectiveQts.toFixed(3)}). Box volume would be infinite.`;
+        warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. A sealed enclosure cannot passively extend bass below infinite baffle limits without active EQ.`;
+      } else {
+        const y = r + Math.sqrt(disc);
+        if (y <= 1.0) {
+          alpha = 0.05;
+          warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}.`;
+        } else {
+          alpha = y - 1.0;
+        }
       }
     } else {
       let activeQtc = 0.7071;
@@ -167,11 +174,12 @@ export default function App() {
     const fc = ts.fs * Math.sqrt(1 + alpha);
     const actualQtc = effectiveQts * Math.sqrt(1 + alpha);
 
-    const k = 1.0 - (1.0 / (2.0 * actualQtc * actualQtc));
-    const factor = Math.sqrt(k + Math.sqrt(k * k + 1.0));
-    const actualF3 = fc * factor;
+    // Exact f3 formula for 2nd order closed box
+    const B = (1.0 / Math.pow(actualQtc, 2)) - 2.0;
+    const x = (B + Math.sqrt(B * B + 4.0)) / 2.0;
+    const actualF3 = fc * Math.sqrt(x);
 
-    return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, warningMsg };
+    return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, minFeasibleF3, warningMsg };
   }, [ts, alignment, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
 
   // --- Passive Crossover Component Calculations ---
@@ -680,6 +688,16 @@ export default function App() {
                   <span>Restart Simulation</span>
                 </button>
               </div>
+
+              {cabinetCalculations.effectiveQts < 0.40 && (
+                <div className="bg-blue-500/10 border border-blue-500/30 text-blue-300 p-4 rounded-xl text-xs flex items-start space-x-2.5">
+                  <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-white mb-0.5">Pro-Audio Coaxial Driver Acoustic Note (Qts = {cabinetCalculations.effectiveQts.toFixed(3)})</p>
+                    <p className="text-slate-300 text-[11px] leading-relaxed">High-efficiency pro-audio coaxial woofers naturally have low Qts (0.25–0.35) and produce f3 ≈ 100–113 Hz in a sealed cabinet. For full-range bass extension down to 40–50 Hz, a Bass-Reflex (Vented) cabinet alignment or active EQ is standard.</p>
+                  </div>
+                </div>
+              )}
 
               {cabinetCalculations.warningMsg && (
                 <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 p-4 rounded-xl text-xs flex items-start space-x-2.5">
