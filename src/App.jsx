@@ -276,10 +276,9 @@ export default function App() {
       const f = Math.pow(10, logF);
       const w = 2.0 * Math.PI * f;
 
-      // 1. Raw Woofer Free-Air SPL & Sealed Cabinet Transfer Function
+      // 1. Raw Woofer Passband SPL & Sealed Cabinet Transfer Function H_cab(s)
       let pWooferRawSPL = ts.spl;
-      if (f < 60) pWooferRawSPL -= 12 * Math.log2(60 / f);
-      else if (f > 2200) pWooferRawSPL -= 0.003 * (f - 2200);
+      if (f > 2200) pWooferRawSPL -= 0.003 * (f - 2200);
 
       const pWooferRawLinear = Math.pow(10, pWooferRawSPL / 20.0);
       const pWooferRawComp = new Complex(pWooferRawLinear, 0);
