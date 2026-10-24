@@ -152,9 +152,10 @@ public class SchematicReportNSView: NSView {
         gridPath.lineWidth = 0.5
         gridPath.stroke()
 
-        // Wiring Rails & Dimensions
-        let ampX = boxRect.minX + 35.0
-        let speakerX = boxRect.maxX - 130.0
+        // Wiring Rails & Dimensions (No short-circuit: Positive Bus and Ground Bus are horizontally separated!)
+        let groundBusX = boxRect.minX + 45.0
+        let signalBusX = boxRect.minX + 75.0
+        let speakerX = boxRect.maxX - 120.0
 
         // Woofer Branch Levels (Top Tier)
         let wooferHeaderY = boxRect.minY + 12.0
@@ -169,37 +170,49 @@ public class SchematicReportNSView: NSView {
         let tweeterY = boxRect.minY + 190.0
         let tweeterGroundY = boxRect.minY + 252.0
 
-        // Terminals
-        drawTerminalDot(point: CGPoint(x: ampX, y: wooferY), text: "AMP (+)", isPositive: true)
-        drawTerminalDot(point: CGPoint(x: ampX, y: tweeterGroundY), text: "AMP (-)", isPositive: false)
+        // Input Terminals (Distinct horizontal positions: AMP (+) at signalBusX, AMP (-) at groundBusX)
+        drawTerminalDot(point: CGPoint(x: signalBusX, y: wooferY), text: "AMP (+)", isPositive: true)
+        drawTerminalDot(point: CGPoint(x: groundBusX, y: tweeterGroundY), text: "AMP (-)", isPositive: false)
 
-        // Vertical Input Bus (+) Line: from wooferY down to tweeterY
-        let vBus = NSBezierPath()
-        vBus.move(to: CGPoint(x: ampX, y: wooferY))
-        vBus.line(to: CGPoint(x: ampX, y: tweeterY))
+        // Vertical Input Positive Bus (+) Line at signalBusX: from wooferY down to tweeterY
+        // Cleanly jumps over the woofer ground wire at wooferGroundY with an arc (NO SHORT CIRCUIT!)
+        let vBusPlus = NSBezierPath()
+        vBusPlus.move(to: CGPoint(x: signalBusX, y: wooferY))
+        vBusPlus.line(to: CGPoint(x: signalBusX, y: wooferGroundY - 6.0))
+        vBusPlus.move(to: CGPoint(x: signalBusX, y: wooferGroundY + 6.0))
+        vBusPlus.line(to: CGPoint(x: signalBusX, y: tweeterY))
         NSColor.black.setStroke()
-        vBus.lineWidth = 1.5
-        vBus.stroke()
-        drawJunctionDot(point: CGPoint(x: ampX, y: tweeterY))
+        vBusPlus.lineWidth = 1.5
+        vBusPlus.stroke()
 
-        // Vertical Ground Bus (-) Line: from tweeterGroundY up to wooferGroundY
+        // Draw bridge jumper arc on the positive bus jumping over the woofer ground rail
+        let jumperArc = NSBezierPath()
+        jumperArc.appendArc(withCenter: CGPoint(x: signalBusX, y: wooferGroundY), radius: 6.0, startAngle: 90, endAngle: 270, clockwise: false)
+        jumperArc.lineWidth = 1.5
+        jumperArc.stroke()
+
+        drawJunctionDot(point: CGPoint(x: signalBusX, y: wooferY))
+        drawJunctionDot(point: CGPoint(x: signalBusX, y: tweeterY))
+
+        // Vertical Ground Bus (-) Line at groundBusX: from tweeterGroundY up to wooferGroundY
         let vGroundBus = NSBezierPath()
-        vGroundBus.move(to: CGPoint(x: ampX, y: tweeterGroundY))
-        vGroundBus.line(to: CGPoint(x: ampX, y: wooferGroundY))
+        vGroundBus.move(to: CGPoint(x: groundBusX, y: tweeterGroundY))
+        vGroundBus.line(to: CGPoint(x: groundBusX, y: wooferGroundY))
         vGroundBus.lineWidth = 1.5
         vGroundBus.stroke()
-        drawJunctionDot(point: CGPoint(x: ampX, y: wooferGroundY))
+        drawJunctionDot(point: CGPoint(x: groundBusX, y: tweeterGroundY))
+        drawJunctionDot(point: CGPoint(x: groundBusX, y: wooferGroundY))
 
-        // Woofer Dedicated Ground Rail
+        // Woofer Dedicated Ground Rail: from groundBusX to speakerX
         let wGroundRail = NSBezierPath()
-        wGroundRail.move(to: CGPoint(x: ampX, y: wooferGroundY))
+        wGroundRail.move(to: CGPoint(x: groundBusX, y: wooferGroundY))
         wGroundRail.line(to: CGPoint(x: speakerX, y: wooferGroundY))
         wGroundRail.lineWidth = 1.5
         wGroundRail.stroke()
 
-        // Tweeter Dedicated Ground Rail
+        // Tweeter Dedicated Ground Rail: from groundBusX to speakerX
         let tGroundRail = NSBezierPath()
-        tGroundRail.move(to: CGPoint(x: ampX, y: tweeterGroundY))
+        tGroundRail.move(to: CGPoint(x: groundBusX, y: tweeterGroundY))
         tGroundRail.line(to: CGPoint(x: speakerX, y: tweeterGroundY))
         tGroundRail.lineWidth = 1.5
         tGroundRail.stroke()
@@ -217,13 +230,13 @@ public class SchematicReportNSView: NSView {
         // ==========================================
         // WOOFER LOW-PASS BRANCH (TOP TIER)
         // ==========================================
-        var curX = ampX
+        var curX = signalBusX
         let wooferTagAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 9),
             .foregroundColor: NSColor(calibratedRed: 0.1, green: 0.35, blue: 0.75, alpha: 1.0)
         ]
         "WOOFER LOW-PASS (\(crossover.wooferOrder.rawValue))".draw(
-            at: CGPoint(x: ampX + 15, y: wooferHeaderY),
+            at: CGPoint(x: signalBusX + 15, y: wooferHeaderY),
             withAttributes: wooferTagAttrs
         )
 
@@ -295,13 +308,13 @@ public class SchematicReportNSView: NSView {
         // ==========================================
         // TWEETER HIGH-PASS BRANCH (BOTTOM TIER)
         // ==========================================
-        var tCurX = ampX
+        var tCurX = signalBusX
         let tweeterTagAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 9),
             .foregroundColor: NSColor(calibratedRed: 0.8, green: 0.15, blue: 0.15, alpha: 1.0)
         ]
         "TWEETER HIGH-PASS (\(crossover.tweeterOrder.rawValue))".draw(
-            at: CGPoint(x: ampX + 15, y: tweeterHeaderY),
+            at: CGPoint(x: signalBusX + 15, y: tweeterHeaderY),
             withAttributes: tweeterTagAttrs
         )
 
