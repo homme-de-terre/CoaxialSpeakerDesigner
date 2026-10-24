@@ -141,16 +141,14 @@ public struct CoaxialDriver: Codable, Sendable {
         return driver
     }
     
-    private static func generateSyntheticWooferCurve() -> [ResponseDataPoint] {
+    public static func generateSyntheticWooferCurve(ts: WooferTSParameters = WooferTSParameters()) -> [ResponseDataPoint] {
         var points: [ResponseDataPoint] = []
         let logFreqs = stride(from: log10(20.0), through: log10(20000.0), by: (log10(20000.0) - log10(20.0)) / 200.0)
+        let passbandSPL = ts.spl > 0 ? ts.spl : 89.0
         for logF in logFreqs {
             let f = pow(10.0, logF)
-            // Flat passband ~89 dB with high-frequency roll-off above 2500 Hz + cone breakup peak ~3500 Hz
-            var spl = 89.0
-            if f < 60.0 {
-                spl -= 12.0 * log2(60.0 / f) // Low frequency roll-off in free air
-            } else if f > 2000.0 {
+            var spl = passbandSPL
+            if f > 2000.0 {
                 let diff = f - 2000.0
                 spl -= 0.003 * diff
                 if f > 3000.0 && f < 4500.0 {
@@ -162,15 +160,16 @@ public struct CoaxialDriver: Codable, Sendable {
         return points
     }
     
-    private static func generateSyntheticTweeterCurve() -> [ResponseDataPoint] {
+    public static func generateSyntheticTweeterCurve(tw: TweeterParameters = TweeterParameters()) -> [ResponseDataPoint] {
         var points: [ResponseDataPoint] = []
         let logFreqs = stride(from: log10(20.0), through: log10(20000.0), by: (log10(20000.0) - log10(20.0)) / 200.0)
+        let passbandSPL = tw.spl > 0 ? tw.spl : 94.0
+        let xoverF = tw.fs > 0 ? tw.fs : 1500.0
         for logF in logFreqs {
             let f = pow(10.0, logF)
-            // Tweeter sensitivity ~94 dB, acoustic high-pass below 1200 Hz
-            var spl = 94.0
-            if f < 1500.0 {
-                spl -= 18.0 * log2(1500.0 / max(f, 10.0))
+            var spl = passbandSPL
+            if f < xoverF {
+                spl -= 18.0 * log2(xoverF / max(f, 10.0))
             } else if f > 15000.0 {
                 spl -= 0.0008 * (f - 15000.0) // Mild high frequency roll-off
             }

@@ -91,6 +91,13 @@ public class MainDesignerViewModel: ObservableObject {
                 self.driver.wooferTS = result.ts
                 self.driver.tweeter = result.tweeter
 
+                if self.wooferFRDText.isEmpty {
+                    self.driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: result.ts)
+                }
+                if self.tweeterFRDText.isEmpty {
+                    self.driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: result.tweeter)
+                }
+
                 self.isLoadingDatasheet = false
                 self.statusMessage = "Successfully parsed driver parameters from datasheet."
                 self.recalculateSimulation()

@@ -183,25 +183,16 @@ public struct SealedCabinet: Codable, Sendable {
     }
 
     /// Complex transfer function transformation H_cab(s) of the driver inside the closed cabinet at frequency f.
-    /// If transforming a measured free-air response curve, applies the enclosure ratio H_box(s) / H_free_air(s).
-    public func transferFunction(frequency f: Double, ts: WooferTSParameters, isSyntheticFlat: Bool = false) -> ComplexNumber {
+    public func transferFunction(frequency f: Double, ts: WooferTSParameters, isSyntheticFlat: Bool = true) -> ComplexNumber {
         let fc = computedResonanceFc(for: ts)
         let qtc = actualQtc(for: ts)
         let wc = 2.0 * .pi * fc
-        let ws = 2.0 * .pi * max(ts.fs, 1.0)
         let w = 2.0 * .pi * f
 
+        // Sealed box 2nd-order acoustic high-pass filter:
         // H_box(s) = s^2 / (s^2 + (wc/Qtc)*s + wc^2) where s = j*w
         let numBox = ComplexNumber(real: -pow(w, 2), imag: 0.0)
         let denomBox = ComplexNumber(real: pow(wc, 2) - pow(w, 2), imag: (w * wc) / max(qtc, 0.01))
-        let hBox = numBox / denomBox
-
-        if isSyntheticFlat {
-            return hBox
-        } else {
-            // Enclosure response transformation ratio H_box(s) / H_free_air(s)
-            let denomFreeAir = ComplexNumber(real: pow(ws, 2) - pow(w, 2), imag: (w * ws) / max(ts.qts, 0.01))
-            return denomFreeAir / denomBox
-        }
+        return numBox / denomBox
     }
 }
