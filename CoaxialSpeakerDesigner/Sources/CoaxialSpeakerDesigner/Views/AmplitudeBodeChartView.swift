@@ -9,27 +9,16 @@ public struct AmplitudeBodeChartView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Chart Legend & Controls Header
+            // Chart Legend Header
             HStack(spacing: 16) {
                 Text("Amplitude Frequency Response (dB SPL vs Log Hz)")
                     .font(.headline)
                 Spacer()
 
-                Toggle("Woofer", isOn: $viewModel.showWooferFinal)
-                    .toggleStyle(.checkbox)
-                    .foregroundColor(.blue)
-
-                Toggle("Tweeter", isOn: $viewModel.showTweeterFinal)
-                    .toggleStyle(.checkbox)
-                    .foregroundColor(.red)
-
-                Toggle("Total System", isOn: $viewModel.showTotalSystem)
-                    .toggleStyle(.checkbox)
-                    .foregroundColor(.green)
-
-                Toggle("Target Line", isOn: $viewModel.showTargetReference)
-                    .toggleStyle(.checkbox)
-                    .foregroundColor(.gray)
+                Text("Woofer (LP)").foregroundColor(.blue).font(.caption).bold()
+                Text("Tweeter (HP)").foregroundColor(.red).font(.caption).bold()
+                Text("Total System").foregroundColor(.green).font(.caption).bold()
+                Text("Target Line").foregroundColor(.gray).font(.caption).bold()
             }
             .padding(.horizontal)
 
@@ -121,28 +110,20 @@ public struct AmplitudeBodeChartView: View {
             context.stroke(path, with: .color(color), lineWidth: lineWidth)
         }
 
-        // Target Reference Line
-        if viewModel.showTargetReference {
-            let yRef = size.height * CGFloat(1.0 - (viewModel.targetReferenceSPL - minSPL) / (maxSPL - minSPL))
-            var refPath = Path()
-            refPath.move(to: CGPoint(x: 0, y: yRef))
-            refPath.addLine(to: CGPoint(x: size.width, y: yRef))
-            context.stroke(refPath, with: .color(.gray.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-        }
+        // Target Reference Line (Dashed)
+        let yRef = size.height * CGFloat(1.0 - (viewModel.targetReferenceSPL - minSPL) / (maxSPL - minSPL))
+        var refPath = Path()
+        refPath.move(to: CGPoint(x: 0, y: yRef))
+        refPath.addLine(to: CGPoint(x: size.width, y: yRef))
+        context.stroke(refPath, with: .color(.gray.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
-        // Woofer Final Curve
-        if viewModel.showWooferFinal {
-            drawSplCurve(keyPath: \.wooferFinalSPL, color: .blue, lineWidth: 2)
-        }
+        // Woofer Final Curve (Blue)
+        drawSplCurve(keyPath: \.wooferFinalSPL, color: .blue, lineWidth: 2)
 
-        // Tweeter Final Curve
-        if viewModel.showTweeterFinal {
-            drawSplCurve(keyPath: \.tweeterFinalSPL, color: .red, lineWidth: 2)
-        }
+        // Tweeter Final Curve (Red)
+        drawSplCurve(keyPath: \.tweeterFinalSPL, color: .red, lineWidth: 2)
 
-        // Total System Curve
-        if viewModel.showTotalSystem {
-            drawSplCurve(keyPath: \.totalSystemSPL, color: .green, lineWidth: 3)
-        }
+        // Total System Curve (Green)
+        drawSplCurve(keyPath: \.totalSystemSPL, color: .green, lineWidth: 3)
     }
 }

@@ -159,62 +159,63 @@ public struct CabinetInspectorView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-                        GridRow {
-                            Text("Target Alignment").bold()
-                            Text("Target Qtc").bold()
-                            Text("Physical Vb (Liters)").bold()
-                            Text("Physical Vb (cu ft)").bold()
-                            Text("Resonance (Fc)").bold()
-                            Text("Cutoff (f3)").bold()
-                        }
-                        .font(.caption)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
+                            GridRow {
+                                Text("Target Alignment").bold()
+                                Text("Target Qtc").bold()
+                                Text("Box Volume (Vb)").bold()
+                                Text("Resonance (Fc)").bold()
+                                Text("Cutoff (f3)").bold()
+                            }
+                            .font(.caption)
 
-                        Divider()
+                            Divider()
 
-                        let targets: [(String, Double)] = [
-                            ("Butterworth B2", 0.7071),
-                            ("Bessel Alignment", 0.5774),
-                            ("Critically Damped", 0.5000),
-                            ("Extended Low Q", 0.4500),
-                            ("Large Box Low Q", 0.4000)
-                        ]
+                            let targets: [(String, Double)] = [
+                                ("Butterworth B2", 0.7071),
+                                ("Bessel Alignment", 0.5774),
+                                ("Critically Damped", 0.5000),
+                                ("Extended Low Q", 0.4500),
+                                ("Large Box Low Q", 0.4000)
+                            ]
 
-                        ForEach(targets, id: \.0) { target in
-                            if target.1 <= viewModel.driver.wooferTS.qts {
-                                GridRow {
-                                    Text(target.0).bold().foregroundColor(.secondary)
-                                    Text(String(format: "%.3f", target.1))
-                                    Text("N/A (Qtc ≤ Qts)").italic().foregroundColor(.secondary)
-                                    Text("-").foregroundColor(.secondary)
-                                    Text("-").foregroundColor(.secondary)
-                                    Text("-").foregroundColor(.secondary)
+                            ForEach(targets, id: \.0) { target in
+                                if target.1 <= viewModel.driver.wooferTS.qts {
+                                    GridRow {
+                                        Text(target.0).bold().foregroundColor(.secondary)
+                                        Text(String(format: "%.3f", target.1))
+                                        Text("N/A (Qtc ≤ Qts)").italic().foregroundColor(.secondary)
+                                        Text("-").foregroundColor(.secondary)
+                                        Text("-").foregroundColor(.secondary)
+                                    }
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                } else {
+                                    let ratio = target.1 / max(viewModel.driver.wooferTS.qts, 0.01)
+                                    let a = pow(ratio, 2) - 1.0
+                                    let acVb = viewModel.driver.wooferTS.vas / a
+                                    let physVb = acVb / viewModel.cabinet.stuffing.volumeGainFactor
+                                    let physFt = physVb / 28.3168
+                                    let f_c = viewModel.driver.wooferTS.fs * sqrt(1.0 + a)
+                                    let b_val = (1.0 / pow(target.1, 2)) - 2.0
+                                    let x_val = (b_val + sqrt(pow(b_val, 2) + 4.0)) / 2.0
+                                    let f3_val = f_c * sqrt(x_val)
+
+                                    GridRow {
+                                        Text(target.0).bold().foregroundColor(.blue)
+                                        Text(String(format: "%.3f", target.1))
+                                        Text(String(format: "%.2f L (%.2f ft³)", physVb, physFt)).bold()
+                                        Text(String(format: "%.1f Hz", f_c))
+                                        Text(String(format: "%.1f Hz", f3_val)).bold().foregroundColor(.green)
+                                    }
+                                    .font(.caption)
+                                    .lineLimit(1)
                                 }
-                                .font(.caption)
-                            } else {
-                                let ratio = target.1 / max(viewModel.driver.wooferTS.qts, 0.01)
-                                let a = pow(ratio, 2) - 1.0
-                                let acVb = viewModel.driver.wooferTS.vas / a
-                                let physVb = acVb / viewModel.cabinet.stuffing.volumeGainFactor
-                                let physFt = physVb / 28.3168
-                                let f_c = viewModel.driver.wooferTS.fs * sqrt(1.0 + a)
-                                let b_val = (1.0 / pow(target.1, 2)) - 2.0
-                                let x_val = (b_val + sqrt(pow(b_val, 2) + 4.0)) / 2.0
-                                let f3_val = f_c * sqrt(x_val)
-
-                                GridRow {
-                                    Text(target.0).bold().foregroundColor(.blue)
-                                    Text(String(format: "%.3f", target.1))
-                                    Text(String(format: "%.2f L", physVb)).bold()
-                                    Text(String(format: "%.2f ft³", physFt))
-                                    Text(String(format: "%.1f Hz", f_c))
-                                    Text(String(format: "%.1f Hz", f3_val)).bold().foregroundColor(.green)
-                                }
-                                .font(.caption)
                             }
                         }
+                        .padding(6)
                     }
-                    .padding(6)
                 }
             }
         }
