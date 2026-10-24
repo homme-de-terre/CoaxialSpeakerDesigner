@@ -141,13 +141,15 @@ export default function App() {
       const q2 = Math.pow(effectiveQts, 2);
       const disc = 2.0 * r * r - (r / Math.max(q2, 1e-4));
       if (disc <= 0) {
-        alpha = 0.05;
-        warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. A sealed enclosure cannot passively extend bass below infinite baffle limits without active EQ.`;
+        const ratio = 0.70710678 / Math.max(effectiveQts, 0.01);
+        alpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
+        warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. Aligned to Butterworth B2 (Qtc = 0.7071). A sealed enclosure cannot passively extend bass below infinite baffle limits without active EQ.`;
       } else {
         const y = r + Math.sqrt(disc);
         if (y <= 1.0) {
-          alpha = 0.05;
-          warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}.`;
+          const ratio = 0.70710678 / Math.max(effectiveQts, 0.01);
+          alpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
+          warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. Aligned to Butterworth B2.`;
         } else {
           alpha = y - 1.0;
         }
@@ -720,7 +722,7 @@ export default function App() {
                 {alignment === 'targetF3' && (
                   <div>
                     <label className="text-xs font-semibold text-slate-400">Target Lower -3 dB Cut-off Frequency (f3): {targetF3} Hz</label>
-                    <input type="range" min="30" max="120" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
+                    <input type="range" min="30" max="200" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
                   </div>
                 )}
 
@@ -835,8 +837,9 @@ export default function App() {
                         const physVb = acVb / stuffingGain;
                         const physFt = physVb / 28.3168;
                         const f_c = ts.fs * Math.sqrt(1.0 + a);
-                        const k_val = 1.0 - (1.0 / (2.0 * Math.pow(targetQ, 2)));
-                        const f3_val = f_c * Math.sqrt(k_val + Math.sqrt(Math.pow(k_val, 2) + 1.0));
+                        const b_val = (1.0 / Math.pow(targetQ, 2)) - 2.0;
+                        const x_val = (b_val + Math.sqrt(b_val * b_val + 4.0)) / 2.0;
+                        const f3_val = f_c * Math.sqrt(x_val);
                         return (
                           <tr key={name}>
                             <td className="py-2 px-2 font-medium text-blue-400">{name}</td>

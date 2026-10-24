@@ -82,9 +82,8 @@ public struct SidebarView: View {
                     GridRow {
                         Text("Qts:")
                         Spacer()
-                        Text(String(format: "%.3f", viewModel.driver.wooferTS.qts))
-                            .bold()
-                            .foregroundColor(.secondary)
+                        TextField("Qts", value: $viewModel.driver.wooferTS.qts, format: .number)
+                            .frame(width: 70)
                     }
                     GridRow {
                         Text("Vas (Liters):")

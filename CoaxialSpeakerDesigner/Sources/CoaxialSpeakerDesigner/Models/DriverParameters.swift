@@ -18,8 +18,12 @@ public struct ResponseDataPoint: Identifiable, Codable, Sendable {
 /// Thiele-Small (T/S) parameters and specifications for the woofer section of a coaxial driver.
 public struct WooferTSParameters: Codable, Sendable {
     public var fs: Double   // Free air resonance frequency (Hz)
-    public var qes: Double  // Electrical Q
-    public var qms: Double  // Mechanical Q
+    public var qes: Double {
+        didSet { recalculateQts() }
+    }
+    public var qms: Double {
+        didSet { recalculateQts() }
+    }
     public var qts: Double  // Total Q
     public var vas: Double  // Equivalent compliance volume (Liters)
     public var re: Double   // DC Resistance (Ohms)
@@ -28,6 +32,12 @@ public struct WooferTSParameters: Codable, Sendable {
     public var xmax: Double // Max linear excursion (mm)
     public var spl: Double  // Nominal sensitivity (dB @ 2.83V / 1m)
     public var pe: Double   // Max continuous electrical power (Watts)
+
+    public mutating func recalculateQts() {
+        if qes > 0 && qms > 0 {
+            qts = (qes * qms) / (qes + qms)
+        }
+    }
 
     public init(
         fs: Double = 45.0,
@@ -45,7 +55,7 @@ public struct WooferTSParameters: Codable, Sendable {
         self.fs = fs
         self.qes = qes
         self.qms = qms
-        self.qts = qts
+        self.qts = (qes > 0 && qms > 0) ? (qes * qms) / (qes + qms) : qts
         self.vas = vas
         self.re = re
         self.le = le

@@ -83,9 +83,17 @@ public struct SealedCabinet: Codable, Sendable {
             let q2 = pow(effectiveQts, 2)
             let disc = 2.0 * r * r - (r / max(q2, 1e-4))
             if disc <= 0 {
-                return 0.05
+                // If requested f3 is below the physical limit for a closed box,
+                // fall back to Butterworth B2 (Qtc = 0.7071) which produces the lowest
+                // cutoff without resonance peaking, avoiding thousands of liters of box volume.
+                let ratio = 0.70710678 / max(effectiveQts, 0.01)
+                return max(pow(ratio, 2) - 1.0, 0.05)
             }
             let y = r + sqrt(disc)
+            if y <= 1.0 {
+                let ratio = 0.70710678 / max(effectiveQts, 0.01)
+                return max(pow(ratio, 2) - 1.0, 0.05)
+            }
             let alpha = y - 1.0
             return max(alpha, 0.05)
 

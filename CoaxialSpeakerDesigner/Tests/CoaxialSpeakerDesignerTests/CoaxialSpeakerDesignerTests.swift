@@ -20,18 +20,22 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
 
     func testSealedCabinetCalculations() {
         var ts = WooferTSParameters()
-        ts.fs = 45.0
-        ts.qts = 0.35
-        ts.vas = 30.0
+        ts.fs = 40.0
+        ts.qts = 0.25
+        ts.vas = 178.0
 
-        let cabinet = SealedCabinet(alignment: .butterworth, targetF3: 60.0)
+        let cabinet = SealedCabinet(alignment: .butterworth)
         let fc = cabinet.computedResonanceFc(for: ts)
         let alpha = cabinet.computedComplianceAlpha(for: ts)
         let vb = cabinet.computedVolumeLiters(for: ts)
+        let f3 = cabinet.actualF3(for: ts)
+        let qtc = cabinet.actualQtc(for: ts)
 
-        XCTAssertGreaterThan(fc, ts.fs)
-        XCTAssertGreaterThan(alpha, 0.0)
-        XCTAssertGreaterThan(vb, 0.0)
+        XCTAssertEqual(qtc, 0.7071, accuracy: 0.01)
+        XCTAssertEqual(fc, 113.14, accuracy: 0.5)
+        XCTAssertEqual(f3, 113.14, accuracy: 0.5)
+        XCTAssertEqual(alpha, 7.0, accuracy: 0.1)
+        XCTAssertEqual(vb, 25.43, accuracy: 0.5)
 
         // Transfer function at resonance frequency Fc should have magnitude ~ Qtc = 0.707
         let hFc = cabinet.transferFunction(frequency: fc, ts: ts)

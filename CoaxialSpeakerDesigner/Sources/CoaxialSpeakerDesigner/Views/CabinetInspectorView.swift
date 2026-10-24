@@ -30,6 +30,33 @@ public struct CabinetInspectorView: View {
 
             Divider()
 
+            let effQts = viewModel.driver.wooferTS.qts > 0 ? viewModel.driver.wooferTS.qts : (viewModel.driver.wooferTS.qes > 0 && viewModel.driver.wooferTS.qms > 0 ? (viewModel.driver.wooferTS.qes * viewModel.driver.wooferTS.qms) / (viewModel.driver.wooferTS.qes + viewModel.driver.wooferTS.qms) : 0.35)
+            let minF3 = viewModel.driver.wooferTS.fs * (0.70710678 / max(effQts, 0.01))
+
+            if viewModel.cabinet.alignment == .targetF3 && viewModel.cabinet.targetF3 < minF3 {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("Target f3 (\(Int(viewModel.cabinet.targetF3)) Hz) is below the physical closed-box limit (\(String(format: "%.1f", minF3)) Hz) for Qts = \(String(format: "%.3f", effQts)). Enclosure aligned to Butterworth B2 (Qtc = 0.707).")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.15))
+                .cornerRadius(8)
+            } else if viewModel.cabinet.alignment == .customQtc && viewModel.cabinet.targetQtc <= effQts {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("Target Qtc (\(String(format: "%.3f", viewModel.cabinet.targetQtc))) is ≤ driver Qts (\(String(format: "%.3f", effQts))). A sealed enclosure cannot reduce driver Q.")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.15))
+                .cornerRadius(8)
+            }
+
             GroupBox(label: Label("Cabinet Alignment & Parameters", systemImage: "slider.horizontal.3")) {
                 VStack(alignment: .leading, spacing: 14) {
                     Picker("Alignment Design Mode:", selection: $viewModel.cabinet.alignment) {
@@ -49,7 +76,7 @@ public struct CabinetInspectorView: View {
                                     .bold()
                                     .foregroundColor(.accentColor)
                             }
-                            Slider(value: $viewModel.cabinet.targetF3, in: 30.0...120.0, step: 1.0)
+                            Slider(value: $viewModel.cabinet.targetF3, in: 30.0...200.0, step: 1.0)
                         }
                     }
 
@@ -183,8 +210,9 @@ public struct CabinetInspectorView: View {
                                 let physVb = acVb / viewModel.cabinet.stuffing.volumeGainFactor
                                 let physFt = physVb / 28.3168
                                 let f_c = viewModel.driver.wooferTS.fs * sqrt(1.0 + a)
-                                let k_val = 1.0 - (1.0 / (2.0 * pow(target.1, 2)))
-                                let f3_val = f_c * sqrt(k_val + sqrt(pow(k_val, 2) + 1.0))
+                                let b_val = (1.0 / pow(target.1, 2)) - 2.0
+                                let x_val = (b_val + sqrt(pow(b_val, 2) + 4.0)) / 2.0
+                                let f3_val = f_c * sqrt(x_val)
 
                                 GridRow {
                                     Text(target.0).bold().foregroundColor(.blue)
