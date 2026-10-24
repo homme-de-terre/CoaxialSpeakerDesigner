@@ -124,19 +124,28 @@ public struct SealedCabinet: Codable, Sendable {
         }
         let baseAlpha = computedBaseAlignmentAlpha(for: ts)
         guard baseAlpha > 0 else { return 10.0 }
-        return ts.vas / baseAlpha
+        let acousticVb = ts.vas / baseAlpha
+        return acousticVb / stuffing.volumeGainFactor
     }
 
     /// Required Net Acoustic Volume Vb_acoustic (in Liters) including polyfill volume gain
     public func computedAcousticVolumeLiters(for ts: WooferTSParameters) -> Double {
-        return computedPhysicalVolumeLiters(for: ts) * stuffing.volumeGainFactor
+        if isManualVolumeOverride {
+            return manualNetVolumeLiters * stuffing.volumeGainFactor
+        }
+        let baseAlpha = computedBaseAlignmentAlpha(for: ts)
+        guard baseAlpha > 0 else { return 10.0 }
+        return ts.vas / baseAlpha
     }
 
-    /// Computed Compliance Ratio Alpha = Vas / Vb_acoustic inside the stuffed enclosure
+    /// Computed Compliance Ratio Alpha = Vas / Vb_acoustic inside the enclosure
     public func computedComplianceAlpha(for ts: WooferTSParameters) -> Double {
-        let acousticVb = computedAcousticVolumeLiters(for: ts)
-        guard acousticVb > 0 else { return 1.0 }
-        return ts.vas / acousticVb
+        if isManualVolumeOverride {
+            guard manualNetVolumeLiters > 0 else { return 1.0 }
+            let acousticVb = manualNetVolumeLiters * stuffing.volumeGainFactor
+            return ts.vas / max(acousticVb, 0.1)
+        }
+        return computedBaseAlignmentAlpha(for: ts)
     }
 
     /// Alias for physical volume in liters
@@ -163,13 +172,28 @@ public struct SealedCabinet: Codable, Sendable {
         return (qmsBox * qbVal) / (qmsBox + qbVal)
     }
 
-    /// Effective Total System Q (Qtc) inside enclosure including electrical and mechanical damping
+    /// Effective Total System Q (Qtc) inside enclosure
     public func actualQtc(for ts: WooferTSParameters) -> Double {
-        let alpha = computedComplianceAlpha(for: ts)
-        let effectiveQes = ts.qes > 0 ? ts.qes : 0.35
-        let qec = effectiveQes * sqrt(1.0 + alpha)
-        let qmc = actualQmc(for: ts)
-        return (qec * qmc) / (qec + qmc)
+        if isManualVolumeOverride {
+            let alpha = computedComplianceAlpha(for: ts)
+            let effectiveQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
+            return effectiveQts * sqrt(1.0 + alpha)
+        }
+
+        switch alignment {
+        case .butterworth:
+            return 0.7071
+        case .bessel:
+            return 0.5774
+        case .criticallyDamped:
+            return 0.5000
+        case .customQtc:
+            return targetQtc
+        case .targetF3:
+            let alpha = computedComplianceAlpha(for: ts)
+            let effectiveQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
+            return effectiveQts * sqrt(1.0 + alpha)
+        }
     }
 
     /// Actual lower -3dB cutoff frequency f3 (Hz) based on current configuration

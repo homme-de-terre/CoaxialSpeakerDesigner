@@ -25,8 +25,8 @@ public struct ImpedanceChartView: View {
                     drawLogGrid(context: context, size: size)
                     drawImpedanceCurves(context: context, size: size)
                 }
-                .id(viewModel.simulationPoints.first?.totalSystemSPL ?? 0)
             }
+            .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))
             .cornerRadius(8)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3), lineWidth: 1))

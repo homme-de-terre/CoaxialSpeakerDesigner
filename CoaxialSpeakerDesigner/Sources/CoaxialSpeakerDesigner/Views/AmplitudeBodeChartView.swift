@@ -39,8 +39,8 @@ public struct AmplitudeBodeChartView: View {
                     drawLogGrid(context: context, size: size)
                     drawCurves(context: context, size: size)
                 }
-                .id(viewModel.simulationPoints.first?.totalSystemSPL ?? 0)
             }
+            .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))
             .cornerRadius(8)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3), lineWidth: 1))
@@ -97,10 +97,29 @@ public struct AmplitudeBodeChartView: View {
 
         // Helper to compute Canvas CGPoint
         func pointToCanvas(freq: Double, spl: Double) -> CGPoint {
-            let clampedSPL = max(min(spl, maxSPL), minSPL)
-            let x = size.width * CGFloat((log10(freq) - logMin) / (logMax - logMin))
+            let safeSPL = spl.isFinite ? spl : minSPL
+            let clampedSPL = max(min(safeSPL, maxSPL), minSPL)
+            let safeF = (freq.isFinite && freq > 0) ? freq : minF
+            let x = size.width * CGFloat((log10(safeF) - logMin) / (logMax - logMin))
             let y = size.height * CGFloat(1.0 - (clampedSPL - minSPL) / (maxSPL - minSPL))
             return CGPoint(x: x, y: y)
+        }
+
+        func drawSplCurve(keyPath: KeyPath<SimulationPoint, Double>, color: Color, lineWidth: CGFloat) {
+            var path = Path()
+            var started = false
+            for p in points {
+                let spl = p[keyPath: keyPath]
+                guard spl.isFinite else { continue }
+                let pt = pointToCanvas(freq: p.frequency, spl: spl)
+                if !started {
+                    path.move(to: pt)
+                    started = true
+                } else {
+                    path.addLine(to: pt)
+                }
+            }
+            context.stroke(path, with: .color(color), lineWidth: lineWidth)
         }
 
         // Target Reference Line
@@ -114,32 +133,17 @@ public struct AmplitudeBodeChartView: View {
 
         // Woofer Final Curve
         if viewModel.showWooferFinal {
-            var path = Path()
-            path.move(to: pointToCanvas(freq: points[0].frequency, spl: points[0].wooferFinalSPL))
-            for p in points.dropFirst() {
-                path.addLine(to: pointToCanvas(freq: p.frequency, spl: p.wooferFinalSPL))
-            }
-            context.stroke(path, with: .color(.blue), lineWidth: 2)
+            drawSplCurve(keyPath: \.wooferFinalSPL, color: .blue, lineWidth: 2)
         }
 
         // Tweeter Final Curve
         if viewModel.showTweeterFinal {
-            var path = Path()
-            path.move(to: pointToCanvas(freq: points[0].frequency, spl: points[0].tweeterFinalSPL))
-            for p in points.dropFirst() {
-                path.addLine(to: pointToCanvas(freq: p.frequency, spl: p.tweeterFinalSPL))
-            }
-            context.stroke(path, with: .color(.red), lineWidth: 2)
+            drawSplCurve(keyPath: \.tweeterFinalSPL, color: .red, lineWidth: 2)
         }
 
         // Total System Curve
         if viewModel.showTotalSystem {
-            var path = Path()
-            path.move(to: pointToCanvas(freq: points[0].frequency, spl: points[0].totalSystemSPL))
-            for p in points.dropFirst() {
-                path.addLine(to: pointToCanvas(freq: p.frequency, spl: p.totalSystemSPL))
-            }
-            context.stroke(path, with: .color(.green), lineWidth: 3)
+            drawSplCurve(keyPath: \.totalSystemSPL, color: .green, lineWidth: 3)
         }
     }
 }

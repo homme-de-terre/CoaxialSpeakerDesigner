@@ -28,17 +28,28 @@ public enum HilbertTransform {
                 
                 // Weighting kernel W = ln |(f + f0) / (f - f0)|
                 let fAvg = sqrt(f1 * f2)
-                if abs(fAvg - f0) > 1e-4 {
-                    let ratio = abs((fAvg + f0) / (fAvg - f0))
-                    let kernel = log(ratio)
-                    phaseRad -= (1.0 / .pi) * slope * kernel * dLnF
+                let diff = abs(fAvg - f0)
+                if diff > 1e-4 {
+                    let ratio = (fAvg + f0) / diff
+                    if ratio > 1e-6 {
+                        let kernel = log(ratio)
+                        let term = (1.0 / .pi) * slope * kernel * dLnF
+                        if term.isFinite {
+                            phaseRad -= term
+                        }
+                    }
                 }
             }
             
             // Wrap phase to -180...180 range
             var phaseDeg = phaseRad * (180.0 / .pi)
-            while phaseDeg > 180.0 { phaseDeg -= 360.0 }
-            while phaseDeg < -180.0 { phaseDeg += 360.0 }
+            if !phaseDeg.isFinite {
+                phaseDeg = 0.0
+            } else {
+                phaseDeg = phaseDeg.truncatingRemainder(dividingBy: 360.0)
+                if phaseDeg > 180.0 { phaseDeg -= 360.0 }
+                if phaseDeg < -180.0 { phaseDeg += 360.0 }
+            }
             
             result[i].phase = phaseDeg
         }

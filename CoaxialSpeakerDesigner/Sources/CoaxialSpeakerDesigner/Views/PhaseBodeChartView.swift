@@ -26,8 +26,8 @@ public struct PhaseBodeChartView: View {
                     drawLogGrid(context: context, size: size)
                     drawPhaseCurves(context: context, size: size)
                 }
-                .id(viewModel.simulationPoints.first?.totalSystemSPL ?? 0)
             }
+            .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))
             .cornerRadius(8)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3), lineWidth: 1))
@@ -76,42 +76,53 @@ public struct PhaseBodeChartView: View {
         guard !points.isEmpty else { return }
 
         func phaseToCanvas(freq: Double, deg: Double) -> CGPoint {
-            let clampedDeg = max(min(deg, 180.0), -180.0)
-            let x = size.width * CGFloat((log10(freq) - logMin) / (logMax - logMin))
+            let safeDeg = deg.isFinite ? deg : 0.0
+            let clampedDeg = max(min(safeDeg, 180.0), -180.0)
+            let safeF = (freq.isFinite && freq > 0) ? freq : minF
+            let x = size.width * CGFloat((log10(safeF) - logMin) / (logMax - logMin))
             let y = size.height * CGFloat(1.0 - (clampedDeg - (-180.0)) / 360.0)
             return CGPoint(x: x, y: y)
         }
 
-        // Woofer Phase
-        var wPath = Path()
-        wPath.move(to: phaseToCanvas(freq: points[0].frequency, deg: points[0].wooferPhaseDeg))
-        for p in points.dropFirst() {
-            wPath.addLine(to: phaseToCanvas(freq: p.frequency, deg: p.wooferPhaseDeg))
+        func drawPhaseCurve(keyPath: KeyPath<SimulationPoint, Double>, color: Color, lineWidth: CGFloat = 1.5, isDashed: Bool = false) {
+            var path = Path()
+            var started = false
+            var prevDeg: Double = 0.0
+
+            for p in points {
+                let deg = p[keyPath: keyPath]
+                guard deg.isFinite else { continue }
+                let pt = phaseToCanvas(freq: p.frequency, deg: deg)
+
+                if !started {
+                    path.move(to: pt)
+                    started = true
+                } else if abs(deg - prevDeg) > 170.0 {
+                    // Phase wrap jump (-180 to +180 boundary). Break path to avoid vertical sawtooth line.
+                    path.move(to: pt)
+                } else {
+                    path.addLine(to: pt)
+                }
+                prevDeg = deg
+            }
+
+            if isDashed {
+                context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, dash: [4, 4]))
+            } else {
+                context.stroke(path, with: .color(color), lineWidth: lineWidth)
+            }
         }
-        context.stroke(wPath, with: .color(.blue.opacity(0.8)), lineWidth: 1.5)
+
+        // Woofer Phase
+        drawPhaseCurve(keyPath: \.wooferPhaseDeg, color: .blue.opacity(0.85), lineWidth: 1.5)
 
         // Tweeter Phase
-        var tPath = Path()
-        tPath.move(to: phaseToCanvas(freq: points[0].frequency, deg: points[0].tweeterPhaseDeg))
-        for p in points.dropFirst() {
-            tPath.addLine(to: phaseToCanvas(freq: p.frequency, deg: p.tweeterPhaseDeg))
-        }
-        context.stroke(tPath, with: .color(.red.opacity(0.8)), lineWidth: 1.5)
+        drawPhaseCurve(keyPath: \.tweeterPhaseDeg, color: .red.opacity(0.85), lineWidth: 1.5)
 
         // Inter-Driver Phase Difference Delta Phi
-        var dPath = Path()
-        dPath.move(to: phaseToCanvas(freq: points[0].frequency, deg: points[0].phaseDifferenceDeg))
-        for p in points.dropFirst() {
-            dPath.addLine(to: phaseToCanvas(freq: p.frequency, deg: p.phaseDifferenceDeg))
-        }
-        context.stroke(dPath, with: .color(.orange), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+        drawPhaseCurve(keyPath: \.phaseDifferenceDeg, color: .orange, lineWidth: 1.5, isDashed: true)
 
         // Total System Phase
-        var sysPath = Path()
-        sysPath.move(to: phaseToCanvas(freq: points[0].frequency, deg: points[0].totalSystemPhaseDeg))
-        for p in points.dropFirst() {
-            sysPath.addLine(to: phaseToCanvas(freq: p.frequency, deg: p.totalSystemPhaseDeg))
-        }
-        context.stroke(sysPath, with: .color(.green), lineWidth: 2.5)
+        drawPhaseCurve(keyPath: \.totalSystemPhaseDeg, color: .green, lineWidth: 2.5)
     }
 }

@@ -122,13 +122,10 @@ export default function App() {
 
   // --- Sealed Cabinet Computations ---
   const cabinetCalculations = useMemo(() => {
-    // Determine effective Qts, Qes, Qms
+    // Determine effective Qts
     const effectiveQts = (ts.qts && ts.qts > 0)
       ? ts.qts
       : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35);
-
-    const effectiveQes = ts.qes > 0 ? ts.qes : (effectiveQts * (ts.qms > 0 ? ts.qms : 4.5)) / Math.max((ts.qms > 0 ? ts.qms : 4.5) - effectiveQts, 0.01);
-    const effectiveQms = ts.qms > 0 ? ts.qms : 4.5;
 
     // Map stuffing gain to enclosure absorption loss Qb
     let qbVal = 30.0;
@@ -176,22 +173,27 @@ export default function App() {
       }
     }
 
-    // Physical Volume of the enclosure
-    const physicalVb = manualVbOverride ? manualVbLiters : (ts.vas / baseAlpha);
+    // Required acoustic volume Vb_acoustic and physical box volume Vb_physical
+    const acousticVb = manualVbOverride ? (manualVbLiters * stuffingGain) : (ts.vas / baseAlpha);
+    const physicalVb = manualVbOverride ? manualVbLiters : (acousticVb / stuffingGain);
     const physicalCuFt = physicalVb / 28.3168;
 
-    // Effective acoustic volume inside physical enclosure with polyfill stuffing
-    const acousticVb = physicalVb * stuffingGain;
-    const alpha = ts.vas / Math.max(acousticVb, 0.01);
+    const alpha = manualVbOverride ? (ts.vas / Math.max(acousticVb, 0.01)) : baseAlpha;
 
-    // System resonance Fc inside stuffed box
+    // System resonance Fc inside box
     const fc = ts.fs * Math.sqrt(1 + alpha);
 
-    // System Q factors taking stuffing absorption loss Qb into account
-    const qmsBox = effectiveQms * Math.sqrt(1 + alpha);
-    const qmc = (qmsBox * qbVal) / (qmsBox + qbVal);
-    const qec = effectiveQes * Math.sqrt(1 + alpha);
-    const actualQtc = (qec * qmc) / (qec + qmc);
+    // Target Qtc
+    let actualQtc = 0.7071;
+    if (manualVbOverride || alignment === 'targetF3') {
+      actualQtc = effectiveQts * Math.sqrt(1 + alpha);
+    } else if (alignment === 'bessel') {
+      actualQtc = 0.5774;
+    } else if (alignment === 'critical') {
+      actualQtc = 0.5000;
+    } else if (alignment === 'custom') {
+      actualQtc = customQtc;
+    }
 
     // Exact f3 formula for 2nd order closed box
     const B = (1.0 / Math.pow(actualQtc, 2)) - 2.0;
