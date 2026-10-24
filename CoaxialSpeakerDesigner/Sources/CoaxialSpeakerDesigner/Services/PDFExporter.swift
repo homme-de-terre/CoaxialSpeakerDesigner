@@ -170,17 +170,19 @@ public class SchematicReportNSView: NSView {
         let tweeterY = boxRect.minY + 190.0
         let tweeterGroundY = boxRect.minY + 252.0
 
-        // Input Terminals (Distinct horizontal positions: AMP (+) at signalBusX, AMP (-) at groundBusX)
-        drawTerminalDot(point: CGPoint(x: signalBusX, y: wooferY), text: "AMP (+)", isPositive: true)
-        drawTerminalDot(point: CGPoint(x: groundBusX, y: tweeterGroundY), text: "AMP (-)", isPositive: false)
+        // Input Terminals (Both AMP (+) and AMP (-) placed on the EXACT same Y-coordinate at the input level!)
+        let inputY = tweeterGroundY
+        drawInputBindingPost(point: CGPoint(x: signalBusX, y: inputY), text: "AMP (+)", isPositive: true)
+        drawInputBindingPost(point: CGPoint(x: groundBusX, y: inputY), text: "AMP (-)", isPositive: false)
 
-        // Vertical Input Positive Bus (+) Line at signalBusX: from wooferY down to tweeterY
-        // Cleanly jumps over the woofer ground wire at wooferGroundY with an arc (NO SHORT CIRCUIT!)
+        // Vertical Input Positive Bus (+) Line at signalBusX: rising UP from inputY through tweeterY to wooferY
+        // Cleanly jumps over the woofer ground rail at wooferGroundY with an arc (NO SHORT CIRCUIT!)
         let vBusPlus = NSBezierPath()
-        vBusPlus.move(to: CGPoint(x: signalBusX, y: wooferY))
-        vBusPlus.line(to: CGPoint(x: signalBusX, y: wooferGroundY - 6.0))
-        vBusPlus.move(to: CGPoint(x: signalBusX, y: wooferGroundY + 6.0))
+        vBusPlus.move(to: CGPoint(x: signalBusX, y: inputY))
         vBusPlus.line(to: CGPoint(x: signalBusX, y: tweeterY))
+        vBusPlus.line(to: CGPoint(x: signalBusX, y: wooferGroundY + 6.0))
+        vBusPlus.move(to: CGPoint(x: signalBusX, y: wooferGroundY - 6.0))
+        vBusPlus.line(to: CGPoint(x: signalBusX, y: wooferY))
         NSColor.black.setStroke()
         vBusPlus.lineWidth = 1.5
         vBusPlus.stroke()
@@ -194,13 +196,13 @@ public class SchematicReportNSView: NSView {
         drawJunctionDot(point: CGPoint(x: signalBusX, y: wooferY))
         drawJunctionDot(point: CGPoint(x: signalBusX, y: tweeterY))
 
-        // Vertical Ground Bus (-) Line at groundBusX: from tweeterGroundY up to wooferGroundY
+        // Vertical Ground Bus (-) Line at groundBusX: rising UP from inputY to wooferGroundY
         let vGroundBus = NSBezierPath()
-        vGroundBus.move(to: CGPoint(x: groundBusX, y: tweeterGroundY))
+        vGroundBus.move(to: CGPoint(x: groundBusX, y: inputY))
         vGroundBus.line(to: CGPoint(x: groundBusX, y: wooferGroundY))
         vGroundBus.lineWidth = 1.5
         vGroundBus.stroke()
-        drawJunctionDot(point: CGPoint(x: groundBusX, y: tweeterGroundY))
+        drawJunctionDot(point: CGPoint(x: groundBusX, y: inputY))
         drawJunctionDot(point: CGPoint(x: groundBusX, y: wooferGroundY))
 
         // Woofer Dedicated Ground Rail: from groundBusX to speakerX
@@ -476,6 +478,27 @@ public class SchematicReportNSView: NSView {
     }
 
     // MARK: - NSBezierPath Vector Drawing Helpers
+
+    private func drawInputBindingPost(point: CGPoint, text: String, isPositive: Bool) {
+        let r: CGFloat = 3.5
+        // Outer ring
+        let ring = NSBezierPath(ovalIn: CGRect(x: point.x - r - 1.5, y: point.y - r - 1.5, width: (r + 1.5)*2, height: (r + 1.5)*2))
+        (isPositive ? NSColor.systemRed : NSColor.black).setStroke()
+        ring.lineWidth = 1.0
+        ring.stroke()
+
+        // Inner solid dot
+        let p = NSBezierPath(ovalIn: CGRect(x: point.x - r, y: point.y - r, width: r*2, height: r*2))
+        (isPositive ? NSColor.systemRed : NSColor.black).setFill()
+        p.fill()
+
+        let attr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 8.5),
+            .foregroundColor: isPositive ? NSColor.systemRed : NSColor.black
+        ]
+        let textSize = text.size(withAttributes: attr)
+        text.draw(at: CGPoint(x: point.x - textSize.width / 2, y: point.y + 7), withAttributes: attr)
+    }
 
     private func drawTerminalDot(point: CGPoint, text: String, isPositive: Bool) {
         let r: CGFloat = 3.5
