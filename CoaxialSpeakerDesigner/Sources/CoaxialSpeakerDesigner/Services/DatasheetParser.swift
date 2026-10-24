@@ -45,23 +45,18 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         return result
     }
     
-    /// Asynchronously fetch datasheet content from URL and extract TS parameters & text.
-    public func fetchAndParseDatasheet(url: URL) async throws -> (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, rawText: String) {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 15.0
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", forHTTPHeaderField: "User-Agent")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-            throw NSError(domain: "DatasheetParser", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to download datasheet from provided URL."])
-        }
-        
+    /// Ingests and parses datasheet content directly from a local file URL.
+    public func parseDatasheet(from fileURL: URL) throws -> (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, rawText: String) {
+        let data = try Data(contentsOf: fileURL)
+        return parseDatasheetData(data, sourceURL: fileURL)
+    }
+
+    /// Parses datasheet content directly from raw Data (PDF or plain text).
+    public func parseDatasheetData(_ data: Data, sourceURL: URL) -> (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, rawText: String) {
         var rawText = ""
         
         #if canImport(PDFKit)
-        let isPDF = url.pathExtension.lowercased() == "pdf" ||
-                    (httpResponse.mimeType?.contains("pdf") ?? false) ||
+        let isPDF = sourceURL.pathExtension.lowercased() == "pdf" ||
                     (data.count >= 4 && data.prefix(4) == Data([0x25, 0x50, 0x44, 0x46]))
         
         if isPDF, let pdfDoc = PDFDocument(data: data) {
@@ -84,9 +79,24 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         // Extract parameters using regex patterns
         let ts = parseTSFromText(rawText)
         let tweeter = parseTweeterFromText(rawText)
-        let driverName = extractDriverName(rawText, url: url)
+        let driverName = extractDriverName(rawText, url: sourceURL)
         
         return (ts, tweeter, driverName, rawText)
+    }
+
+    /// Asynchronously fetch datasheet content from URL and extract TS parameters & text.
+    public func fetchAndParseDatasheet(url: URL) async throws -> (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, rawText: String) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15.0
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", forHTTPHeaderField: "User-Agent")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw NSError(domain: "DatasheetParser", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to download datasheet from provided URL."])
+        }
+        
+        return parseDatasheetData(data, sourceURL: url)
     }
     
     /// Extract Thiele-Small parameters from raw text using regex & table layout strategies.

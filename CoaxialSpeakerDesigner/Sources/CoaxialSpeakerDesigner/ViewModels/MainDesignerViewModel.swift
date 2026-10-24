@@ -85,29 +85,76 @@ public class MainDesignerViewModel: ObservableObject {
         Task {
             do {
                 let result = try await currentParser.fetchAndParseDatasheet(url: url)
-
-                self.driver.name = result.name
-                self.driver.datasheetURL = url.absoluteString
-                self.driver.wooferTS = result.ts
-                self.driver.tweeter = result.tweeter
-
-                if self.wooferFRDText.isEmpty {
-                    self.driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: result.ts)
+                await MainActor.run {
+                    self.applyParsedDatasheet(result: result, sourceName: url.lastPathComponent.isEmpty ? url.absoluteString : url.lastPathComponent)
                 }
-                if self.tweeterFRDText.isEmpty {
-                    self.driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: result.tweeter)
-                }
-                self.driver.wooferImpedanceCurve = CoaxialDriver.generateSyntheticWooferImpedance(ts: result.ts)
-                self.driver.tweeterImpedanceCurve = CoaxialDriver.generateSyntheticTweeterImpedance(tw: result.tweeter)
-
-                self.isLoadingDatasheet = false
-                self.statusMessage = "Successfully parsed driver parameters from datasheet."
-                self.recalculateSimulation()
             } catch {
-                self.isLoadingDatasheet = false
-                self.errorMessage = "Error downloading datasheet: \(error.localizedDescription)"
+                await MainActor.run {
+                    self.isLoadingDatasheet = false
+                    self.errorMessage = "Error downloading datasheet: \(error.localizedDescription)"
+                }
             }
         }
+    }
+
+    /// Ingests driver datasheet from a local file URL.
+    public func loadDatasheet(from fileURL: URL) {
+        self.isLoadingDatasheet = true
+        self.errorMessage = nil
+        self.statusMessage = "Reading local datasheet..."
+
+        let currentParser = DatasheetParser()
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let result = try currentParser.parseDatasheet(from: fileURL)
+                DispatchQueue.main.async {
+                    self.applyParsedDatasheet(result: result, sourceName: fileURL.lastPathComponent)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isLoadingDatasheet = false
+                    self.errorMessage = "Error reading local datasheet: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+#if canImport(AppKit)
+    /// Prompts user with native macOS Open Panel to select a local PDF datasheet.
+    public func chooseLocalDatasheetFile() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Select Loudspeaker Datasheet (PDF)"
+        openPanel.message = "Choose a PDF or text datasheet to import driver parameters"
+        openPanel.allowedContentTypes = [UTType.pdf, UTType.plainText]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+
+        if openPanel.runModal() == .OK, let url = openPanel.url {
+            self.loadDatasheet(from: url)
+        }
+    }
+#endif
+
+    /// Applies extracted datasheet parameters and synthesizes driver response curves.
+    private func applyParsedDatasheet(result: (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, rawText: String), sourceName: String) {
+        self.driver.name = result.name
+        self.driver.datasheetURL = sourceName
+        self.driver.wooferTS = result.ts
+        self.driver.tweeter = result.tweeter
+
+        if self.wooferFRDText.isEmpty {
+            self.driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: result.ts)
+        }
+        if self.tweeterFRDText.isEmpty {
+            self.driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: result.tweeter)
+        }
+        self.driver.wooferImpedanceCurve = CoaxialDriver.generateSyntheticWooferImpedance(ts: result.ts)
+        self.driver.tweeterImpedanceCurve = CoaxialDriver.generateSyntheticTweeterImpedance(tw: result.tweeter)
+
+        self.isLoadingDatasheet = false
+        self.statusMessage = "Successfully parsed driver parameters from \(sourceName)."
+        self.recalculateSimulation()
     }
 
     /// Ingest raw text as FRD data for Woofer acoustic curve.

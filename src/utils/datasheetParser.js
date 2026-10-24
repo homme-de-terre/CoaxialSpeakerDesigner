@@ -16,7 +16,7 @@ export function parseDatasheetText(text, url = '') {
 
   // 1. Extract Driver Name
   const namePatterns = [
-    /\b(\d{1,2}[A-Z]{2,4}\d{2,4}(?:-[0-9\+]+)?)\b/i,
+    /\b(\d{1,2}[A-Z]{2,4}\d{2,4}(?:-[0-9+]+)?)\b/i,
     /\b([A-Z0-9]{3,12}(?:\s+[A-Z0-9]+)?)\b/i
   ];
   for (const regex of namePatterns) {
@@ -198,6 +198,55 @@ export function parseDatasheetText(text, url = '') {
 }
 
 /**
+ * Extracts raw textual content across all pages of a PDF given an ArrayBuffer or Uint8Array.
+ */
+export async function extractTextFromPDF(data) {
+  const loadingTask = pdfjs.getDocument({ data: data instanceof Uint8Array ? data : new Uint8Array(data) });
+  const pdf = await loadingTask.promise;
+
+  let extractedText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map((item) => item.str).join('\n');
+    extractedText += pageText + '\n';
+  }
+  return extractedText;
+}
+
+/**
+ * Parses datasheet from an ArrayBuffer containing PDF or text data.
+ */
+export async function parseDatasheetFromArrayBuffer(arrayBuffer, filename = '') {
+  const isPDF = filename.toLowerCase().endsWith('.pdf') ||
+    (arrayBuffer.byteLength >= 4 && new Uint8Array(arrayBuffer.slice(0, 4)).every((b, i) => b === [0x25, 0x50, 0x44, 0x46][i]));
+  let extractedText = '';
+  if (isPDF) {
+    extractedText = await extractTextFromPDF(arrayBuffer);
+  } else {
+    extractedText = new TextDecoder().decode(arrayBuffer);
+  }
+  return parseDatasheetText(extractedText, filename);
+}
+
+/**
+ * Parses datasheet from a local File or Blob object (e.g. from an <input type="file"> or drag-and-drop).
+ */
+export async function parseDatasheetFromFile(file) {
+  const isPDF = file.type === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf');
+  let extractedText = '';
+
+  if (isPDF) {
+    const arrayBuffer = await file.arrayBuffer();
+    extractedText = await extractTextFromPDF(arrayBuffer);
+  } else {
+    extractedText = await file.text();
+  }
+
+  return parseDatasheetText(extractedText, file.name || 'Local Datasheet');
+}
+
+/**
  * Downloads and parses datasheet from a URL (handles PDF or text/HTML responses).
  */
 export async function parseDatasheetFromURL(url) {
@@ -214,7 +263,7 @@ export async function parseDatasheetFromURL(url) {
         const proxyUrl = proxyFn(targetUrl);
         const res = await fetch(proxyUrl);
         if (res.ok) return res;
-      } catch (e) {
+      } catch (_e) {
         // try next proxy
       }
     }
@@ -229,15 +278,7 @@ export async function parseDatasheetFromURL(url) {
 
   if (isPDF) {
     const arrayBuffer = await response.arrayBuffer();
-    const loadingTask = pdfjs.getDocument({ data: new Uint8Array(arrayBuffer) });
-    const pdf = await loadingTask.promise;
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      const pageText = content.items.map((item) => item.str).join('\n');
-      extractedText += pageText + '\n';
-    }
+    extractedText = await extractTextFromPDF(arrayBuffer);
   } else {
     extractedText = await response.text();
   }

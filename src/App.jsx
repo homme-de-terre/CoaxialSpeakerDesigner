@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { parseDatasheetFromURL } from './utils/datasheetParser';
+import { parseDatasheetFromURL, parseDatasheetFromFile } from './utils/datasheetParser';
 import { 
   Speaker, Volume2, Shield, Settings, Sliders, Cpu, FileText, Download, 
-  Link, Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap
+  Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap, Upload
 } from 'lucide-react';
 
 // --- Complex Number Physics Math Engine ---
@@ -70,7 +70,11 @@ export default function App() {
   const [manufacturer, setManufacturer] = useState("AudioPro Coaxial");
   const [datasheetURL, setDatasheetURL] = useState("");
   const [isLoadingURL, setIsLoadingURL] = useState(false);
+  const [isLoadingFile, setIsLoadingFile] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [selectedFileName, setSelectedFileName] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
+  const fileInputRef = useRef(null);
 
   const [ts, setTs] = useState({
     fs: 48.0,
@@ -521,16 +525,12 @@ export default function App() {
 
   }, [simulationData, activeTab]);
 
-  // --- URL Datasheet Parser Handler ---
-  const handleFetchDatasheet = async () => {
-    if (!datasheetURL) return;
-    setIsLoadingURL(true);
-    setStatusMsg("Fetching and parsing PDF/datasheet...");
-    try {
-      const parsed = await parseDatasheetFromURL(datasheetURL);
-      if (parsed && parsed.ts) {
+  // --- Shared Datasheet Application Helper ---
+  const applyParsedDatasheet = (parsed, sourceName) => {
+    if (parsed && parsed.ts) {
+      setTs(prev => {
         const computedQts = parsed.ts.qts || (parsed.ts.qes && parsed.ts.qms ? (parsed.ts.qes * parsed.ts.qms) / (parsed.ts.qes + parsed.ts.qms) : prev.qts);
-        setTs(prev => ({
+        return {
           ...prev,
           fs: parsed.ts.fs || prev.fs,
           qes: parsed.ts.qes || prev.qes,
@@ -541,18 +541,77 @@ export default function App() {
           le: parsed.ts.le || prev.le,
           spl: parsed.ts.spl || prev.spl,
           xmax: parsed.ts.xmax || prev.xmax
-        }));
-        if (parsed.driverName) {
-          setDriverName(parsed.driverName);
-        }
-        if (parsed.tweeter) {
-          if (parsed.tweeter.spl) setTweeterSpl(parsed.tweeter.spl);
-          if (parsed.tweeter.re) setTweeterRe(parsed.tweeter.re);
-        }
-        setStatusMsg(`Successfully extracted specs for ${parsed.driverName || 'driver'}`);
-      } else {
-        setStatusMsg("Could not parse parameters from datasheet.");
+        };
+      });
+      if (parsed.driverName) {
+        setDriverName(parsed.driverName);
       }
+      if (parsed.tweeter) {
+        setTweeter(prev => ({
+          ...prev,
+          fs: parsed.tweeter.fs || prev.fs,
+          re: parsed.tweeter.re || prev.re,
+          spl: parsed.tweeter.spl || prev.spl
+        }));
+      }
+      setStatusMsg(`Successfully extracted specs from ${parsed.driverName || sourceName || 'datasheet'}`);
+    } else {
+      setStatusMsg(`Could not parse parameters from ${sourceName || 'datasheet'}.`);
+    }
+  };
+
+  // --- Local File Datasheet Handler ---
+  const processLocalPDF = async (file) => {
+    setSelectedFileName(file.name);
+    setIsLoadingFile(true);
+    setStatusMsg(`Parsing local PDF: ${file.name}...`);
+    try {
+      const parsed = await parseDatasheetFromFile(file);
+      applyParsedDatasheet(parsed, file.name);
+    } catch (err) {
+      console.error(err);
+      setStatusMsg(`Failed to parse local PDF: ${err.message || 'Invalid format'}`);
+    } finally {
+      setIsLoadingFile(false);
+    }
+  };
+
+  const handleLocalFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processLocalPDF(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    await processLocalPDF(file);
+  };
+
+  // --- URL Datasheet Parser Handler ---
+  const handleFetchDatasheet = async () => {
+    if (!datasheetURL) return;
+    setIsLoadingURL(true);
+    setStatusMsg("Fetching and parsing PDF/datasheet...");
+    try {
+      const parsed = await parseDatasheetFromURL(datasheetURL);
+      applyParsedDatasheet(parsed, datasheetURL);
     } catch (err) {
       console.error(err);
       setStatusMsg("Failed to fetch or parse URL datasheet.");
@@ -573,28 +632,86 @@ export default function App() {
           </div>
         </div>
 
-        {/* Datasheet URL Fetcher */}
-        <div className="bg-slate-900/60 p-3.5 rounded-lg border border-slate-700/80 space-y-3">
-          <label className="text-xs font-semibold text-slate-300 flex items-center space-x-2">
-            <Link className="w-3.5 h-3.5 text-blue-400" />
-            <span>Datasheet URL Ingestion</span>
-          </label>
+        {/* Datasheet Ingestion (Local File or URL) */}
+        <div 
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`p-3.5 rounded-lg border transition-colors space-y-3 ${
+            isDraggingFile 
+              ? 'bg-blue-950/60 border-blue-400 ring-2 ring-blue-500/30' 
+              : 'bg-slate-900/60 border-slate-700/80'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-slate-300 flex items-center space-x-2">
+              <FileText className="w-3.5 h-3.5 text-blue-400" />
+              <span>Datasheet Ingestion</span>
+            </label>
+            {selectedFileName && (
+              <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={selectedFileName}>
+                {selectedFileName}
+              </span>
+            )}
+          </div>
+
+          {/* Hidden File Input */}
           <input
-            type="text"
-            placeholder="https://example.com/datasheet.pdf"
-            value={datasheetURL}
-            onChange={(e) => setDatasheetURL(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+            type="file"
+            ref={fileInputRef}
+            onChange={handleLocalFileUpload}
+            accept=".pdf,application/pdf"
+            className="hidden"
           />
+
+          {/* Local File Ingestion Button & Drop Zone */}
           <button
-            onClick={handleFetchDatasheet}
-            disabled={isLoadingURL}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs py-1.5 rounded transition flex items-center justify-center space-x-2"
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoadingFile || isLoadingURL}
+            className="w-full bg-slate-800 hover:bg-slate-700/80 border border-dashed border-slate-600 hover:border-blue-400 text-slate-200 font-medium text-xs py-2 px-3 rounded transition flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
           >
-            {isLoadingURL ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            <span>Fetch & Parse Specs</span>
+            {isLoadingFile ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+            ) : (
+              <Upload className="w-3.5 h-3.5 text-blue-400" />
+            )}
+            <span>{isLoadingFile ? 'Parsing Local PDF...' : 'Choose Local PDF File / Drop Here'}</span>
           </button>
-          {statusMsg && <p className="text-xs text-emerald-400">{statusMsg}</p>}
+
+          <div className="flex items-center space-x-2 text-[10px] text-slate-500">
+            <div className="flex-1 h-px bg-slate-700/80"></div>
+            <span>OR ENTER URL</span>
+            <div className="flex-1 h-px bg-slate-700/80"></div>
+          </div>
+
+          {/* URL Input */}
+          <div className="space-y-2">
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                placeholder="https://example.com/datasheet.pdf"
+                value={datasheetURL}
+                onChange={(e) => setDatasheetURL(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleFetchDatasheet}
+              disabled={isLoadingURL || isLoadingFile || !datasheetURL.trim()}
+              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium text-xs py-1.5 rounded transition flex items-center justify-center space-x-2 cursor-pointer"
+            >
+              {isLoadingURL ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <span>Fetch & Parse URL</span>
+            </button>
+          </div>
+
+          {statusMsg && (
+            <p className={`text-xs ${statusMsg.toLowerCase().includes('fail') || statusMsg.toLowerCase().includes('could not') || statusMsg.toLowerCase().includes('error') ? 'text-red-400' : 'text-emerald-400'}`}>
+              {statusMsg}
+            </p>
+          )}
         </div>
 
         {/* Driver TS Parameters */}

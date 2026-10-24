@@ -9,15 +9,39 @@ public struct SidebarView: View {
 
     public var body: some View {
         Form {
-            Section(header: Label("Datasheet URL Ingestion", systemImage: "link")) {
+            Section(header: Label("Datasheet Ingestion", systemImage: "doc.text.magnifyingglass")) {
+                Button(action: {
+                    #if canImport(AppKit)
+                    viewModel.chooseLocalDatasheetFile()
+                    #endif
+                }) {
+                    HStack {
+                        Image(systemName: "doc.badge.plus")
+                        Text("Choose Local PDF Datasheet...")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isLoadingDatasheet)
+
+                HStack {
+                    VStack { Divider() }
+                    Text("or from web URL")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    VStack { Divider() }
+                }
+
                 HStack(spacing: 6) {
                     TextField("https://example.com/driver_datasheet.pdf", text: $viewModel.datasheetURLString)
                         .textFieldStyle(.roundedBorder)
 
                     Button(action: {
+                        #if canImport(AppKit)
                         if let clipboardStr = NSPasteboard.general.string(forType: .string) {
                             viewModel.datasheetURLString = clipboardStr.trimmingCharacters(in: .whitespacesAndNewlines)
                         }
+                        #endif
                     }) {
                         Image(systemName: "doc.on.clipboard")
                     }
@@ -35,12 +59,12 @@ public struct SidebarView: View {
                         } else {
                             Image(systemName: "square.and.arrow.down")
                         }
-                        Text("Fetch & Parse Datasheet")
+                        Text("Fetch & Parse URL")
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isLoadingDatasheet)
+                .disabled(viewModel.isLoadingDatasheet || viewModel.datasheetURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 if let msg = viewModel.statusMessage {
                     Text(msg)

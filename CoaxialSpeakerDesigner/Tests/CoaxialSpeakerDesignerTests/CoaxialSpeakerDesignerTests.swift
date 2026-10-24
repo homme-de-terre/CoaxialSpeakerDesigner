@@ -153,4 +153,32 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         let tw = parser.parseTweeterFromText(bcSampleText)
         XCTAssertEqual(tw.spl, 106.0, accuracy: 0.1)
     }
+
+    func testParseDatasheetData() {
+        let parser = DatasheetParser()
+        let sampleText = """
+        8CX21 COAXIAL LOUDSPEAKER
+        Fs = 48.5 Hz
+        Qes = 0.38
+        Qms = 5.2
+        Vas = 26.4 L
+        Re = 6.1 Ohm
+        Le = 0.75 mH
+        Sensitivity = 91 dB
+        """
+        guard let data = sampleText.data(using: .utf8) else {
+            XCTFail("Failed to encode sample text to data")
+            return
+        }
+        let dummyURL = URL(fileURLWithPath: "/Users/test/Documents/8CX21_datasheet.pdf")
+        let result = parser.parseDatasheetData(data, sourceURL: dummyURL)
+        XCTAssertEqual(result.name, "8CX21")
+        XCTAssertEqual(result.ts.fs, 48.5, accuracy: 0.1)
+        XCTAssertEqual(result.ts.qes, 0.38, accuracy: 0.01)
+        XCTAssertEqual(result.ts.qms, 5.2, accuracy: 0.1)
+        XCTAssertEqual(result.ts.vas, 26.4, accuracy: 0.1)
+        XCTAssertEqual(result.ts.re, 6.1, accuracy: 0.1)
+        XCTAssertEqual(result.ts.le, 0.75, accuracy: 0.05)
+        XCTAssertEqual(result.ts.spl, 91.0, accuracy: 0.1)
+    }
 }
