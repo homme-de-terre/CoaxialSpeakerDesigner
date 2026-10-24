@@ -97,7 +97,6 @@ export default function App() {
   const [targetF3, setTargetF3] = useState(58.0);
   const [customQtc, setCustomQtc] = useState(0.707);
   const [stuffingGain, setStuffingGain] = useState(1.00); // 1.00 (Unfilled / Standard Vb), 1.10 (Light), 1.18 (Medium), 1.25 (Heavy)
-  const [qb, setQb] = useState(7.0);
   const [manualVbOverride, setManualVbOverride] = useState(false);
   const [manualVbLiters, setManualVbLiters] = useState(25.0);
 
@@ -123,35 +122,43 @@ export default function App() {
 
   // --- Sealed Cabinet Computations ---
   const cabinetCalculations = useMemo(() => {
-    // Determine effective Qts
+    // Determine effective Qts, Qes, Qms
     const effectiveQts = (ts.qts && ts.qts > 0)
       ? ts.qts
       : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35);
 
-    let alpha = 1.0;
+    const effectiveQes = ts.qes > 0 ? ts.qes : (effectiveQts * (ts.qms > 0 ? ts.qms : 4.5)) / Math.max((ts.qms > 0 ? ts.qms : 4.5) - effectiveQts, 0.01);
+    const effectiveQms = ts.qms > 0 ? ts.qms : 4.5;
+
+    // Map stuffing gain to enclosure absorption loss Qb
+    let qbVal = 30.0;
+    if (stuffingGain >= 1.24) qbVal = 4.0;
+    else if (stuffingGain >= 1.17) qbVal = 7.0;
+    else if (stuffingGain >= 1.08) qbVal = 15.0;
+
+    let baseAlpha = 1.0;
     let warningMsg = "";
 
     const minFeasibleF3 = ts.fs * (0.7071 / Math.max(effectiveQts, 0.01));
 
     if (manualVbOverride) {
-      const acousticVb = manualVbLiters * stuffingGain;
-      alpha = ts.vas / Math.max(acousticVb, 0.1);
+      baseAlpha = ts.vas / Math.max(manualVbLiters, 0.1);
     } else if (alignment === 'targetF3') {
       const r = Math.pow(targetF3 / Math.max(ts.fs, 1.0), 2);
       const q2 = Math.pow(effectiveQts, 2);
       const disc = 2.0 * r * r - (r / Math.max(q2, 1e-4));
       if (disc <= 0) {
         const ratio = 0.70710678 / Math.max(effectiveQts, 0.01);
-        alpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
+        baseAlpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
         warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. Aligned to Butterworth B2 (Qtc = 0.7071). A sealed enclosure cannot passively extend bass below infinite baffle limits without active EQ.`;
       } else {
         const y = r + Math.sqrt(disc);
         if (y <= 1.0) {
           const ratio = 0.70710678 / Math.max(effectiveQts, 0.01);
-          alpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
+          baseAlpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
           warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. Aligned to Butterworth B2.`;
         } else {
-          alpha = y - 1.0;
+          baseAlpha = y - 1.0;
         }
       }
     } else {
@@ -162,26 +169,36 @@ export default function App() {
 
       if (activeQtc <= effectiveQts) {
         warningMsg = `Target Qtc (${activeQtc.toFixed(3)}) is <= driver Qts (${effectiveQts.toFixed(3)}). A sealed enclosure cannot reduce driver Q. Minimum possible Qtc is ${effectiveQts.toFixed(3)}.`;
-        alpha = 0.05;
+        baseAlpha = 0.05;
       } else {
         const ratio = activeQtc / effectiveQts;
-        alpha = Math.pow(ratio, 2) - 1.0;
+        baseAlpha = Math.pow(ratio, 2) - 1.0;
       }
     }
 
-    const acousticVb = manualVbOverride ? (manualVbLiters * stuffingGain) : (ts.vas / alpha);
-    const physicalVb = manualVbOverride ? manualVbLiters : (acousticVb / stuffingGain);
+    // Physical Volume of the enclosure
+    const physicalVb = manualVbOverride ? manualVbLiters : (ts.vas / baseAlpha);
     const physicalCuFt = physicalVb / 28.3168;
 
+    // Effective acoustic volume inside physical enclosure with polyfill stuffing
+    const acousticVb = physicalVb * stuffingGain;
+    const alpha = ts.vas / Math.max(acousticVb, 0.01);
+
+    // System resonance Fc inside stuffed box
     const fc = ts.fs * Math.sqrt(1 + alpha);
-    const actualQtc = effectiveQts * Math.sqrt(1 + alpha);
+
+    // System Q factors taking stuffing absorption loss Qb into account
+    const qmsBox = effectiveQms * Math.sqrt(1 + alpha);
+    const qmc = (qmsBox * qbVal) / (qmsBox + qbVal);
+    const qec = effectiveQes * Math.sqrt(1 + alpha);
+    const actualQtc = (qec * qmc) / (qec + qmc);
 
     // Exact f3 formula for 2nd order closed box
     const B = (1.0 / Math.pow(actualQtc, 2)) - 2.0;
     const x = (B + Math.sqrt(B * B + 4.0)) / 2.0;
     const actualF3 = fc * Math.sqrt(x);
 
-    return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, minFeasibleF3, warningMsg };
+    return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, qbVal, minFeasibleF3, warningMsg };
   }, [ts, alignment, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
 
   // --- Passive Crossover Component Calculations ---
@@ -345,8 +362,11 @@ export default function App() {
       // 4. Electrical Load Impedance
       const reW = ts.re;
       const leW = ts.le / 1000.0;
-      const resW = reW * (ts.qms / Math.max(ts.qes, 0.01));
-      const qmc = (ts.qms * Math.sqrt(1 + cabinetCalculations.alpha) * qb) / (ts.qms * Math.sqrt(1 + cabinetCalculations.alpha) + qb);
+      const qb = cabinetCalculations.qbVal;
+      const effectiveQms = ts.qms > 0 ? ts.qms : 4.5;
+      const qmsBox = effectiveQms * Math.sqrt(1 + cabinetCalculations.alpha);
+      const qmc = (qmsBox * qb) / (qmsBox + qb);
+      const resW = reW * (effectiveQms / Math.max(ts.qes, 0.01)) * (qb / (qmsBox + qb));
       const deltaF = (f / fc) - (fc / f);
       const denomMotional = 1.0 + Math.pow(qmc * deltaF, 2);
       const rMotional = resW / denomMotional;

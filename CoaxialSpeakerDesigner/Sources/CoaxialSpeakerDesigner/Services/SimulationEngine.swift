@@ -159,10 +159,16 @@ public enum SimulationEngine {
     ) -> ComplexNumber {
         let fc = cabinet.computedResonanceFc(for: ts)
         let qmc = cabinet.actualQmc(for: ts)
+        let alpha = cabinet.computedComplianceAlpha(for: ts)
+        let qmsBox = ts.qms * sqrt(1.0 + alpha)
+        let qb = cabinet.stuffing.enclosureLossQb
+        
         let w = 2.0 * .pi * freq
         let re = ts.re
         let leSec = ts.le / 1000.0
-        let res = re * (ts.qms / max(ts.qes, 0.01))
+        
+        // Motional impedance peak at Fc scaled by absorption loss Qb
+        let res = re * (ts.qms / max(ts.qes, 0.01)) * (qb / (qmsBox + qb))
         
         // Motional impedance peak at Fc inside closed box
         let deltaF = (freq / fc) - (fc / freq)
