@@ -178,7 +178,7 @@ public struct CoaxialDriver: Codable, Sendable {
         return points
     }
     
-    private static func generateSyntheticWooferImpedance(ts: WooferTSParameters) -> [ResponseDataPoint] {
+    public static func generateSyntheticWooferImpedance(ts: WooferTSParameters) -> [ResponseDataPoint] {
         var points: [ResponseDataPoint] = []
         let logFreqs = stride(from: log10(20.0), through: log10(20000.0), by: (log10(20000.0) - log10(20.0)) / 200.0)
         let res = ts.re * (ts.qms / ts.qes)
@@ -197,7 +197,7 @@ public struct CoaxialDriver: Codable, Sendable {
         return points
     }
     
-    private static func generateSyntheticTweeterImpedance(tw: TweeterParameters) -> [ResponseDataPoint] {
+    public static func generateSyntheticTweeterImpedance(tw: TweeterParameters) -> [ResponseDataPoint] {
         var points: [ResponseDataPoint] = []
         let logFreqs = stride(from: log10(20.0), through: log10(20000.0), by: (log10(20000.0) - log10(20.0)) / 200.0)
         for logF in logFreqs {
