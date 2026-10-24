@@ -143,21 +143,9 @@ export default function App() {
     } else if (alignment === 'targetF3') {
       const r = Math.pow(targetF3 / Math.max(ts.fs, 1.0), 2);
       const q2 = Math.pow(effectiveQts, 2);
-      const disc = 2.0 * r * r - (r / Math.max(q2, 1e-4));
-      if (disc <= 0) {
-        const ratio = 0.70710678 / Math.max(effectiveQts, 0.01);
-        baseAlpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
-        warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. Aligned to Butterworth B2 (Qtc = 0.7071). A sealed enclosure cannot passively extend bass below infinite baffle limits without active EQ.`;
-      } else {
-        const y = r + Math.sqrt(disc);
-        if (y <= 1.0) {
-          const ratio = 0.70710678 / Math.max(effectiveQts, 0.01);
-          baseAlpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
-          warningMsg = `Target f3 (${targetF3} Hz) is below the physical closed-box limit (${minFeasibleF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. Aligned to Butterworth B2.`;
-        } else {
-          baseAlpha = y - 1.0;
-        }
-      }
+      const term = 2.0 * r * r + (r / Math.max(q2, 1e-4));
+      const x = Math.sqrt(term) - r;
+      baseAlpha = Math.max(x - 1.0, 0.05);
     } else {
       let activeQtc = 0.7071;
       if (alignment === 'bessel') activeQtc = 0.5774;

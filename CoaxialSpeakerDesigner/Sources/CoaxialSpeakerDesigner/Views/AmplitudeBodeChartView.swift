@@ -34,12 +34,11 @@ public struct AmplitudeBodeChartView: View {
             .padding(.horizontal)
 
             // Canvas Logarithmic Plot Render
-            GeometryReader { geo in
-                Canvas { context, size in
-                    drawLogGrid(context: context, size: size)
-                    drawCurves(context: context, size: size)
-                }
+            Canvas { context, size in
+                drawLogGrid(context: context, size: size)
+                drawCurves(context: context, size: size)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))
             .cornerRadius(8)

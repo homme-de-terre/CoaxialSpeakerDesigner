@@ -31,20 +31,8 @@ public struct CabinetInspectorView: View {
             Divider()
 
             let effQts = viewModel.driver.wooferTS.qts > 0 ? viewModel.driver.wooferTS.qts : (viewModel.driver.wooferTS.qes > 0 && viewModel.driver.wooferTS.qms > 0 ? (viewModel.driver.wooferTS.qes * viewModel.driver.wooferTS.qms) / (viewModel.driver.wooferTS.qes + viewModel.driver.wooferTS.qms) : 0.35)
-            let minF3 = viewModel.driver.wooferTS.fs * (0.70710678 / max(effQts, 0.01))
 
-            if viewModel.cabinet.alignment == .targetF3 && viewModel.cabinet.targetF3 < minF3 {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text("Target f3 (\(Int(viewModel.cabinet.targetF3)) Hz) is below the physical closed-box limit (\(String(format: "%.1f", minF3)) Hz) for Qts = \(String(format: "%.3f", effQts)). Enclosure aligned to Butterworth B2 (Qtc = 0.707).")
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                }
-                .padding(10)
-                .background(Color.orange.opacity(0.15))
-                .cornerRadius(8)
-            } else if viewModel.cabinet.alignment == .customQtc && viewModel.cabinet.targetQtc <= effQts {
+            if viewModel.cabinet.alignment == .customQtc && viewModel.cabinet.targetQtc <= effQts {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
