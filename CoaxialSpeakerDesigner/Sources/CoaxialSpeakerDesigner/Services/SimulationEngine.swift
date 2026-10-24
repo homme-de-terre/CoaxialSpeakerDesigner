@@ -19,8 +19,11 @@ public enum SimulationEngine {
         let logStep = (logMax - logMin) / Double(stepCount)
         
         // Ensure Hilbert minimum phase is present for raw driver acoustic curves
-        let wooferAcousticP = ensurePhase(curve: driver.wooferAcousticCurve)
-        let tweeterAcousticP = ensurePhase(curve: driver.tweeterAcousticCurve)
+        let rawWooferCurve = driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve
+        let rawTweeterCurve = driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve
+
+        let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
+        let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)
         
         for i in 0...stepCount {
             let logF = logMin + Double(i) * logStep

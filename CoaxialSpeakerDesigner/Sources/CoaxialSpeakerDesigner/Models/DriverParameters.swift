@@ -125,10 +125,10 @@ public struct CoaxialDriver: Codable, Sendable {
         self.datasheetURL = datasheetURL
         self.wooferTS = wooferTS
         self.tweeter = tweeter
-        self.wooferAcousticCurve = wooferAcousticCurve
-        self.tweeterAcousticCurve = tweeterAcousticCurve
-        self.wooferImpedanceCurve = wooferImpedanceCurve
-        self.tweeterImpedanceCurve = tweeterImpedanceCurve
+        self.wooferAcousticCurve = wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: wooferTS) : wooferAcousticCurve
+        self.tweeterAcousticCurve = tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: tweeter) : tweeterAcousticCurve
+        self.wooferImpedanceCurve = wooferImpedanceCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferImpedance(ts: wooferTS) : wooferImpedanceCurve
+        self.tweeterImpedanceCurve = tweeterImpedanceCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterImpedance(tw: tweeter) : tweeterImpedanceCurve
     }
     
     /// Default realistic template driver for initial application state.
