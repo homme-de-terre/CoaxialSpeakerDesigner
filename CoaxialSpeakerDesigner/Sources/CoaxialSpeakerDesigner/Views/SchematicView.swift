@@ -63,7 +63,7 @@ public struct SchematicView: View {
                             if viewModel.crossover.enableZobelNetwork, let rz = comp.R_zobel_ohms, let cz = comp.C_zobel_uF {
                                 CircuitBranchBox(title: "Zobel Network", value: "Rz = \(String(format: "%.2f", rz)) Ω, Cz = \(String(format: "%.2f", cz)) µF", color: .orange)
                             }
-                            Text("Woofer Voice Coil (6.2 Ω)")
+                            Text("Woofer Voice Coil (Re = \(String(format: "%.1f", viewModel.driver.wooferTS.re)) Ω)")
                                 .font(.caption)
                                 .bold()
                         }
@@ -85,9 +85,10 @@ public struct SchematicView: View {
                             if viewModel.crossover.enableLPadAttenuator, let r1 = comp.R1_lpad_ohms, let r2 = comp.R2_lpad_ohms {
                                 CircuitBranchBox(title: "L-Pad Attenuator", value: "R1 (Series) = \(String(format: "%.2f", r1)) Ω, R2 (Shunt) = \(String(format: "%.2f", r2)) Ω", color: .purple)
                             }
-                            Text("Tweeter Voice Coil (5.8 Ω)")
+                            Text(viewModel.crossover.invertTweeterPolarity ? "Tweeter Voice Coil (Inverted Polarity -180°: \(String(format: "%.1f", viewModel.driver.tweeter.re)) Ω)" : "Tweeter Voice Coil (Re = \(String(format: "%.1f", viewModel.driver.tweeter.re)) Ω)")
                                 .font(.caption)
                                 .bold()
+                                .foregroundColor(viewModel.crossover.invertTweeterPolarity ? .orange : .primary)
                         }
                         .padding()
                         .background(Color.red.opacity(0.05))

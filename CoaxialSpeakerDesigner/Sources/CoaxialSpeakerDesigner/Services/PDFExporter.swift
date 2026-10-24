@@ -152,17 +152,28 @@ public class SchematicReportNSView: NSView {
         gridPath.lineWidth = 0.5
         gridPath.stroke()
 
-        // Wiring Rails
+        // Wiring Rails & Dimensions
         let ampX = boxRect.minX + 35.0
-        let wooferY = boxRect.minY + 50.0
-        let tweeterY = boxRect.minY + 135.0
-        let groundY = boxRect.minY + 220.0
+        let speakerX = boxRect.maxX - 130.0
+
+        // Woofer Branch Levels (Top Tier)
+        let wooferHeaderY = boxRect.minY + 12.0
+        let wooferY = boxRect.minY + 45.0
+        let wooferGroundY = boxRect.minY + 125.0
+
+        // Branch Separator Level
+        let branchSeparatorY = boxRect.minY + 138.0
+
+        // Tweeter Branch Levels (Bottom Tier)
+        let tweeterHeaderY = boxRect.minY + 148.0
+        let tweeterY = boxRect.minY + 175.0
+        let tweeterGroundY = boxRect.minY + 245.0
 
         // Terminals
         drawTerminalDot(point: CGPoint(x: ampX, y: wooferY), text: "AMP (+)", isPositive: true)
-        drawTerminalDot(point: CGPoint(x: ampX, y: groundY), text: "AMP (-)", isPositive: false)
+        drawTerminalDot(point: CGPoint(x: ampX, y: tweeterGroundY), text: "AMP (-)", isPositive: false)
 
-        // Vertical Input Bus Line
+        // Vertical Input Bus (+) Line: from wooferY down to tweeterY
         let vBus = NSBezierPath()
         vBus.move(to: CGPoint(x: ampX, y: wooferY))
         vBus.line(to: CGPoint(x: ampX, y: tweeterY))
@@ -171,15 +182,40 @@ public class SchematicReportNSView: NSView {
         vBus.stroke()
         drawJunctionDot(point: CGPoint(x: ampX, y: tweeterY))
 
-        // Ground Rail
-        let gRail = NSBezierPath()
-        gRail.move(to: CGPoint(x: ampX, y: groundY))
-        gRail.line(to: CGPoint(x: boxRect.maxX - 40, y: groundY))
-        gRail.lineWidth = 1.5
-        gRail.stroke()
+        // Vertical Ground Bus (-) Line: from tweeterGroundY up to wooferGroundY
+        let vGroundBus = NSBezierPath()
+        vGroundBus.move(to: CGPoint(x: ampX, y: tweeterGroundY))
+        vGroundBus.line(to: CGPoint(x: ampX, y: wooferGroundY))
+        vGroundBus.lineWidth = 1.5
+        vGroundBus.stroke()
+        drawJunctionDot(point: CGPoint(x: ampX, y: wooferGroundY))
+
+        // Woofer Dedicated Ground Rail
+        let wGroundRail = NSBezierPath()
+        wGroundRail.move(to: CGPoint(x: ampX, y: wooferGroundY))
+        wGroundRail.line(to: CGPoint(x: speakerX, y: wooferGroundY))
+        wGroundRail.lineWidth = 1.5
+        wGroundRail.stroke()
+
+        // Tweeter Dedicated Ground Rail
+        let tGroundRail = NSBezierPath()
+        tGroundRail.move(to: CGPoint(x: ampX, y: tweeterGroundY))
+        tGroundRail.line(to: CGPoint(x: speakerX, y: tweeterGroundY))
+        tGroundRail.lineWidth = 1.5
+        tGroundRail.stroke()
+
+        // Horizontal dashed branch separator line
+        let sepPath = NSBezierPath()
+        sepPath.move(to: CGPoint(x: boxRect.minX + 15, y: branchSeparatorY))
+        sepPath.line(to: CGPoint(x: boxRect.maxX - 15, y: branchSeparatorY))
+        NSColor(calibratedRed: 0.88, green: 0.90, blue: 0.93, alpha: 1.0).setStroke()
+        let dashes: [CGFloat] = [4.0, 4.0]
+        sepPath.setLineDash(dashes, count: 2, phase: 0.0)
+        sepPath.lineWidth = 0.8
+        sepPath.stroke()
 
         // ==========================================
-        // WOOFER LOW-PASS BRANCH (TOP)
+        // WOOFER LOW-PASS BRANCH (TOP TIER)
         // ==========================================
         var curX = ampX
         let wooferTagAttrs: [NSAttributedString.Key: Any] = [
@@ -187,7 +223,7 @@ public class SchematicReportNSView: NSView {
             .foregroundColor: NSColor(calibratedRed: 0.1, green: 0.35, blue: 0.75, alpha: 1.0)
         ]
         "WOOFER LOW-PASS (\(crossover.wooferOrder.rawValue))".draw(
-            at: CGPoint(x: curX + 15, y: wooferY - 20),
+            at: CGPoint(x: ampX + 15, y: wooferHeaderY),
             withAttributes: wooferTagAttrs
         )
 
@@ -205,8 +241,8 @@ public class SchematicReportNSView: NSView {
             curX += 50
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
-            drawShuntCapacitor(topX: curX, topY: wooferY, groundY: groundY, name: "C1", valueStr: "\(String(format: "%.2f", c1)) µF", color: .systemBlue)
-            drawJunctionDot(point: CGPoint(x: curX, y: groundY))
+            drawShuntCapacitor(topX: curX, topY: wooferY, groundY: wooferGroundY, name: "C1", valueStr: "\(String(format: "%.2f", c1)) µF", color: .systemBlue)
+            drawJunctionDot(point: CGPoint(x: curX, y: wooferGroundY))
         }
 
         // Series Inductor L2 (3rd/4th order)
@@ -223,8 +259,8 @@ public class SchematicReportNSView: NSView {
             curX += 50
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
-            drawShuntCapacitor(topX: curX, topY: wooferY, groundY: groundY, name: "C2", valueStr: "\(String(format: "%.2f", c2)) µF", color: .systemBlue)
-            drawJunctionDot(point: CGPoint(x: curX, y: groundY))
+            drawShuntCapacitor(topX: curX, topY: wooferY, groundY: wooferGroundY, name: "C2", valueStr: "\(String(format: "%.2f", c2)) µF", color: .systemBlue)
+            drawJunctionDot(point: CGPoint(x: curX, y: wooferGroundY))
         }
 
         // Zobel Network (Shunt Rz + Cz)
@@ -236,28 +272,28 @@ public class SchematicReportNSView: NSView {
             drawShuntZobelBranch(
                 topX: curX,
                 topY: wooferY,
-                groundY: groundY,
+                groundY: wooferGroundY,
                 rzStr: "\(String(format: "%.2f", rz)) Ω",
                 czStr: "\(String(format: "%.2f", cz)) µF"
             )
-            drawJunctionDot(point: CGPoint(x: curX, y: groundY))
+            drawJunctionDot(point: CGPoint(x: curX, y: wooferGroundY))
         }
 
         // Wire to Woofer
-        drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: boxRect.maxX - 110, y: wooferY))
-        curX = boxRect.maxX - 110
+        drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: speakerX, y: wooferY))
 
         drawSpeakerSymbol(
-            topX: curX,
+            topX: speakerX,
             topY: wooferY,
-            groundY: groundY,
+            groundY: wooferGroundY,
             title: "WOOFER",
-            subTitle: "Re = \(String(format: "%.1f", driver.wooferTS.re)) Ω"
+            subTitle: "Re = \(String(format: "%.1f", driver.wooferTS.re)) Ω",
+            invertPolarity: false
         )
-        drawJunctionDot(point: CGPoint(x: curX, y: groundY))
+        drawJunctionDot(point: CGPoint(x: speakerX, y: wooferGroundY))
 
         // ==========================================
-        // TWEETER HIGH-PASS BRANCH (MIDDLE)
+        // TWEETER HIGH-PASS BRANCH (BOTTOM TIER)
         // ==========================================
         var tCurX = ampX
         let tweeterTagAttrs: [NSAttributedString.Key: Any] = [
@@ -265,7 +301,7 @@ public class SchematicReportNSView: NSView {
             .foregroundColor: NSColor(calibratedRed: 0.8, green: 0.15, blue: 0.15, alpha: 1.0)
         ]
         "TWEETER HIGH-PASS (\(crossover.tweeterOrder.rawValue))".draw(
-            at: CGPoint(x: tCurX + 15, y: tweeterY - 20),
+            at: CGPoint(x: ampX + 15, y: tweeterHeaderY),
             withAttributes: tweeterTagAttrs
         )
 
@@ -283,8 +319,8 @@ public class SchematicReportNSView: NSView {
             tCurX += 50
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
-            drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: groundY, name: "L_HP1", valueStr: "\(String(format: "%.2f", l1)) mH", color: .systemRed)
-            drawJunctionDot(point: CGPoint(x: tCurX, y: groundY))
+            drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "L_HP1", valueStr: "\(String(format: "%.2f", l1)) mH", color: .systemRed)
+            drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterGroundY))
         }
 
         // Series Capacitor C_HP2 (3rd/4th order)
@@ -301,8 +337,8 @@ public class SchematicReportNSView: NSView {
             tCurX += 50
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
-            drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: groundY, name: "L_HP2", valueStr: "\(String(format: "%.2f", l2)) mH", color: .systemRed)
-            drawJunctionDot(point: CGPoint(x: tCurX, y: groundY))
+            drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "L_HP2", valueStr: "\(String(format: "%.2f", l2)) mH", color: .systemRed)
+            drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterGroundY))
         }
 
         // L-Pad Attenuator (Series R1 + Shunt R2)
@@ -316,23 +352,23 @@ public class SchematicReportNSView: NSView {
             tCurX += 45
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
-            drawShuntResistor(topX: tCurX, topY: tweeterY, groundY: groundY, name: "R2 (L-Pad)", valueStr: "\(String(format: "%.2f", r2)) Ω", color: .systemOrange)
-            drawJunctionDot(point: CGPoint(x: tCurX, y: groundY))
+            drawShuntResistor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "R2 (L-Pad)", valueStr: "\(String(format: "%.2f", r2)) Ω", color: .systemOrange)
+            drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterGroundY))
         }
 
         // Wire to Tweeter
-        drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: boxRect.maxX - 110, y: tweeterY))
-        tCurX = boxRect.maxX - 110
+        drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: speakerX, y: tweeterY))
 
         let tweeterTitle = crossover.invertTweeterPolarity ? "TWEETER (-180°)" : "TWEETER (+)"
         drawSpeakerSymbol(
-            topX: tCurX,
+            topX: speakerX,
             topY: tweeterY,
-            groundY: groundY,
+            groundY: tweeterGroundY,
             title: tweeterTitle,
-            subTitle: "Re = \(String(format: "%.1f", driver.tweeter.re)) Ω"
+            subTitle: "Re = \(String(format: "%.1f", driver.tweeter.re)) Ω",
+            invertPolarity: crossover.invertTweeterPolarity
         )
-        drawJunctionDot(point: CGPoint(x: tCurX, y: groundY))
+        drawJunctionDot(point: CGPoint(x: speakerX, y: tweeterGroundY))
     }
 
     // MARK: - 3. Bill of Materials (BOM) Table
@@ -661,21 +697,42 @@ public class SchematicReportNSView: NSView {
         topY: CGFloat,
         groundY: CGFloat,
         title: String,
-        subTitle: String
+        subTitle: String,
+        invertPolarity: Bool = false
     ) {
         let midY = (topY + groundY) / 2.0
-        let spkW: CGFloat = 14.0
-        let spkH: CGFloat = 30.0
-        let coneDepth: CGFloat = 14.0
+        let spkW: CGFloat = 16.0
+        let spkH: CGFloat = 34.0
+        let coneDepth: CGFloat = 16.0
+        let coneSpread: CGFloat = 12.0
 
         let path = NSBezierPath()
-        // Wire in from top
-        path.move(to: CGPoint(x: topX, y: topY))
-        path.line(to: CGPoint(x: topX, y: midY - spkH/2))
+        
+        if !invertPolarity {
+            // Normal polarity wiring
+            path.move(to: CGPoint(x: topX, y: topY))
+            path.line(to: CGPoint(x: topX, y: midY - spkH/2))
 
-        // Wire down to ground
-        path.move(to: CGPoint(x: topX, y: midY + spkH/2))
-        path.line(to: CGPoint(x: topX, y: groundY))
+            path.move(to: CGPoint(x: topX, y: midY + spkH/2))
+            path.line(to: CGPoint(x: topX, y: groundY))
+        } else {
+            // Inverted polarity crossover wiring:
+            // Signal wire (topY) crosses down to the bottom terminal (+)
+            // Ground wire (groundY) crosses up to the top terminal (-)
+            let wireCrossX = topX - 16.0
+
+            // Signal wire route to bottom terminal
+            path.move(to: CGPoint(x: topX, y: topY))
+            path.line(to: CGPoint(x: wireCrossX, y: topY))
+            path.line(to: CGPoint(x: wireCrossX, y: midY + spkH/2))
+            path.line(to: CGPoint(x: topX, y: midY + spkH/2))
+
+            // Ground wire route to top terminal
+            path.move(to: CGPoint(x: topX, y: groundY))
+            path.line(to: CGPoint(x: wireCrossX + 8.0, y: groundY))
+            path.line(to: CGPoint(x: wireCrossX + 8.0, y: midY - spkH/2))
+            path.line(to: CGPoint(x: topX, y: midY - spkH/2))
+        }
 
         // Voice Coil Box
         let boxRect = CGRect(x: topX, y: midY - spkH/2, width: spkW, height: spkH)
@@ -683,23 +740,50 @@ public class SchematicReportNSView: NSView {
 
         // Cone Flared Trapezoid
         path.move(to: CGPoint(x: topX + spkW, y: midY - spkH/2))
-        path.line(to: CGPoint(x: topX + spkW + coneDepth, y: midY - spkH/2 - 10))
-        path.line(to: CGPoint(x: topX + spkW + coneDepth, y: midY + spkH/2 + 10))
+        path.line(to: CGPoint(x: topX + spkW + coneDepth, y: midY - spkH/2 - coneSpread))
+        path.line(to: CGPoint(x: topX + spkW + coneDepth, y: midY + spkH/2 + coneSpread))
         path.line(to: CGPoint(x: topX + spkW, y: midY + spkH/2))
 
         NSColor.black.setStroke()
         path.lineWidth = 1.5
         path.stroke()
 
-        let plusAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 8), .foregroundColor: NSColor.systemRed]
-        let minusAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 8), .foregroundColor: NSColor.black]
-        "+".draw(at: CGPoint(x: topX + 3, y: midY - spkH/2 + 2), withAttributes: plusAttrs)
-        "-".draw(at: CGPoint(x: topX + 3, y: midY + spkH/2 - 10), withAttributes: minusAttrs)
+        let plusAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 9),
+            .foregroundColor: NSColor.systemRed
+        ]
+        let minusAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 9),
+            .foregroundColor: NSColor(calibratedWhite: 0.15, alpha: 1.0)
+        ]
 
-        let titleAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 8.5), .foregroundColor: NSColor.black]
-        let subAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 8), .foregroundColor: NSColor.darkGray]
+        if !invertPolarity {
+            "+".draw(at: CGPoint(x: topX + 4, y: midY - spkH/2 + 2), withAttributes: plusAttrs)
+            "-".draw(at: CGPoint(x: topX + 5, y: midY + spkH/2 - 11), withAttributes: minusAttrs)
+        } else {
+            // Visibly inverted terminals: '-' on top, '+' on bottom
+            "-".draw(at: CGPoint(x: topX + 5, y: midY - spkH/2 + 2), withAttributes: minusAttrs)
+            "+".draw(at: CGPoint(x: topX + 4, y: midY + spkH/2 - 11), withAttributes: plusAttrs)
+        }
 
-        title.draw(at: CGPoint(x: topX + spkW + coneDepth + 6, y: midY - 8), withAttributes: titleAttrs)
-        subTitle.draw(at: CGPoint(x: topX + spkW + coneDepth + 6, y: midY + 4), withAttributes: subAttrs)
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 8.5),
+            .foregroundColor: NSColor.black
+        ]
+        let subAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 8),
+            .foregroundColor: NSColor.darkGray
+        ]
+
+        title.draw(at: CGPoint(x: topX + spkW + coneDepth + 8, y: midY - 8), withAttributes: titleAttrs)
+        subTitle.draw(at: CGPoint(x: topX + spkW + coneDepth + 8, y: midY + 4), withAttributes: subAttrs)
+
+        if invertPolarity {
+            drawBadge(
+                point: CGPoint(x: topX + spkW + coneDepth + 8, y: midY - 24),
+                text: "INVERTED POLARITY (-180°)",
+                textColor: NSColor(calibratedRed: 0.85, green: 0.35, blue: 0.05, alpha: 1.0)
+            )
+        }
     }
 }
