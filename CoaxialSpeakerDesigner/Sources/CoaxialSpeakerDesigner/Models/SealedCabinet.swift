@@ -172,14 +172,6 @@ public struct SealedCabinet: Codable, Sendable {
         return (qec * qmc) / (qec + qmc)
     }
 
-    /// Mechanical Q inside enclosure taking enclosure absorption loss Qb into account
-    public func actualQmc(for ts: WooferTSParameters) -> Double {
-        let alpha = computedComplianceAlpha(for: ts)
-        let qmsBox = ts.qms * sqrt(1.0 + alpha)
-        let qbVal = max(enclosureLossQb, 1.0)
-        return (qmsBox * qbVal) / (qmsBox + qbVal)
-    }
-
     /// Actual lower -3dB cutoff frequency f3 (Hz) based on current configuration
     public func actualF3(for ts: WooferTSParameters) -> Double {
         let fc = computedResonanceFc(for: ts)
