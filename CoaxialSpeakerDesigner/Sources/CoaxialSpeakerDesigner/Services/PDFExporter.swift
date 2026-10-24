@@ -162,12 +162,12 @@ public class SchematicReportNSView: NSView {
         let wooferGroundY = boxRect.minY + 125.0
 
         // Branch Separator Level
-        let branchSeparatorY = boxRect.minY + 138.0
+        let branchSeparatorY = boxRect.minY + 136.0
 
-        // Tweeter Branch Levels (Bottom Tier)
-        let tweeterHeaderY = boxRect.minY + 148.0
-        let tweeterY = boxRect.minY + 175.0
-        let tweeterGroundY = boxRect.minY + 245.0
+        // Tweeter Branch Levels (Bottom Tier) - Generous clearance so badges never overlap header text
+        let tweeterHeaderY = boxRect.minY + 142.0
+        let tweeterY = boxRect.minY + 190.0
+        let tweeterGroundY = boxRect.minY + 252.0
 
         // Terminals
         drawTerminalDot(point: CGPoint(x: ampX, y: wooferY), text: "AMP (+)", isPositive: true)
@@ -237,8 +237,8 @@ public class SchematicReportNSView: NSView {
 
         // Shunt Capacitor C1
         if let c1 = components.C1_uF {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 50, y: wooferY))
-            curX += 50
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 55, y: wooferY))
+            curX += 55
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
             drawShuntCapacitor(topX: curX, topY: wooferY, groundY: wooferGroundY, name: "C1", valueStr: "\(String(format: "%.2f", c1)) µF", color: .systemBlue)
@@ -247,16 +247,16 @@ public class SchematicReportNSView: NSView {
 
         // Series Inductor L2 (3rd/4th order)
         if let l2 = components.L2_mH {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 30, y: wooferY))
-            curX += 30
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 35, y: wooferY))
+            curX += 35
             drawInductorSymbol(startX: curX, endX: curX + 60, y: wooferY, name: "L2", valueStr: "\(String(format: "%.2f", l2)) mH", color: .systemBlue)
             curX += 60
         }
 
         // Shunt Capacitor C2 (4th order)
         if let c2 = components.C2_uF {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 50, y: wooferY))
-            curX += 50
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 55, y: wooferY))
+            curX += 55
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
             drawShuntCapacitor(topX: curX, topY: wooferY, groundY: wooferGroundY, name: "C2", valueStr: "\(String(format: "%.2f", c2)) µF", color: .systemBlue)
@@ -265,8 +265,8 @@ public class SchematicReportNSView: NSView {
 
         // Zobel Network (Shunt Rz + Cz)
         if crossover.enableZobelNetwork, let rz = components.R_zobel_ohms, let cz = components.C_zobel_uF {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 50, y: wooferY))
-            curX += 50
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 65, y: wooferY))
+            curX += 65
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
             drawShuntZobelBranch(
@@ -315,8 +315,8 @@ public class SchematicReportNSView: NSView {
 
         // Shunt Inductor L_HP1
         if let l1 = components.L_HP1_mH {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 50, y: tweeterY))
-            tCurX += 50
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 55, y: tweeterY))
+            tCurX += 55
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
             drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "L_HP1", valueStr: "\(String(format: "%.2f", l1)) mH", color: .systemRed)
@@ -325,16 +325,16 @@ public class SchematicReportNSView: NSView {
 
         // Series Capacitor C_HP2 (3rd/4th order)
         if let c2 = components.C_HP2_uF {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 30, y: tweeterY))
-            tCurX += 30
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 35, y: tweeterY))
+            tCurX += 35
             drawCapacitorSymbol(startX: tCurX, endX: tCurX + 55, y: tweeterY, name: "C_HP2", valueStr: "\(String(format: "%.2f", c2)) µF", color: .systemRed)
             tCurX += 55
         }
 
         // Shunt Inductor L_HP2 (4th order)
         if let l2 = components.L_HP2_mH {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 50, y: tweeterY))
-            tCurX += 50
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 55, y: tweeterY))
+            tCurX += 55
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
             drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "L_HP2", valueStr: "\(String(format: "%.2f", l2)) mH", color: .systemRed)
@@ -343,13 +343,13 @@ public class SchematicReportNSView: NSView {
 
         // L-Pad Attenuator (Series R1 + Shunt R2)
         if crossover.enableLPadAttenuator, let r1 = components.R1_lpad_ohms, let r2 = components.R2_lpad_ohms {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 30, y: tweeterY))
-            tCurX += 30
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 35, y: tweeterY))
+            tCurX += 35
             drawResistorSymbol(startX: tCurX, endX: tCurX + 55, y: tweeterY, name: "R1 (L-Pad)", valueStr: "\(String(format: "%.2f", r1)) Ω", color: .systemOrange)
             tCurX += 55
 
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 45, y: tweeterY))
-            tCurX += 45
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 55, y: tweeterY))
+            tCurX += 55
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
             drawShuntResistor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "R2 (L-Pad)", valueStr: "\(String(format: "%.2f", r2)) Ω", color: .systemOrange)
@@ -707,32 +707,13 @@ public class SchematicReportNSView: NSView {
         let coneSpread: CGFloat = 12.0
 
         let path = NSBezierPath()
-        
-        if !invertPolarity {
-            // Normal polarity wiring
-            path.move(to: CGPoint(x: topX, y: topY))
-            path.line(to: CGPoint(x: topX, y: midY - spkH/2))
 
-            path.move(to: CGPoint(x: topX, y: midY + spkH/2))
-            path.line(to: CGPoint(x: topX, y: groundY))
-        } else {
-            // Inverted polarity crossover wiring:
-            // Signal wire (topY) crosses down to the bottom terminal (+)
-            // Ground wire (groundY) crosses up to the top terminal (-)
-            let wireCrossX = topX - 16.0
+        // Clean, straight wiring into top and bottom terminals (no messy crossed-line tangles)
+        path.move(to: CGPoint(x: topX, y: topY))
+        path.line(to: CGPoint(x: topX, y: midY - spkH/2))
 
-            // Signal wire route to bottom terminal
-            path.move(to: CGPoint(x: topX, y: topY))
-            path.line(to: CGPoint(x: wireCrossX, y: topY))
-            path.line(to: CGPoint(x: wireCrossX, y: midY + spkH/2))
-            path.line(to: CGPoint(x: topX, y: midY + spkH/2))
-
-            // Ground wire route to top terminal
-            path.move(to: CGPoint(x: topX, y: groundY))
-            path.line(to: CGPoint(x: wireCrossX + 8.0, y: groundY))
-            path.line(to: CGPoint(x: wireCrossX + 8.0, y: midY - spkH/2))
-            path.line(to: CGPoint(x: topX, y: midY - spkH/2))
-        }
+        path.move(to: CGPoint(x: topX, y: midY + spkH/2))
+        path.line(to: CGPoint(x: topX, y: groundY))
 
         // Voice Coil Box
         let boxRect = CGRect(x: topX, y: midY - spkH/2, width: spkW, height: spkH)
@@ -758,10 +739,11 @@ public class SchematicReportNSView: NSView {
         ]
 
         if !invertPolarity {
+            // Normal polarity: '+' on top, '-' on bottom
             "+".draw(at: CGPoint(x: topX + 4, y: midY - spkH/2 + 2), withAttributes: plusAttrs)
             "-".draw(at: CGPoint(x: topX + 5, y: midY + spkH/2 - 11), withAttributes: minusAttrs)
         } else {
-            // Visibly inverted terminals: '-' on top, '+' on bottom
+            // Inverted polarity: '-' on top, '+' on bottom (clean professional terminal inversion)
             "-".draw(at: CGPoint(x: topX + 5, y: midY - spkH/2 + 2), withAttributes: minusAttrs)
             "+".draw(at: CGPoint(x: topX + 4, y: midY + spkH/2 - 11), withAttributes: plusAttrs)
         }
