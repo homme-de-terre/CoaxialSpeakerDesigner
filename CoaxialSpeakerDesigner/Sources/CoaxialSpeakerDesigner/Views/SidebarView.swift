@@ -60,7 +60,7 @@ public struct SidebarView: View {
             }
 
             Section(header: Label("Woofer Thiele-Small Specs", systemImage: "waveform")) {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                     GridRow {
                         Text("Fs (Hz):")
                         Spacer()
@@ -122,6 +122,7 @@ public struct SidebarView: View {
                             .frame(width: 70)
                     }
                 }
+                .padding(.vertical, 8)
             }
 
             Section(header: Label("Tweeter Specifications", systemImage: "bolt.horizontal")) {
