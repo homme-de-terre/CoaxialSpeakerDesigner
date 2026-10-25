@@ -159,7 +159,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
     
     /// Extract Thiele-Small parameters from normalized text without hard-coded fallbacks.
     public func parseTSFromText(_ text: String) -> WooferTSParameters {
-        let norm = normalizeCommas(in: text)
+        let normText = normalizeCommas(in: text)
         var ts = WooferTSParameters(
             fs: 0.0,
             qes: 0.0,
@@ -175,43 +175,43 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         )
         
         // 1. Single-line inline regex matches
-        if let val = findValue(pattern: #"\b(?:Fs|Resonant\s+Frequency)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Hz)?"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Fs|Resonant\s+Frequency)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Hz)?"#, text: normText) {
             if val >= 15.0 && val <= 250.0 { ts.fs = val }
         }
-        if let val = findValue(pattern: #"\b(?:Re|DC\s+Resistance|Voice\s+coil\s+resistance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)?"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Re|DC\s+Resistance|Voice\s+coil\s+resistance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)?"#, text: normText) {
             if val >= 1.0 && val <= 30.0 { ts.re = val }
         }
-        if let val = findValue(pattern: #"\b(?:Qes|Electrical\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Qes|Electrical\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.qes = val
         }
-        if let val = findValue(pattern: #"\b(?:Qms|Mechanical\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Qms|Mechanical\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.qms = val
         }
-        if let val = findValue(pattern: #"\b(?:Qts|Total\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Qts|Total\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.qts = val
         }
-        if let val = findValue(pattern: #"\b(?:Vas|Equivalent\s+(?:Air\s+)?Volume(?:\s+to\s+Cms)?)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Vas|Equivalent\s+(?:Air\s+)?Volume(?:\s+to\s+Cms)?)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.vas = val
         }
-        if let val = findValue(pattern: #"\b(?:Le|Inductance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Le|Inductance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: normText) {
             ts.le = val
         }
-        if let val = findValue(pattern: #"\b(?:Sd|Surface\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: norm) {
+        if let val = findValue(pattern: #"\b(?:Sd|Surface\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.sd = val
         }
-        if let val = findValue(pattern: #"\bX-?max\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mm)?"#, text: norm) {
+        if let val = findValue(pattern: #"\bX-?max\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mm)?"#, text: normText) {
             ts.xmax = val
         }
         
         // 2. Extract Woofer Sensitivity (must be in realistic 80...120 dB range)
-        let allDb = findAllNumbersWithUnit(norm, unit: "dB").filter { $0 >= 80.0 && $0 <= 120.0 }
+        let allDb = findAllNumbersWithUnit(normText, unit: "dB").filter { $0 >= 80.0 && $0 <= 120.0 }
         if let firstSPL = allDb.first {
             ts.spl = firstSPL
         }
 
         // 3. Extract Fs in Hz (15...180 Hz) if missing
         if ts.fs == 0 {
-            let allHz = findAllNumbersWithUnit(norm, unit: "Hz").filter { $0 >= 15.0 && $0 <= 180.0 }
+            let allHz = findAllNumbersWithUnit(normText, unit: "Hz").filter { $0 >= 15.0 && $0 <= 180.0 }
             if let firstFs = allHz.first {
                 ts.fs = firstFs
             }
@@ -219,7 +219,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
 
         // 4. Extract DC Resistance Re (1.0...32.0 Ohms) if missing
         if ts.re == 0 {
-            let allOhm = findAllNumbersWithUnit(norm, unit: "Ω").filter { $0 >= 1.0 && $0 <= 32.0 }
+            let allOhm = findAllNumbersWithUnit(normText, unit: "Ω").filter { $0 >= 1.0 && $0 <= 32.0 }
             let normalRe = allOhm.filter { $0 >= 3.0 && $0 <= 12.0 }
             if let reVal = normalRe.last ?? allOhm.first {
                 ts.re = reVal
@@ -228,7 +228,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
 
         // 5. Extract Voice Coil Inductance Le (mH) if missing
         if ts.le == 0 {
-            let allMh = findAllNumbersWithUnit(norm, unit: "mH")
+            let allMh = findAllNumbersWithUnit(normText, unit: "mH")
             if let maxMh = allMh.max() {
                 ts.le = maxMh
             }
