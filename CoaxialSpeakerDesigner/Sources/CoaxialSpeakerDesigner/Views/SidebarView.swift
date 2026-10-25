@@ -8,7 +8,8 @@ public struct SidebarView: View {
     }
 
     public var body: some View {
-        Form {
+        ScrollView {
+            Form {
             Section(header: Label("Datasheet Ingestion", systemImage: "doc.text.magnifyingglass")) {
                 Button(action: {
                     #if canImport(AppKit)
@@ -134,12 +135,14 @@ public struct SidebarView: View {
                     .frame(width: 140)
                 }
 
-                HStack {
+                HStack(spacing: 6) {
                     Text("Crossover Freq:")
-                    Spacer()
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
                     HStack(spacing: 4) {
-                        TextField("fx", text: decimalBinding(for: $viewModel.crossover.crossoverFrequency))
-                            .frame(width: 70)
+                        TextField("", text: decimalBinding(for: $viewModel.crossover.crossoverFrequency))
+                            .labelsHidden()
+                            .frame(width: 65)
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.trailing)
                         Text("Hz")
@@ -151,31 +154,39 @@ public struct SidebarView: View {
             }
 
             Section(header: Label("Woofer Thiele-Small Specs", systemImage: "waveform")) {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                    decimalRow("Fs:", value: $viewModel.driver.wooferTS.fs, unit: "Hz")
-                    decimalRow("Qes:", value: $viewModel.driver.wooferTS.qes)
-                    decimalRow("Qms:", value: $viewModel.driver.wooferTS.qms)
-                    decimalRow("Qts:", value: $viewModel.driver.wooferTS.qts)
-                    decimalRow("Vas:", value: $viewModel.driver.wooferTS.vas, unit: "L")
-                    decimalRow("Re:", value: $viewModel.driver.wooferTS.re, unit: "Ω")
-                    decimalRow("Le:", value: $viewModel.driver.wooferTS.le, unit: "mH")
-                    decimalRow("Sd:", value: $viewModel.driver.wooferTS.sd, unit: "cm²")
-                    decimalRow("Xmax:", value: $viewModel.driver.wooferTS.xmax, unit: "mm")
-                    decimalRow("Sensitivity:", value: $viewModel.driver.wooferTS.spl, unit: "dB")
+                ScrollView {
+                    VStack(spacing: 8) {
+                        decimalRow("Fs:", value: $viewModel.driver.wooferTS.fs, unit: "Hz")
+                        decimalRow("Qes:", value: $viewModel.driver.wooferTS.qes)
+                        decimalRow("Qms:", value: $viewModel.driver.wooferTS.qms)
+                        decimalRow("Qts:", value: $viewModel.driver.wooferTS.qts)
+                        decimalRow("Vas:", value: $viewModel.driver.wooferTS.vas, unit: "L")
+                        decimalRow("Re:", value: $viewModel.driver.wooferTS.re, unit: "Ω")
+                        decimalRow("Le:", value: $viewModel.driver.wooferTS.le, unit: "mH")
+                        decimalRow("Sd:", value: $viewModel.driver.wooferTS.sd, unit: "cm²")
+                        decimalRow("Xmax:", value: $viewModel.driver.wooferTS.xmax, unit: "mm")
+                        decimalRow("Sensitivity:", value: $viewModel.driver.wooferTS.spl, unit: "dB")
+                    }
+                    .padding(.vertical, 4)
                 }
-                .padding(.vertical, 8)
+                .frame(maxHeight: 280)
             }
 
             Section(header: Label("Tweeter Specifications", systemImage: "bolt.horizontal")) {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                    decimalRow("Tweeter Fs:", value: $viewModel.driver.tweeter.fs, unit: "Hz")
-                    decimalRow("Tweeter Re:", value: $viewModel.driver.tweeter.re, unit: "Ω")
-                    decimalRow("Tweeter Le:", value: $viewModel.driver.tweeter.le, unit: "mH")
-                    decimalRow("Sensitivity:", value: $viewModel.driver.tweeter.spl, unit: "dB")
+                ScrollView {
+                    VStack(spacing: 8) {
+                        decimalRow("Tweeter Fs:", value: $viewModel.driver.tweeter.fs, unit: "Hz")
+                        decimalRow("Tweeter Re:", value: $viewModel.driver.tweeter.re, unit: "Ω")
+                        decimalRow("Tweeter Le:", value: $viewModel.driver.tweeter.le, unit: "mH")
+                        decimalRow("Sensitivity:", value: $viewModel.driver.tweeter.spl, unit: "dB")
+                    }
+                    .padding(.vertical, 4)
                 }
+                .frame(maxHeight: 180)
             }
         }
         .formStyle(.grouped)
+        }
     }
 
     private func decimalBinding(for valueBinding: Binding<Double>) -> Binding<String> {
@@ -200,12 +211,15 @@ public struct SidebarView: View {
 
     @ViewBuilder
     private func decimalRow(_ title: String, value: Binding<Double>, unit: String = "") -> some View {
-        GridRow {
+        HStack(alignment: .center, spacing: 6) {
             Text(title)
-            Spacer()
+                .font(.body)
+                .lineLimit(1)
+            Spacer(minLength: 8)
             HStack(spacing: 4) {
-                TextField(title, text: decimalBinding(for: value))
-                    .frame(width: 70)
+                TextField("", text: decimalBinding(for: value))
+                    .labelsHidden()
+                    .frame(width: 65)
                     .textFieldStyle(.roundedBorder)
                     .multilineTextAlignment(.trailing)
                 if !unit.isEmpty {
