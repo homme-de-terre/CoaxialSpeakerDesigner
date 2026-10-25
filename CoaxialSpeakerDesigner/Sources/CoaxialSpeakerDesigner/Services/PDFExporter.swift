@@ -152,9 +152,9 @@ public class SchematicReportNSView: NSView {
         gridPath.lineWidth = 0.5
         gridPath.stroke()
 
-        // Wiring Rails & Dimensions (No short-circuit: Positive Bus and Ground Bus are horizontally separated!)
-        let groundBusX = boxRect.minX + 45.0
-        let signalBusX = boxRect.minX + 75.0
+        // Wiring Rails & Dimensions (Input terminals aligned on the X-axis: AMP (+) and AMP (-) share the same X coordinate!)
+        let ampX = boxRect.minX + 45.0
+        let signalDropX = ampX + 32.0
         let speakerX = boxRect.maxX - 120.0
 
         // Woofer Branch Levels (Top Tier)
@@ -170,51 +170,53 @@ public class SchematicReportNSView: NSView {
         let tweeterY = boxRect.minY + 190.0
         let tweeterGroundY = boxRect.minY + 252.0
 
-        // Input Terminals (Both AMP (+) and AMP (-) placed on the EXACT same Y-coordinate at the input level!)
-        let inputY = tweeterGroundY
-        drawInputBindingPost(point: CGPoint(x: signalBusX, y: inputY), text: "AMP (+)", isPositive: true)
-        drawInputBindingPost(point: CGPoint(x: groundBusX, y: inputY), text: "AMP (-)", isPositive: false)
+        // Input Terminals (Aligned on the X-axis: AMP (+) at the positive level of L1, AMP (-) at ground level)
+        drawTerminalDot(point: CGPoint(x: ampX, y: wooferY), text: "AMP (+)", isPositive: true)
+        drawTerminalDot(point: CGPoint(x: ampX, y: tweeterGroundY), text: "AMP (-)", isPositive: false)
 
-        // Vertical Input Positive Bus (+) Line at signalBusX: rising UP from inputY through tweeterY to wooferY
-        // Cleanly jumps over the woofer ground rail at wooferGroundY with an arc (NO SHORT CIRCUIT!)
-        let vBusPlus = NSBezierPath()
-        vBusPlus.move(to: CGPoint(x: signalBusX, y: inputY))
-        vBusPlus.line(to: CGPoint(x: signalBusX, y: tweeterY))
-        vBusPlus.line(to: CGPoint(x: signalBusX, y: wooferGroundY + 6.0))
-        vBusPlus.move(to: CGPoint(x: signalBusX, y: wooferGroundY - 6.0))
-        vBusPlus.line(to: CGPoint(x: signalBusX, y: wooferY))
+        // Top Positive Rail from AMP (+) at ampX to signalDropX
+        drawWire(from: CGPoint(x: ampX, y: wooferY), to: CGPoint(x: signalDropX, y: wooferY))
+
+        // Signal Drop Wire to Tweeter (+) at signalDropX: from wooferY down to tweeterY
+        // Jumps over the woofer ground rail at wooferGroundY with a bridge jumper arc (NO SHORT CIRCUIT!)
+        let vSignalDrop = NSBezierPath()
+        vSignalDrop.move(to: CGPoint(x: signalDropX, y: wooferY))
+        vSignalDrop.line(to: CGPoint(x: signalDropX, y: wooferGroundY - 6.0))
+        vSignalDrop.move(to: CGPoint(x: signalDropX, y: wooferGroundY + 6.0))
+        vSignalDrop.line(to: CGPoint(x: signalDropX, y: tweeterY))
         NSColor.black.setStroke()
-        vBusPlus.lineWidth = 1.5
-        vBusPlus.stroke()
+        vSignalDrop.lineWidth = 1.5
+        vSignalDrop.stroke()
 
-        // Draw bridge jumper arc on the positive bus jumping over the woofer ground rail
+        // Jumper bridge arc at (signalDropX, wooferGroundY) jumping over the woofer ground rail
         let jumperArc = NSBezierPath()
-        jumperArc.appendArc(withCenter: CGPoint(x: signalBusX, y: wooferGroundY), radius: 6.0, startAngle: 90, endAngle: 270, clockwise: false)
+        jumperArc.appendArc(withCenter: CGPoint(x: signalDropX, y: wooferGroundY), radius: 6.0, startAngle: 90, endAngle: 270, clockwise: false)
         jumperArc.lineWidth = 1.5
         jumperArc.stroke()
 
-        drawJunctionDot(point: CGPoint(x: signalBusX, y: wooferY))
-        drawJunctionDot(point: CGPoint(x: signalBusX, y: tweeterY))
+        drawJunctionDot(point: CGPoint(x: signalDropX, y: wooferY))
+        drawJunctionDot(point: CGPoint(x: signalDropX, y: tweeterY))
 
-        // Vertical Ground Bus (-) Line at groundBusX: rising UP from inputY to wooferGroundY
+        // Vertical Ground Return Line at ampX: from AMP (-) at (ampX, tweeterGroundY) UP to (ampX, wooferGroundY)
+        // Stops cleanly at wooferGroundY (never connects to wooferY = 45.0, so NO SHORT CIRCUIT!)
         let vGroundBus = NSBezierPath()
-        vGroundBus.move(to: CGPoint(x: groundBusX, y: inputY))
-        vGroundBus.line(to: CGPoint(x: groundBusX, y: wooferGroundY))
+        vGroundBus.move(to: CGPoint(x: ampX, y: tweeterGroundY))
+        vGroundBus.line(to: CGPoint(x: ampX, y: wooferGroundY))
         vGroundBus.lineWidth = 1.5
         vGroundBus.stroke()
-        drawJunctionDot(point: CGPoint(x: groundBusX, y: inputY))
-        drawJunctionDot(point: CGPoint(x: groundBusX, y: wooferGroundY))
+        drawJunctionDot(point: CGPoint(x: ampX, y: tweeterGroundY))
+        drawJunctionDot(point: CGPoint(x: ampX, y: wooferGroundY))
 
-        // Woofer Dedicated Ground Rail: from groundBusX to speakerX
+        // Woofer Dedicated Ground Rail: from (ampX, wooferGroundY) to (speakerX, wooferGroundY)
         let wGroundRail = NSBezierPath()
-        wGroundRail.move(to: CGPoint(x: groundBusX, y: wooferGroundY))
+        wGroundRail.move(to: CGPoint(x: ampX, y: wooferGroundY))
         wGroundRail.line(to: CGPoint(x: speakerX, y: wooferGroundY))
         wGroundRail.lineWidth = 1.5
         wGroundRail.stroke()
 
-        // Tweeter Dedicated Ground Rail: from groundBusX to speakerX
+        // Tweeter Dedicated Ground Rail: from (ampX, tweeterGroundY) to (speakerX, tweeterGroundY)
         let tGroundRail = NSBezierPath()
-        tGroundRail.move(to: CGPoint(x: groundBusX, y: tweeterGroundY))
+        tGroundRail.move(to: CGPoint(x: ampX, y: tweeterGroundY))
         tGroundRail.line(to: CGPoint(x: speakerX, y: tweeterGroundY))
         tGroundRail.lineWidth = 1.5
         tGroundRail.stroke()
@@ -232,28 +234,29 @@ public class SchematicReportNSView: NSView {
         // ==========================================
         // WOOFER LOW-PASS BRANCH (TOP TIER)
         // ==========================================
-        var curX = signalBusX
+        var curX = signalDropX
         let wooferTagAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 9),
             .foregroundColor: NSColor(calibratedRed: 0.1, green: 0.35, blue: 0.75, alpha: 1.0)
         ]
-        "WOOFER LOW-PASS (\(crossover.wooferOrder.rawValue))".draw(
-            at: CGPoint(x: signalBusX + 15, y: wooferHeaderY),
+        let allpassTag = crossover.enableAllpassFilter ? " + ALL-PASS DELAY" : ""
+        "WOOFER LOW-PASS (\(crossover.wooferOrder.rawValue))\(allpassTag)".draw(
+            at: CGPoint(x: signalDropX + 15, y: wooferHeaderY),
             withAttributes: wooferTagAttrs
         )
 
         // Series Inductor L1
         if let l1 = components.L1_mH {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 35, y: wooferY))
-            curX += 35
-            drawInductorSymbol(startX: curX, endX: curX + 60, y: wooferY, name: "L1", valueStr: "\(String(format: "%.2f", l1)) mH", color: .systemBlue)
-            curX += 60
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 28, y: wooferY))
+            curX += 28
+            drawInductorSymbol(startX: curX, endX: curX + 50, y: wooferY, name: "L1", valueStr: "\(String(format: "%.2f", l1)) mH", color: .systemBlue)
+            curX += 50
         }
 
         // Shunt Capacitor C1
         if let c1 = components.C1_uF {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 55, y: wooferY))
-            curX += 55
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 45, y: wooferY))
+            curX += 45
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
             drawShuntCapacitor(topX: curX, topY: wooferY, groundY: wooferGroundY, name: "C1", valueStr: "\(String(format: "%.2f", c1)) µF", color: .systemBlue)
@@ -262,26 +265,41 @@ public class SchematicReportNSView: NSView {
 
         // Series Inductor L2 (3rd/4th order)
         if let l2 = components.L2_mH {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 35, y: wooferY))
-            curX += 35
-            drawInductorSymbol(startX: curX, endX: curX + 60, y: wooferY, name: "L2", valueStr: "\(String(format: "%.2f", l2)) mH", color: .systemBlue)
-            curX += 60
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 28, y: wooferY))
+            curX += 28
+            drawInductorSymbol(startX: curX, endX: curX + 50, y: wooferY, name: "L2", valueStr: "\(String(format: "%.2f", l2)) mH", color: .systemBlue)
+            curX += 50
         }
 
         // Shunt Capacitor C2 (4th order)
         if let c2 = components.C2_uF {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 55, y: wooferY))
-            curX += 55
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 45, y: wooferY))
+            curX += 45
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
             drawShuntCapacitor(topX: curX, topY: wooferY, groundY: wooferGroundY, name: "C2", valueStr: "\(String(format: "%.2f", c2)) µF", color: .systemBlue)
             drawJunctionDot(point: CGPoint(x: curX, y: wooferGroundY))
         }
 
+        // All-Pass Delay Compensation Network (Series L_AP + Shunt C_AP)
+        if crossover.enableAllpassFilter, let lap = components.L_AP_mH, let cap = components.C_AP_uF {
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 28, y: wooferY))
+            curX += 28
+            drawInductorSymbol(startX: curX, endX: curX + 50, y: wooferY, name: "L_AP (Delay)", valueStr: "\(String(format: "%.2f", lap)) mH", color: .systemTeal)
+            curX += 50
+
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 45, y: wooferY))
+            curX += 45
+            drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
+
+            drawShuntCapacitor(topX: curX, topY: wooferY, groundY: wooferGroundY, name: "C_AP (Delay)", valueStr: "\(String(format: "%.2f", cap)) µF", color: .systemTeal)
+            drawJunctionDot(point: CGPoint(x: curX, y: wooferGroundY))
+        }
+
         // Zobel Network (Shunt Rz + Cz)
         if crossover.enableZobelNetwork, let rz = components.R_zobel_ohms, let cz = components.C_zobel_uF {
-            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 65, y: wooferY))
-            curX += 65
+            drawWire(from: CGPoint(x: curX, y: wooferY), to: CGPoint(x: curX + 50, y: wooferY))
+            curX += 50
             drawJunctionDot(point: CGPoint(x: curX, y: wooferY))
 
             drawShuntZobelBranch(
@@ -310,13 +328,13 @@ public class SchematicReportNSView: NSView {
         // ==========================================
         // TWEETER HIGH-PASS BRANCH (BOTTOM TIER)
         // ==========================================
-        var tCurX = signalBusX
+        var tCurX = signalDropX
         let tweeterTagAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 9),
             .foregroundColor: NSColor(calibratedRed: 0.8, green: 0.15, blue: 0.15, alpha: 1.0)
         ]
         "TWEETER HIGH-PASS (\(crossover.tweeterOrder.rawValue))".draw(
-            at: CGPoint(x: signalBusX + 15, y: tweeterHeaderY),
+            at: CGPoint(x: signalDropX + 15, y: tweeterHeaderY),
             withAttributes: tweeterTagAttrs
         )
 
@@ -389,8 +407,8 @@ public class SchematicReportNSView: NSView {
     // MARK: - 3. Bill of Materials (BOM) Table
     private func drawBOMTable(bounds: CGRect) {
         let margin: CGFloat = 36.0
-        let sectionY: CGFloat = 368.0
-        let tableY: CGFloat = 382.0
+        let sectionY: CGFloat = 360.0
+        let tableY: CGFloat = 372.0
         let width = bounds.width - (margin * 2)
 
         let titleAttrs: [NSAttributedString.Key: Any] = [
@@ -400,20 +418,20 @@ public class SchematicReportNSView: NSView {
         "BILL OF MATERIALS (BOM) COMPONENT TABLE".draw(at: CGPoint(x: margin, y: sectionY), withAttributes: titleAttrs)
 
         let headerAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 8.5),
+            .font: NSFont.boldSystemFont(ofSize: 8.0),
             .foregroundColor: NSColor.white
         ]
         let cellTitleAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 8.5),
+            .font: NSFont.boldSystemFont(ofSize: 8.0),
             .foregroundColor: NSColor.black
         ]
         let cellAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 8.5),
+            .font: NSFont.systemFont(ofSize: 8.0),
             .foregroundColor: NSColor.darkGray
         ]
 
         let colWidths: [CGFloat] = [75.0, 180.0, 120.0, width - 375.0]
-        let rowHeight: CGFloat = 16.0
+        let rowHeight: CGFloat = 14.0
 
         // Table Header
         let headerRect = CGRect(x: margin, y: tableY, width: width, height: rowHeight)
@@ -433,6 +451,12 @@ public class SchematicReportNSView: NSView {
         if let c1 = components.C1_uF { rows.append(("C1", "Metalized Polypropylene Film Cap", "\(String(format: "%.2f", c1)) µF", "400V DC, ±5% Tolerance")) }
         if let l2 = components.L2_mH { rows.append(("L2", "Air-Core Inductor", "\(String(format: "%.2f", l2)) mH", "1.0mm OFC Wire")) }
         if let c2 = components.C2_uF { rows.append(("C2", "Metalized Polypropylene Film Cap", "\(String(format: "%.2f", c2)) µF", "250V DC")) }
+
+        // All-Pass Delay Compensation Components
+        if crossover.enableAllpassFilter {
+            if let lap = components.L_AP_mH { rows.append(("L_AP", "All-Pass Delay Inductor", "\(String(format: "%.2f", lap)) mH", "OFC Wire, Low DCR")) }
+            if let cap = components.C_AP_uF { rows.append(("C_AP", "All-Pass Polypropylene Film Cap", "\(String(format: "%.2f", cap)) µF", "400V DC, ±5% Tolerance")) }
+        }
 
         if let c1 = components.C_HP1_uF { rows.append(("C_HP1", "Polypropylene Audio Cap", "\(String(format: "%.2f", c1)) µF", "250V DC High Precision")) }
         if let l1 = components.L_HP1_mH { rows.append(("L_HP1", "Air-Core Inductor", "\(String(format: "%.2f", l1)) mH", "0.8mm Wire")) }

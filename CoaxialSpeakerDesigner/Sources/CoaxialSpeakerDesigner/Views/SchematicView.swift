@@ -60,6 +60,11 @@ public struct SchematicView: View {
                             if let l1 = comp.L1_mH { CircuitBranchBox(title: "Series Inductor L1", value: "\(String(format: "%.2f", l1)) mH") }
                             if let c1 = comp.C1_uF { CircuitBranchBox(title: "Shunt Capacitor C1", value: "\(String(format: "%.2f", c1)) µF") }
                             if let l2 = comp.L2_mH { CircuitBranchBox(title: "Series Inductor L2", value: "\(String(format: "%.2f", l2)) mH") }
+                            if let c2 = comp.C2_uF { CircuitBranchBox(title: "Shunt Capacitor C2", value: "\(String(format: "%.2f", c2)) µF") }
+                            if viewModel.crossover.enableAllpassFilter {
+                                if let lap = comp.L_AP_mH { CircuitBranchBox(title: "All-Pass Inductor L_AP", value: "\(String(format: "%.2f", lap)) mH", color: .teal) }
+                                if let cap = comp.C_AP_uF { CircuitBranchBox(title: "All-Pass Capacitor C_AP", value: "\(String(format: "%.2f", cap)) µF", color: .teal) }
+                            }
                             if viewModel.crossover.enableZobelNetwork, let rz = comp.R_zobel_ohms, let cz = comp.C_zobel_uF {
                                 CircuitBranchBox(title: "Zobel Network", value: "Rz = \(String(format: "%.2f", rz)) Ω, Cz = \(String(format: "%.2f", cz)) µF", color: .orange)
                             }
@@ -131,6 +136,17 @@ public struct SchematicView: View {
         }
         if let l2 = comp.L2_mH {
             rows.append(BOMRow(designator: "L2", type: "Air-Core Inductor", value: "\(String(format: "%.2f", l2)) mH", spec: "1.0mm OFC Wire"))
+        }
+        if let c2 = comp.C2_uF {
+            rows.append(BOMRow(designator: "C2", type: "Metalized Polypropylene Film Cap", value: "\(String(format: "%.2f", c2)) µF", spec: "250V DC"))
+        }
+        if viewModel.crossover.enableAllpassFilter {
+            if let lap = comp.L_AP_mH {
+                rows.append(BOMRow(designator: "L_AP", type: "All-Pass Delay Inductor", value: "\(String(format: "%.2f", lap)) mH", spec: "OFC Wire, Low DCR"))
+            }
+            if let cap = comp.C_AP_uF {
+                rows.append(BOMRow(designator: "C_AP", type: "All-Pass Polypropylene Film Cap", value: "\(String(format: "%.2f", cap)) µF", spec: "400V DC, ±5% Tolerance"))
+            }
         }
         if let c1 = comp.C_HP1_uF {
             rows.append(BOMRow(designator: "C_HP1", type: "Polypropylene Audio Cap", value: "\(String(format: "%.2f", c1)) µF", spec: "250V DC High Precision"))
