@@ -209,32 +209,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
             ts.spl = firstSPL
         }
 
-        // 3. Extract Fs in Hz (15...180 Hz) if missing
-        if ts.fs == 0 {
-            let allHz = findAllNumbersWithUnit(normText, unit: "Hz").filter { $0 >= 15.0 && $0 <= 180.0 }
-            if let firstFs = allHz.first {
-                ts.fs = firstFs
-            }
-        }
-
-        // 4. Extract DC Resistance Re (1.0...32.0 Ohms) if missing
-        if ts.re == 0 {
-            let allOhm = findAllNumbersWithUnit(normText, unit: "Ω").filter { $0 >= 1.0 && $0 <= 32.0 }
-            let normalRe = allOhm.filter { $0 >= 3.0 && $0 <= 12.0 }
-            if let reVal = normalRe.last ?? allOhm.first {
-                ts.re = reVal
-            }
-        }
-
-        // 5. Extract Voice Coil Inductance Le (mH) if missing
-        if ts.le == 0 {
-            let allMh = findAllNumbersWithUnit(normText, unit: "mH")
-            if let maxMh = allMh.max() {
-                ts.le = maxMh
-            }
-        }
-
-        // 6. Dimensionless sequence for Qes, Qms, Qts and Table Context
+        // 3. Dimensionless sequence for Qes, Qms, Qts and Table Context
         let pattern = #"\b(\d+(?:\.\d+)?)\b"#
         var qStartLoc = -1
         var qEndLoc = -1
@@ -317,6 +292,24 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         }
         
         // Final fallback checks if still 0
+        if ts.fs == 0.0 {
+            let allHz = findAllNumbersWithUnit(normText, unit: "Hz").filter { $0 >= 18.0 && $0 <= 180.0 }
+            if let firstFs = allHz.first {
+                ts.fs = firstFs
+            }
+        }
+        if ts.re == 0.0 {
+            let allOhm = findAllNumbersWithUnit(normText, unit: "Ω").filter { $0 >= 2.0 && $0 <= 25.0 }
+            if let firstRe = allOhm.first {
+                ts.re = firstRe
+            }
+        }
+        if ts.le == 0.0 {
+            let allMh = findAllNumbersWithUnit(normText, unit: "mH")
+            if let maxMh = allMh.max() {
+                ts.le = maxMh
+            }
+        }
         if ts.vas == 0.0 {
             if let v = findValueWithUnit(pattern: #"\b(\d+(?:\.\d+)?)\s*(dm[3³]|liters?|litres?|m[3³]|m\^3)\b"#, text: normText) {
                 ts.vas = v

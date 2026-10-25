@@ -61,6 +61,43 @@ function snapE12(val) {
   return closest * Math.pow(10, exponent);
 }
 
+// --- Resilient Decimal Input Component ---
+function DecimalInput({ value, onChange, className, isEuropean, placeholder = "0" }) {
+  const [localText, setLocalText] = useState(null);
+
+  const formattedValue = value !== undefined && value !== null 
+    ? (isEuropean ? String(value).replace('.', ',') : String(value))
+    : '';
+
+  const displayValue = localText !== null ? localText : formattedValue;
+
+  const handleChange = (e) => {
+    const raw = e.target.value;
+    if (/^[-0-9.,]*$/.test(raw)) {
+      setLocalText(raw);
+      const parsed = parseFloat(raw.replace(',', '.'));
+      if (!isNaN(parsed)) {
+        onChange(parsed);
+      }
+    }
+  };
+
+  const handleBlur = () => {
+    setLocalText(null);
+  };
+
+  return (
+    <input
+      type="text"
+      value={displayValue}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+}
+
 export default function App() {
   // --- State Variables ---
   const [activeTab, setActiveTab] = useState('amplitude'); // 'amplitude' | 'phase' | 'impedance' | 'cabinet' | 'crossover' | 'bom' | 'frd'
@@ -75,6 +112,7 @@ export default function App() {
   const [selectedFileName, setSelectedFileName] = useState("");
   const [missingParams, setMissingParams] = useState([]);
   const [plausibilityWarnings, setPlausibilityWarnings] = useState([]);
+  const [isEuropeanDecimal, setIsEuropeanDecimal] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const fileInputRef = useRef(null);
 
@@ -776,20 +814,38 @@ export default function App() {
           />
         </div>
 
+        {/* Decimal Separator Toggle */}
+        <div className="flex items-center justify-between text-xs bg-slate-900/60 p-2.5 rounded-lg border border-slate-700/80">
+          <span className="text-[11px] font-semibold text-slate-300">Decimal Separator</span>
+          <div className="flex bg-slate-800 rounded p-0.5 border border-slate-700">
+            <button
+              type="button"
+              onClick={() => setIsEuropeanDecimal(false)}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition cursor-pointer ${!isEuropeanDecimal ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+              US ( . )
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsEuropeanDecimal(true)}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition cursor-pointer ${isEuropeanDecimal ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+              EU ( , )
+            </button>
+          </div>
+        </div>
+
         {/* Crossover Frequency Spec */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Crossover Frequency (fx)</label>
-            <span className="text-xs font-mono text-blue-400 font-bold">{fx} Hz</span>
+            <span className="text-xs font-mono text-blue-400 font-bold">{isEuropeanDecimal ? String(fx).replace('.', ',') : fx} Hz</span>
           </div>
           <div className="relative">
-            <input
-              type="number"
-              step="25"
-              min="400"
-              max="8000"
+            <DecimalInput
               value={fx}
-              onChange={(e) => setFx(+e.target.value)}
+              onChange={(v) => setFx(v)}
+              isEuropean={isEuropeanDecimal}
               className="w-full bg-slate-900 border border-slate-700 rounded pl-2.5 pr-8 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
             />
             <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Hz</span>
@@ -829,14 +885,13 @@ export default function App() {
                 {missingParams.includes('Fs') && <span className="text-amber-400 text-[10px]">required</span>}
               </label>
               <div className="relative mt-1">
-                <input 
-                  type="number" 
+                <DecimalInput 
                   value={ts.fs} 
-                  onChange={(e) => {
-                    const v = +e.target.value;
-                    setTs({ ...ts, fs: v });
+                  onChange={(v) => {
+                    setTs(prev => ({ ...prev, fs: v }));
                     validateManualField('Fs', v);
                   }} 
+                  isEuropean={isEuropeanDecimal}
                   className={`w-full bg-slate-900 border rounded pl-2 pr-7 py-1 text-white text-xs ${missingParams.includes('Fs') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Hz</span>
@@ -848,16 +903,14 @@ export default function App() {
                 {missingParams.includes('Qes') && <span className="text-amber-400 text-[10px]">required</span>}
               </label>
               <div className="mt-1">
-                <input 
-                  type="number" 
-                  step="0.01" 
+                <DecimalInput 
                   value={ts.qes} 
-                  onChange={(e) => {
-                    const newQes = +e.target.value;
-                    const newQts = (newQes > 0 && ts.qms > 0) ? (newQes * ts.qms) / (newQes + ts.qms) : ts.qts;
-                    setTs({ ...ts, qes: newQes, qts: parseFloat(newQts.toFixed(3)) });
-                    validateManualField('Qes', newQes);
+                  onChange={(v) => {
+                    const newQts = (v > 0 && ts.qms > 0) ? (v * ts.qms) / (v + ts.qms) : ts.qts;
+                    setTs(prev => ({ ...prev, qes: v, qts: parseFloat(newQts.toFixed(3)) }));
+                    validateManualField('Qes', v);
                   }} 
+                  isEuropean={isEuropeanDecimal}
                   className={`w-full bg-slate-900 border rounded px-2 py-1 text-white text-xs ${missingParams.includes('Qes') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
                 />
               </div>
@@ -868,16 +921,14 @@ export default function App() {
                 {missingParams.includes('Qms') && <span className="text-amber-400 text-[10px]">required</span>}
               </label>
               <div className="mt-1">
-                <input 
-                  type="number" 
-                  step="0.1" 
+                <DecimalInput 
                   value={ts.qms} 
-                  onChange={(e) => {
-                    const newQms = +e.target.value;
-                    const newQts = (ts.qes > 0 && newQms > 0) ? (ts.qes * newQms) / (ts.qes + newQms) : ts.qts;
-                    setTs({ ...ts, qms: newQms, qts: parseFloat(newQts.toFixed(3)) });
-                    validateManualField('Qms', newQms);
+                  onChange={(v) => {
+                    const newQts = (ts.qes > 0 && v > 0) ? (ts.qes * v) / (ts.qes + v) : ts.qts;
+                    setTs(prev => ({ ...prev, qms: v, qts: parseFloat(newQts.toFixed(3)) }));
+                    validateManualField('Qms', v);
                   }} 
+                  isEuropean={isEuropeanDecimal}
                   className={`w-full bg-slate-900 border rounded px-2 py-1 text-white text-xs ${missingParams.includes('Qms') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
                 />
               </div>
@@ -888,15 +939,13 @@ export default function App() {
                 {missingParams.includes('Qts') && <span className="text-amber-400 text-[10px]">required</span>}
               </label>
               <div className="mt-1">
-                <input 
-                  type="number" 
-                  step="0.01" 
+                <DecimalInput 
                   value={ts.qts} 
-                  onChange={(e) => {
-                    const v = +e.target.value;
-                    setTs({ ...ts, qts: v });
+                  onChange={(v) => {
+                    setTs(prev => ({ ...prev, qts: v }));
                     validateManualField('Qts', v);
                   }} 
+                  isEuropean={isEuropeanDecimal}
                   className={`w-full bg-slate-900 border rounded px-2 py-1 text-white text-xs ${missingParams.includes('Qts') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
                 />
               </div>
@@ -907,15 +956,13 @@ export default function App() {
                 {missingParams.includes('Vas') && <span className="text-amber-400 text-[10px]">required</span>}
               </label>
               <div className="relative mt-1">
-                <input 
-                  type="number" 
-                  step="0.5" 
+                <DecimalInput 
                   value={ts.vas} 
-                  onChange={(e) => {
-                    const v = +e.target.value;
-                    setTs({ ...ts, vas: v });
+                  onChange={(v) => {
+                    setTs(prev => ({ ...prev, vas: v }));
                     validateManualField('Vas', v);
                   }} 
+                  isEuropean={isEuropeanDecimal}
                   className={`w-full bg-slate-900 border rounded pl-2 pr-6 py-1 text-white text-xs ${missingParams.includes('Vas') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">L</span>
@@ -927,15 +974,13 @@ export default function App() {
                 {missingParams.includes('Re') && <span className="text-amber-400 text-[10px]">required</span>}
               </label>
               <div className="relative mt-1">
-                <input 
-                  type="number" 
-                  step="0.1" 
+                <DecimalInput 
                   value={ts.re} 
-                  onChange={(e) => {
-                    const v = +e.target.value;
-                    setTs({ ...ts, re: v });
+                  onChange={(v) => {
+                    setTs(prev => ({ ...prev, re: v }));
                     validateManualField('Re', v);
                   }} 
+                  isEuropean={isEuropeanDecimal}
                   className={`w-full bg-slate-900 border rounded pl-2 pr-6 py-1 text-white text-xs ${missingParams.includes('Re') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Ω</span>
@@ -944,11 +989,10 @@ export default function App() {
             <div>
               <label className="text-slate-400 text-[11px]">Le</label>
               <div className="relative mt-1">
-                <input 
-                  type="number" 
-                  step="0.05" 
+                <DecimalInput 
                   value={ts.le} 
-                  onChange={(e) => setTs({ ...ts, le: +e.target.value })} 
+                  onChange={(v) => setTs(prev => ({ ...prev, le: v }))} 
+                  isEuropean={isEuropeanDecimal}
                   className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-white text-xs" 
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">mH</span>
@@ -957,11 +1001,10 @@ export default function App() {
             <div>
               <label className="text-slate-400 text-[11px]">Sd</label>
               <div className="relative mt-1">
-                <input 
-                  type="number" 
-                  step="1" 
+                <DecimalInput 
                   value={ts.sd} 
-                  onChange={(e) => setTs({ ...ts, sd: +e.target.value })} 
+                  onChange={(v) => setTs(prev => ({ ...prev, sd: v }))} 
+                  isEuropean={isEuropeanDecimal}
                   className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-9 py-1 text-white text-xs" 
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">cm²</span>
@@ -970,11 +1013,10 @@ export default function App() {
             <div>
               <label className="text-slate-400 text-[11px]">Xmax</label>
               <div className="relative mt-1">
-                <input 
-                  type="number" 
-                  step="0.1" 
+                <DecimalInput 
                   value={ts.xmax} 
-                  onChange={(e) => setTs({ ...ts, xmax: +e.target.value })} 
+                  onChange={(v) => setTs(prev => ({ ...prev, xmax: v }))} 
+                  isEuropean={isEuropeanDecimal}
                   className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-white text-xs" 
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">mm</span>
@@ -986,15 +1028,13 @@ export default function App() {
                 {missingParams.includes('Sensitivity') && <span className="text-amber-400 text-[10px]">required</span>}
               </label>
               <div className="relative mt-1">
-                <input 
-                  type="number" 
-                  step="0.5" 
+                <DecimalInput 
                   value={ts.spl} 
-                  onChange={(e) => {
-                    const v = +e.target.value;
-                    setTs({ ...ts, spl: v });
+                  onChange={(v) => {
+                    setTs(prev => ({ ...prev, spl: v }));
                     validateManualField('Sensitivity', v);
                   }} 
+                  isEuropean={isEuropeanDecimal}
                   className={`w-full bg-slate-900 border rounded pl-2 pr-7 py-1 text-white text-xs ${missingParams.includes('Sensitivity') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">dB</span>
@@ -1010,28 +1050,48 @@ export default function App() {
             <div>
               <label className="text-slate-400 text-[11px]">Fs</label>
               <div className="relative mt-1">
-                <input type="number" value={tweeter.fs} onChange={(e) => setTweeter({ ...tweeter, fs: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-7 py-1 text-white text-xs" />
+                <DecimalInput 
+                  value={tweeter.fs} 
+                  onChange={(v) => setTweeter(prev => ({ ...prev, fs: v }))} 
+                  isEuropean={isEuropeanDecimal}
+                  className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-7 py-1 text-white text-xs" 
+                />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Hz</span>
               </div>
             </div>
             <div>
               <label className="text-slate-400 text-[11px]">Re</label>
               <div className="relative mt-1">
-                <input type="number" step="0.1" value={tweeter.re} onChange={(e) => setTweeter({ ...tweeter, re: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-6 py-1 text-white text-xs" />
+                <DecimalInput 
+                  value={tweeter.re} 
+                  onChange={(v) => setTweeter(prev => ({ ...prev, re: v }))} 
+                  isEuropean={isEuropeanDecimal}
+                  className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-6 py-1 text-white text-xs" 
+                />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Ω</span>
               </div>
             </div>
             <div>
               <label className="text-slate-400 text-[11px]">Le</label>
               <div className="relative mt-1">
-                <input type="number" step="0.01" value={tweeter.le} onChange={(e) => setTweeter({ ...tweeter, le: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-white text-xs" />
+                <DecimalInput 
+                  value={tweeter.le} 
+                  onChange={(v) => setTweeter(prev => ({ ...prev, le: v }))} 
+                  isEuropean={isEuropeanDecimal}
+                  className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-white text-xs" 
+                />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">mH</span>
               </div>
             </div>
             <div>
               <label className="text-slate-400 text-[11px]">SPL</label>
               <div className="relative mt-1">
-                <input type="number" step="0.5" value={tweeter.spl} onChange={(e) => setTweeter({ ...tweeter, spl: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-7 py-1 text-white text-xs" />
+                <DecimalInput 
+                  value={tweeter.spl} 
+                  onChange={(v) => setTweeter(prev => ({ ...prev, spl: v }))} 
+                  isEuropean={isEuropeanDecimal}
+                  className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-7 py-1 text-white text-xs" 
+                />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">dB</span>
               </div>
             </div>

@@ -26,6 +26,7 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var errorMessage: String? = nil
     @Published public var missingParameters: [String] = []
     @Published public var plausibilityWarnings: [String] = []
+    @Published public var isEuropeanDecimal: Bool = false
 
     @Published public var selectedTab: Int = 0 // 0: Amplitude, 1: Phase, 2: Impedance, 3: Cabinet, 4: Crossover, 5: BOM, 6: FRD
     @Published public var wooferFRDText: String = ""
