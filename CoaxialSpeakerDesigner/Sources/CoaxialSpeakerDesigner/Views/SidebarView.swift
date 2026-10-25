@@ -308,13 +308,6 @@ public struct SidebarView: View {
                     }
                 }
             }
-                        Text("Sensitivity (dB):")
-                        Spacer()
-                        TextField("SPL", value: $viewModel.driver.tweeter.spl, format: .number)
-                            .frame(width: 70)
-                    }
-                }
-            }
         }
         .formStyle(.grouped)
     }
