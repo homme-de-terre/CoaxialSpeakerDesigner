@@ -24,6 +24,8 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var isLoadingDatasheet: Bool = false
     @Published public var statusMessage: String? = nil
     @Published public var errorMessage: String? = nil
+    @Published public var missingParameters: [String] = []
+    @Published public var plausibilityWarnings: [String] = []
 
     @Published public var selectedTab: Int = 0 // 0: Amplitude, 1: Phase, 2: Impedance, 3: Cabinet, 4: Crossover, 5: BOM, 6: FRD
     @Published public var wooferFRDText: String = ""
@@ -53,6 +55,16 @@ public class MainDesignerViewModel: ObservableObject {
     public func recalculateSimulation() {
         objectWillChange.send()
         
+        // If curves are synthetic (no custom FRD imported), keep them in sync with current manual/parsed T/S parameters
+        if self.wooferFRDText.isEmpty {
+            driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS)
+        }
+        if self.tweeterFRDText.isEmpty {
+            driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter)
+        }
+        driver.wooferImpedanceCurve = CoaxialDriver.generateSyntheticWooferImpedance(ts: driver.wooferTS)
+        driver.tweeterImpedanceCurve = CoaxialDriver.generateSyntheticTweeterImpedance(tw: driver.tweeter)
+
         let newPoints = SimulationEngine.simulate(
             driver: driver,
             cabinet: cabinet,
@@ -67,6 +79,45 @@ public class MainDesignerViewModel: ObservableObject {
 
         self.simulationPoints = newPoints
         self.calculatedComponents = newComponents
+        self.validateParameters()
+    }
+
+    /// Dynamically validates active driver parameters against physical bounds.
+    public func validateParameters() {
+        var missing: [String] = []
+        var warns: [String] = []
+
+        if driver.wooferTS.fs == 0 { missing.append("Fs") }
+        else if driver.wooferTS.fs < 15.0 || driver.wooferTS.fs > 250.0 { warns.append("Fs (\(driver.wooferTS.fs) Hz) outside typical range (15–200 Hz).") }
+
+        if driver.wooferTS.qes == 0 { missing.append("Qes") }
+        else if driver.wooferTS.qes < 0.08 || driver.wooferTS.qes > 2.5 { warns.append("Qes (\(driver.wooferTS.qes)) outside typical range (0.1–2.0).") }
+
+        if driver.wooferTS.qms == 0 { missing.append("Qms") }
+        else if driver.wooferTS.qms < 0.8 || driver.wooferTS.qms > 30.0 { warns.append("Qms (\(driver.wooferTS.qms)) outside typical range (1.0–25.0).") }
+
+        if driver.wooferTS.qts == 0 { missing.append("Qts") }
+        else if driver.wooferTS.qts < 0.08 || driver.wooferTS.qts > 2.0 { warns.append("Qts (\(driver.wooferTS.qts)) outside typical range (0.1–1.5).") }
+
+        if driver.wooferTS.vas == 0 { missing.append("Vas") }
+        else if driver.wooferTS.vas < 1.0 || driver.wooferTS.vas > 900.0 { warns.append("Vas (\(driver.wooferTS.vas) L) outside typical range (2–800 L).") }
+
+        if driver.wooferTS.re == 0 { missing.append("Re") }
+        else if driver.wooferTS.re < 1.0 || driver.wooferTS.re > 25.0 { warns.append("Woofer Re (\(driver.wooferTS.re) Ω) outside typical range (1.5–20 Ω).") }
+
+        if driver.wooferTS.spl == 0 { missing.append("Sensitivity") }
+        else if driver.wooferTS.spl < 75.0 || driver.wooferTS.spl > 115.0 { warns.append("Woofer Sensitivity (\(driver.wooferTS.spl) dB) seems implausible.") }
+
+        if driver.tweeter.spl < 85.0 || driver.tweeter.spl > 125.0 {
+            warns.append("Tweeter Sensitivity (\(driver.tweeter.spl) dB) seems implausible.")
+        }
+
+        if crossover.crossoverFrequency < 500.0 || crossover.crossoverFrequency > 8000.0 {
+            warns.append("Crossover Frequency (\(Int(crossover.crossoverFrequency)) Hz) outside typical coaxial range.")
+        }
+
+        self.missingParameters = missing
+        self.plausibilityWarnings = warns
     }
 
     /// Downloads driver datasheet from URL and ingests parameters and text.
@@ -137,11 +188,18 @@ public class MainDesignerViewModel: ObservableObject {
 #endif
 
     /// Applies extracted datasheet parameters and synthesizes driver response curves.
-    private func applyParsedDatasheet(result: (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, rawText: String), sourceName: String) {
+    private func applyParsedDatasheet(result: (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, recommendedCrossover: Double, missingParams: [String], warnings: [String], rawText: String), sourceName: String) {
         self.driver.name = result.name
         self.driver.datasheetURL = sourceName
         self.driver.wooferTS = result.ts
         self.driver.tweeter = result.tweeter
+
+        if result.recommendedCrossover >= 500.0 && result.recommendedCrossover <= 8000.0 {
+            self.crossover.crossoverFrequency = result.recommendedCrossover
+        }
+
+        self.missingParameters = result.missingParams
+        self.plausibilityWarnings = result.warnings
 
         if self.wooferFRDText.isEmpty {
             self.driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: result.ts)
@@ -153,7 +211,14 @@ public class MainDesignerViewModel: ObservableObject {
         self.driver.tweeterImpedanceCurve = CoaxialDriver.generateSyntheticTweeterImpedance(tw: result.tweeter)
 
         self.isLoadingDatasheet = false
-        self.statusMessage = "Successfully parsed driver parameters from \(sourceName)."
+        if !result.warnings.isEmpty {
+            self.statusMessage = "Warning: \(result.warnings.joined(separator: " | "))"
+        } else if !result.missingParams.isEmpty {
+            self.statusMessage = "Missing from datasheet: \(result.missingParams.joined(separator: ", ")) — please enter manually."
+        } else {
+            let xoStr = result.recommendedCrossover > 0 ? " (fx: \(Int(result.recommendedCrossover)) Hz)" : ""
+            self.statusMessage = "Successfully parsed driver parameters from \(sourceName)\(xoStr)."
+        }
         self.recalculateSimulation()
     }
 

@@ -73,6 +73,8 @@ export default function App() {
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState("");
+  const [missingParams, setMissingParams] = useState([]);
+  const [plausibilityWarnings, setPlausibilityWarnings] = useState([]);
   const [statusMsg, setStatusMsg] = useState("");
   const fileInputRef = useRef(null);
 
@@ -539,8 +541,9 @@ export default function App() {
           vas: parsed.ts.vas || prev.vas,
           re: parsed.ts.re || prev.re,
           le: parsed.ts.le || prev.le,
-          spl: parsed.ts.spl || prev.spl,
-          xmax: parsed.ts.xmax || prev.xmax
+          sd: parsed.ts.sd || prev.sd,
+          xmax: parsed.ts.xmax || prev.xmax,
+          spl: parsed.ts.spl || prev.spl
         };
       });
       if (parsed.driverName) {
@@ -551,12 +554,33 @@ export default function App() {
           ...prev,
           fs: parsed.tweeter.fs || prev.fs,
           re: parsed.tweeter.re || prev.re,
+          le: parsed.tweeter.le || prev.le,
           spl: parsed.tweeter.spl || prev.spl
         }));
       }
-      setStatusMsg(`Successfully extracted specs from ${parsed.driverName || sourceName || 'datasheet'}`);
+      if (parsed.recommendedCrossover && parsed.recommendedCrossover >= 500 && parsed.recommendedCrossover <= 8000) {
+        setFx(parsed.recommendedCrossover);
+      }
+
+      setMissingParams(parsed.missingParams || []);
+      setPlausibilityWarnings(parsed.warnings || []);
+
+      if (parsed.warnings && parsed.warnings.length > 0) {
+        setStatusMsg(`Warning: ${parsed.warnings.join(' | ')}`);
+      } else if (parsed.missingParams && parsed.missingParams.length > 0) {
+        setStatusMsg(`Datasheet ingested. Missing: ${parsed.missingParams.join(', ')} — please enter manually.`);
+      } else {
+        const xoInfo = parsed.recommendedCrossover ? ` (fx: ${parsed.recommendedCrossover} Hz)` : '';
+        setStatusMsg(`Successfully extracted specs for ${parsed.driverName || sourceName}${xoInfo}`);
+      }
     } else {
       setStatusMsg(`Could not parse parameters from ${sourceName || 'datasheet'}.`);
+    }
+  };
+
+  const validateManualField = (paramName, value) => {
+    if (value && value > 0) {
+      setMissingParams(prev => prev.filter(p => p !== paramName));
     }
   };
 
@@ -712,47 +736,269 @@ export default function App() {
               {statusMsg}
             </p>
           )}
+
+          {/* Missing Parameters Notification Banner */}
+          {missingParams.length > 0 && (
+            <div className="p-2 bg-amber-950/40 border border-amber-500/50 rounded text-[11px] text-amber-200 flex items-start space-x-1.5">
+              <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" />
+              <div>
+                <span className="font-semibold text-amber-300">Missing from datasheet:</span> {missingParams.join(', ')}.
+                <p className="text-[10px] text-amber-300/80 mt-0.5">Please check and enter the values manually in the fields below.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Plausibility Warning Banner */}
+          {plausibilityWarnings.length > 0 && (
+            <div className="p-2 bg-red-950/40 border border-red-500/50 rounded text-[11px] text-red-200 flex items-start space-x-1.5">
+              <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-red-400" />
+              <div>
+                <span className="font-semibold text-red-300">Implausible parameter:</span>
+                <ul className="list-disc list-inside mt-0.5 space-y-0.5 text-[10px]">
+                  {plausibilityWarnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Driver Identity */}
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Driver Model Name</label>
+          <input
+            type="text"
+            value={driverName}
+            onChange={(e) => setDriverName(e.target.value)}
+            className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 font-medium"
+            placeholder="Driver Name"
+          />
+        </div>
+
+        {/* Crossover Frequency Spec */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Crossover Frequency (fx)</label>
+            <span className="text-xs font-mono text-blue-400 font-bold">{fx} Hz</span>
+          </div>
+          <div className="relative">
+            <input
+              type="number"
+              step="25"
+              min="400"
+              max="8000"
+              value={fx}
+              onChange={(e) => setFx(+e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded pl-2.5 pr-8 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+            />
+            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Hz</span>
+          </div>
         </div>
 
         {/* Driver TS Parameters */}
         <div className="space-y-3">
-          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Woofer T/S Parameters</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Woofer T/S Parameters</h2>
+            <div className="flex items-center space-x-2">
+              {missingParams.some(p => ['Fs', 'Qes', 'Qms', 'Qts', 'Vas', 'Re', 'Le', 'Sd', 'Xmax', 'Sensitivity'].includes(p)) && (
+                <span className="text-[10px] text-amber-400 font-medium">entry needed</span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setTs({ fs: 48.0, qes: 0.36, qms: 4.8, qts: 0.335, vas: 28.0, re: 6.2, le: 0.85, sd: 210.0, xmax: 5.5, spl: 89.0 });
+                  setTweeter({ fs: 1200.0, re: 5.8, le: 0.08, spl: 94.0 });
+                  setFx(2200);
+                  setDriverName("8CX21 Coaxial 8-inch Driver");
+                  setMissingParams([]);
+                  setPlausibilityWarnings([]);
+                  setStatusMsg("Reset specifications to standard defaults.");
+                }}
+                className="text-[10px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                title="Reset driver parameters to template defaults"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
-              <label className="text-slate-400">Fs (Hz)</label>
-              <input type="number" value={ts.fs} onChange={(e) => setTs({ ...ts, fs: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 flex items-center justify-between text-[11px]">
+                <span>Fs</span>
+                {missingParams.includes('Fs') && <span className="text-amber-400 text-[10px]">required</span>}
+              </label>
+              <div className="relative mt-1">
+                <input 
+                  type="number" 
+                  value={ts.fs} 
+                  onChange={(e) => {
+                    const v = +e.target.value;
+                    setTs({ ...ts, fs: v });
+                    validateManualField('Fs', v);
+                  }} 
+                  className={`w-full bg-slate-900 border rounded pl-2 pr-7 py-1 text-white text-xs ${missingParams.includes('Fs') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Hz</span>
+              </div>
             </div>
             <div>
-              <label className="text-slate-400">Qes</label>
-              <input type="number" step="0.01" value={ts.qes} onChange={(e) => {
-                const newQes = +e.target.value;
-                const newQts = (newQes > 0 && ts.qms > 0) ? (newQes * ts.qms) / (newQes + ts.qms) : ts.qts;
-                setTs({ ...ts, qes: newQes, qts: parseFloat(newQts.toFixed(3)) });
-              }} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 flex items-center justify-between text-[11px]">
+                <span>Qes</span>
+                {missingParams.includes('Qes') && <span className="text-amber-400 text-[10px]">required</span>}
+              </label>
+              <div className="mt-1">
+                <input 
+                  type="number" 
+                  step="0.01" 
+                  value={ts.qes} 
+                  onChange={(e) => {
+                    const newQes = +e.target.value;
+                    const newQts = (newQes > 0 && ts.qms > 0) ? (newQes * ts.qms) / (newQes + ts.qms) : ts.qts;
+                    setTs({ ...ts, qes: newQes, qts: parseFloat(newQts.toFixed(3)) });
+                    validateManualField('Qes', newQes);
+                  }} 
+                  className={`w-full bg-slate-900 border rounded px-2 py-1 text-white text-xs ${missingParams.includes('Qes') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
+                />
+              </div>
             </div>
             <div>
-              <label className="text-slate-400">Qms</label>
-              <input type="number" step="0.1" value={ts.qms} onChange={(e) => {
-                const newQms = +e.target.value;
-                const newQts = (ts.qes > 0 && newQms > 0) ? (ts.qes * newQms) / (ts.qes + newQms) : ts.qts;
-                setTs({ ...ts, qms: newQms, qts: parseFloat(newQts.toFixed(3)) });
-              }} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 flex items-center justify-between text-[11px]">
+                <span>Qms</span>
+                {missingParams.includes('Qms') && <span className="text-amber-400 text-[10px]">required</span>}
+              </label>
+              <div className="mt-1">
+                <input 
+                  type="number" 
+                  step="0.1" 
+                  value={ts.qms} 
+                  onChange={(e) => {
+                    const newQms = +e.target.value;
+                    const newQts = (ts.qes > 0 && newQms > 0) ? (ts.qes * newQms) / (ts.qes + newQms) : ts.qts;
+                    setTs({ ...ts, qms: newQms, qts: parseFloat(newQts.toFixed(3)) });
+                    validateManualField('Qms', newQms);
+                  }} 
+                  className={`w-full bg-slate-900 border rounded px-2 py-1 text-white text-xs ${missingParams.includes('Qms') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
+                />
+              </div>
             </div>
             <div>
-              <label className="text-slate-400">Qts (Total Q)</label>
-              <input type="number" step="0.01" value={ts.qts} onChange={(e) => setTs({ ...ts, qts: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 flex items-center justify-between text-[11px]">
+                <span>Qts (Total Q)</span>
+                {missingParams.includes('Qts') && <span className="text-amber-400 text-[10px]">required</span>}
+              </label>
+              <div className="mt-1">
+                <input 
+                  type="number" 
+                  step="0.01" 
+                  value={ts.qts} 
+                  onChange={(e) => {
+                    const v = +e.target.value;
+                    setTs({ ...ts, qts: v });
+                    validateManualField('Qts', v);
+                  }} 
+                  className={`w-full bg-slate-900 border rounded px-2 py-1 text-white text-xs ${missingParams.includes('Qts') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
+                />
+              </div>
             </div>
             <div>
-              <label className="text-slate-400">Vas (Liters)</label>
-              <input type="number" step="0.5" value={ts.vas} onChange={(e) => setTs({ ...ts, vas: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 flex items-center justify-between text-[11px]">
+                <span>Vas</span>
+                {missingParams.includes('Vas') && <span className="text-amber-400 text-[10px]">required</span>}
+              </label>
+              <div className="relative mt-1">
+                <input 
+                  type="number" 
+                  step="0.5" 
+                  value={ts.vas} 
+                  onChange={(e) => {
+                    const v = +e.target.value;
+                    setTs({ ...ts, vas: v });
+                    validateManualField('Vas', v);
+                  }} 
+                  className={`w-full bg-slate-900 border rounded pl-2 pr-6 py-1 text-white text-xs ${missingParams.includes('Vas') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">L</span>
+              </div>
             </div>
             <div>
-              <label className="text-slate-400">Re (Ω)</label>
-              <input type="number" step="0.1" value={ts.re} onChange={(e) => setTs({ ...ts, re: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 flex items-center justify-between text-[11px]">
+                <span>Re</span>
+                {missingParams.includes('Re') && <span className="text-amber-400 text-[10px]">required</span>}
+              </label>
+              <div className="relative mt-1">
+                <input 
+                  type="number" 
+                  step="0.1" 
+                  value={ts.re} 
+                  onChange={(e) => {
+                    const v = +e.target.value;
+                    setTs({ ...ts, re: v });
+                    validateManualField('Re', v);
+                  }} 
+                  className={`w-full bg-slate-900 border rounded pl-2 pr-6 py-1 text-white text-xs ${missingParams.includes('Re') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Ω</span>
+              </div>
             </div>
             <div>
-              <label className="text-slate-400">Le (mH)</label>
-              <input type="number" step="0.05" value={ts.le} onChange={(e) => setTs({ ...ts, le: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 text-[11px]">Le</label>
+              <div className="relative mt-1">
+                <input 
+                  type="number" 
+                  step="0.05" 
+                  value={ts.le} 
+                  onChange={(e) => setTs({ ...ts, le: +e.target.value })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-white text-xs" 
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">mH</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-slate-400 text-[11px]">Sd</label>
+              <div className="relative mt-1">
+                <input 
+                  type="number" 
+                  step="1" 
+                  value={ts.sd} 
+                  onChange={(e) => setTs({ ...ts, sd: +e.target.value })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-9 py-1 text-white text-xs" 
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">cm²</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-slate-400 text-[11px]">Xmax</label>
+              <div className="relative mt-1">
+                <input 
+                  type="number" 
+                  step="0.1" 
+                  value={ts.xmax} 
+                  onChange={(e) => setTs({ ...ts, xmax: +e.target.value })} 
+                  className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-white text-xs" 
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">mm</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-slate-400 flex items-center justify-between text-[11px]">
+                <span>SPL</span>
+                {missingParams.includes('Sensitivity') && <span className="text-amber-400 text-[10px]">required</span>}
+              </label>
+              <div className="relative mt-1">
+                <input 
+                  type="number" 
+                  step="0.5" 
+                  value={ts.spl} 
+                  onChange={(e) => {
+                    const v = +e.target.value;
+                    setTs({ ...ts, spl: v });
+                    validateManualField('Sensitivity', v);
+                  }} 
+                  className={`w-full bg-slate-900 border rounded pl-2 pr-7 py-1 text-white text-xs ${missingParams.includes('Sensitivity') ? 'border-amber-500 ring-1 ring-amber-500/30' : 'border-slate-700'}`} 
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">dB</span>
+              </div>
             </div>
           </div>
         </div>
@@ -762,12 +1008,32 @@ export default function App() {
           <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tweeter / HF Specs</h2>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
-              <label className="text-slate-400">Fs (Hz)</label>
-              <input type="number" value={tweeter.fs} onChange={(e) => setTweeter({ ...tweeter, fs: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 text-[11px]">Fs</label>
+              <div className="relative mt-1">
+                <input type="number" value={tweeter.fs} onChange={(e) => setTweeter({ ...tweeter, fs: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-7 py-1 text-white text-xs" />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Hz</span>
+              </div>
             </div>
             <div>
-              <label className="text-slate-400">Re (Ω)</label>
-              <input type="number" step="0.1" value={tweeter.re} onChange={(e) => setTweeter({ ...tweeter, re: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white mt-1" />
+              <label className="text-slate-400 text-[11px]">Re</label>
+              <div className="relative mt-1">
+                <input type="number" step="0.1" value={tweeter.re} onChange={(e) => setTweeter({ ...tweeter, re: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-6 py-1 text-white text-xs" />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">Ω</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-slate-400 text-[11px]">Le</label>
+              <div className="relative mt-1">
+                <input type="number" step="0.01" value={tweeter.le} onChange={(e) => setTweeter({ ...tweeter, le: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-8 py-1 text-white text-xs" />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">mH</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-slate-400 text-[11px]">SPL</label>
+              <div className="relative mt-1">
+                <input type="number" step="0.5" value={tweeter.spl} onChange={(e) => setTweeter({ ...tweeter, spl: +e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded pl-2 pr-7 py-1 text-white text-xs" />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-mono pointer-events-none">dB</span>
+              </div>
             </div>
           </div>
         </div>

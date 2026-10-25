@@ -181,4 +181,44 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertEqual(result.ts.le, 0.75, accuracy: 0.05)
         XCTAssertEqual(result.ts.spl, 91.0, accuracy: 0.1)
     }
+
+    func testBeymaDatasheetTableParser() {
+        let parser = DatasheetParser()
+        let beymaSampleText = """
+        TECHNICAL SPECIFICATIONS
+        Sensitivity (LF/HF) 99 dB / 105 dB
+        Recom. HF crossover 1,5 kHz or higher (12 dB/oct min slope)
+        DIMENSION DRAWINGS
+        Resonant frequency, fs 38 Hz
+        D.C. Voice coil resistance, Re 6,7 Ω
+        Mechanical Quality Factor, Qms 6,4
+        Electrical Quality Factor, Qes 0,31
+        Total Quality Factor, Qts 0,30
+        Equivalent Air Volume to Cms, Vas 238 l
+        Effective Surface Area, Sd 0,088 m 2
+        Maximum Displacement, Xmax 6 mm
+        Voice Coil Inductance, Le @ 1 kHz 1 mH
+        15XA38Nd COAXIAL TRANSDUCER
+        """
+        guard let data = beymaSampleText.data(using: .utf8) else {
+            XCTFail("Failed to encode beyma sample text")
+            return
+        }
+        let dummyURL = URL(fileURLWithPath: "/tmp/beyma-speakers-data-sheet-coaxial-15XA38Nd.pdf")
+        let result = parser.parseDatasheetData(data, sourceURL: dummyURL)
+        XCTAssertEqual(result.name, "15XA38Nd")
+        XCTAssertEqual(result.ts.fs, 38.0, accuracy: 0.1)
+        XCTAssertEqual(result.ts.qes, 0.31, accuracy: 0.01)
+        XCTAssertEqual(result.ts.qms, 6.4, accuracy: 0.1)
+        XCTAssertEqual(result.ts.qts, 0.30, accuracy: 0.01)
+        XCTAssertEqual(result.ts.vas, 238.0, accuracy: 0.1)
+        XCTAssertEqual(result.ts.re, 6.7, accuracy: 0.1)
+        XCTAssertEqual(result.ts.sd, 880.0, accuracy: 5.0)
+        XCTAssertEqual(result.ts.xmax, 6.0, accuracy: 0.1)
+        XCTAssertEqual(result.ts.spl, 99.0, accuracy: 0.1)
+        XCTAssertEqual(result.tweeter.spl, 105.0, accuracy: 0.1)
+        XCTAssertEqual(result.recommendedCrossover, 1500.0, accuracy: 1.0)
+        XCTAssertTrue(result.missingParams.isEmpty)
+        XCTAssertTrue(result.warnings.isEmpty)
+    }
 }

@@ -6,25 +6,60 @@ if (typeof window !== 'undefined' && pdfjs.GlobalWorkerOptions && !pdfjs.GlobalW
 }
 
 /**
+ * Normalizes acoustic engineering units to standard simulator units:
+ * - Volume (Vas): Liters (L) instead of m^3 or cu. ft.
+ * - Inductance (Le): millihenries (mH) instead of Henries (H)
+ * - Piston area (Sd): cm^2 instead of m^2 or in^2
+ */
+export function normalizeUnitValue(val, unit) {
+  if (!val) return 0;
+  const u = (unit || '').toLowerCase().trim();
+  // Volume: L instead of m^3
+  if (u.includes('m3') || u.includes('m^3') || u.includes('m³')) return parseFloat((val * 1000).toFixed(1));
+  if (u.includes('cu') || u.includes('ft')) return parseFloat((val * 28.3168).toFixed(1));
+  // Area: cm^2 instead of m^2
+  if (u.includes('cm')) return val;
+  if (u.includes('m') && (u.includes('2') || u.includes('²'))) return Math.round(val * 10000);
+  if (u.includes('in')) return Math.round(val * 6.4516);
+  // Inductance: mH instead of H
+  if (u === 'h') return parseFloat((val * 1000).toFixed(2));
+  return val;
+}
+
+/**
  * Parses loudspeaker datasheet text (from PDF or HTML/plain text)
  * and extracts Thiele-Small woofer parameters and tweeter parameters.
  */
 export function parseDatasheetText(text, url = '') {
+  // Normalize European comma decimals: "6,7 Ω" -> "6.7 Ω", "0,31" -> "0.31"
+  const normText = text.replace(/(\d+),(\d+)/g, '$1.$2');
+
   const ts = { fs: 0, qes: 0, qms: 0, qts: 0, vas: 0, re: 0, le: 0, sd: 0, xmax: 0, spl: 0 };
-  const tweeter = { fs: 0, re: 0, spl: 0 };
+  const tweeter = { fs: 0, re: 0, le: 0, spl: 0 };
+  let recommendedCrossover = 0;
   let driverName = '';
 
   // 1. Extract Driver Name
+  const excludeWords = [
+    'COAXIALS', 'SPECIFICATIONS', 'DESCRIPTION', 'PARAMETERS', 'SERVICE', 'FEATURES',
+    'THIELE', 'TECHNICAL', 'MOUNTING', 'DIMENSION', 'DRAWINGS', 'FREE', 'IMPEDANCE',
+    'FILTERED', 'FREQUENCY', 'RESPONSE', 'CURVE', 'NOTES', 'TRANSDUCER', 'LOUDSPEAKER'
+  ];
   const namePatterns = [
-    /\b(\d{1,2}[A-Z]{2,4}\d{2,4}(?:-[0-9+]+)?)\b/i,
-    /\b([A-Z0-9]{3,12}(?:\s+[A-Z0-9]+)?)\b/i
+    /\b(\d{1,2}[A-Za-z]{1,4}\d{1,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?)\b/g,
+    /\b([A-Z0-9]{4,12}(?:\s+[A-Z0-9]+)?)\b/g
   ];
   for (const regex of namePatterns) {
-    const m = text.match(regex);
-    if (m && m[1] && !['COAXIALS', 'SPECIFICATIONS', 'DESCRIPTION', 'PARAMETERS', 'SERVICE'].includes(m[1].toUpperCase())) {
-      driverName = m[1].trim();
-      break;
+    let m;
+    while ((m = regex.exec(text)) !== null) {
+      const cand = m[1].trim();
+      const upper = cand.toUpperCase();
+      if (!cand.toLowerCase().startsWith('www') && !cand.toLowerCase().endsWith('.com') && !excludeWords.includes(upper)) {
+        driverName = cand;
+        break;
+      }
     }
+    if (driverName) break;
   }
   if (!driverName && url) {
     const filename = url.split('/').pop()?.replace(/\.pdf$/i, '')?.replace(/[-_+]/g, ' ');
@@ -32,13 +67,29 @@ export function parseDatasheetText(text, url = '') {
   }
   if (!driverName) driverName = 'Parsed Coaxial Driver';
 
-  // 2. Extract Woofer SPL / Sensitivity & Tweeter SPL
+  // 2. Extract Recommended Crossover Frequency
+  const xoRegex = /(?:Recom(?:\.|mended)?\s*(?:HF)?\s*Crossover|Crossover\s+Frequency|Suggested\s+Crossover)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?/i;
+  const xoMatch = normText.match(xoRegex);
+  if (xoMatch) {
+    let val = parseFloat(xoMatch[1]);
+    if ((xoMatch[2] && xoMatch[2].toLowerCase().startsWith('k')) || val < 20) val *= 1000;
+    if (val >= 400 && val <= 8000) recommendedCrossover = val;
+  }
+  if (!recommendedCrossover) {
+    const khzHigher = normText.match(/(\d+(?:\.\d+)?)\s*kHz\s*(?:or\s+higher|min(?:\.|\s+slope)?)/i);
+    if (khzHigher) {
+      let val = parseFloat(khzHigher[1]) * 1000;
+      if (val >= 400 && val <= 8000) recommendedCrossover = val;
+    }
+  }
+
+  // 3. Extract Woofer SPL / Sensitivity & Tweeter SPL
   const dbValues = [];
-  const dbRegex = /\b(\d{2,3}(?:\.\d+)?)\s*dB\b/gi;
+  const dbRegex = /\b(\d{2,3}(?:\.\d+)?)\s*dB/gi;
   let dbMatch;
-  while ((dbMatch = dbRegex.exec(text)) !== null) {
+  while ((dbMatch = dbRegex.exec(normText)) !== null) {
     const v = parseFloat(dbMatch[1]);
-    if (v >= 80 && v <= 120 && !dbValues.includes(v)) {
+    if (v >= 80 && v <= 125 && !dbValues.includes(v)) {
       dbValues.push(v);
     }
   }
@@ -46,162 +97,234 @@ export function parseDatasheetText(text, url = '') {
   if (dbValues.length >= 2) tweeter.spl = dbValues[1];
 
   // Fallback explicit matches for SPL
-  if (!ts.spl) {
-    const splMatch = text.match(/LF\s+Sensitivity[^\n]*\n*[\s\S]*?(\d+(?:\.\d+)?)\s*dB/i) ||
-                     text.match(/(?:Sensitivity|SPL)\s*[:=.]*\s*([\d.]+)/i);
-    if (splMatch) ts.spl = parseFloat(splMatch[1]);
-  }
-  if (!tweeter.spl) {
-    const hfSplMatch = text.match(/HF\s+Sensitivity[^\n]*\n*[\s\S]*?(\d+(?:\.\d+)?)\s*dB/i) ||
-                       text.match(/HF\s+(?:Sensitivity|SPL)\s*[:=.]*\s*([\d.]+)/i);
-    if (hfSplMatch) tweeter.spl = parseFloat(hfSplMatch[1]);
-  }
+  const lfSplMatch = normText.match(/(?:LF\s+Sensitivity|(?:Sensitivity|SPL)\s*\(\s*LF)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*dB/i) ||
+                     normText.match(/(?:Sensitivity|SPL)\s*[:=.]*\s*([\d.]+)/i);
+  if (lfSplMatch) ts.spl = parseFloat(lfSplMatch[1]);
 
-  // 3. Extract Tweeter Crossover Frequency / Fs
-  const kHzMatch = text.match(/(\d+(?:\.\d+)?)\s*kHz/i);
-  if (kHzMatch) {
-    tweeter.fs = parseFloat(kHzMatch[1]) * 1000;
-  } else {
-    const hfXoMatch = text.match(/(?:Recommended\s+Crossover|HF\s+Fs)[^\n]*\n*[\s\S]*?(\d+(?:\.\d+)?)\s*(k?Hz)/i);
-    if (hfXoMatch) {
-      let val = parseFloat(hfXoMatch[1]);
-      if (hfXoMatch[2] && hfXoMatch[2].toLowerCase() === 'khz') val *= 1000;
-      else if (val < 20) val *= 1000;
-      if (val >= 200) tweeter.fs = val;
-    }
-  }
-  if (!tweeter.fs) tweeter.fs = 1200;
+  const hfSplMatch = normText.match(/(?:HF\s+Sensitivity|(?:Sensitivity|SPL)\s*\(\s*HF)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*dB/i);
+  if (hfSplMatch) tweeter.spl = parseFloat(hfSplMatch[1]);
 
-  // 4. Extract Ohm values for Re & HF Re
+  // 4. Extract Ohm values for Re & HF Re (no \b after non-word symbol Ω!)
   const ohmValues = [];
-  const ohmRegex = /\b(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)\b/gi;
+  const ohmRegex = /\b(\d+(?:\.\d+)?)\s*(?:Ω|Ohm|ohm)/gi;
   let ohmMatch;
-  while ((ohmMatch = ohmRegex.exec(text)) !== null) {
+  while ((ohmMatch = ohmRegex.exec(normText)) !== null) {
     const v = parseFloat(ohmMatch[1]);
-    if (v >= 2 && v <= 32 && !ohmValues.includes(v)) {
+    if (v >= 1.0 && v <= 32.0 && !ohmValues.includes(v)) {
       ohmValues.push(v);
     }
   }
 
   // 5. Extract Inductance (mH) values
   const mhValues = [];
-  const mhRegex = /\b(\d+(?:\.\d+)?)\s*mH\b/gi;
+  const mhRegex = /\b(\d+(?:\.\d+)?)\s*mH/gi;
   let mhMatch;
-  while ((mhMatch = mhRegex.exec(text)) !== null) {
+  while ((mhMatch = mhRegex.exec(normText)) !== null) {
     mhValues.push(parseFloat(mhMatch[1]));
   }
 
-  // 6. Single-line inline regex matching (Fs, Re, Qes, Qms, Qts, Vas, Le, Sd, Xmax)
-  const inlinePatterns = {
-    fs: [/\bFs\b\s*[:=.]*\s*([\d.]+)/i, /Resonance\s+Frequency\s*[:=.]*\s*([\d.]+)\s*Hz/i],
-    re: [/\bRe\b\s*[:=.]*\s*([\d.]+)/i, /DC\s+Resistance\s*[:=.]*\s*([\d.]+)/i],
-    qes: [/\bQes\b\s*[:=.]*\s*([\d.]+)/i],
-    qms: [/\bQms\b\s*[:=.]*\s*([\d.]+)/i],
-    qts: [/\bQts\b\s*[:=.]*\s*([\d.]+)/i],
-    vas: [/\bVas\b\s*[:=.]*\s*([\d.]+)/i, /Equivalent\s+Control\s+Volume\s*[:=.]*\s*([\d.]+)/i],
-    le: [/\bLe\b\s*(?:\([^)]*\))?\s*[:=.]*\s*([\d.]+)/i, /Voice\s+Coil\s+Inductance\s*[:=.]*\s*([\d.]+)/i],
-    sd: [/\bSd\b\s*[:=.]*\s*([\d.]+)/i],
-    xmax: [/\bX-?max\b\s*[:=.]*\s*([\d.]+)/i]
-  };
-
-  for (const [key, patterns] of Object.entries(inlinePatterns)) {
-    for (const pat of patterns) {
-      const m = text.match(pat);
-      if (m) {
-        ts[key] = parseFloat(m[1]);
-        break;
-      }
-    }
+  // 6. Inline regex matching (Fs, Re, Qes, Qms, Qts, Vas, Le, Sd, Xmax)
+  const inlineFs = normText.match(/\b(?:Fs|Resonant\s+Frequency)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Hz)?/i);
+  if (inlineFs) {
+    const v = parseFloat(inlineFs[1]);
+    if (v >= 15 && v <= 200) ts.fs = v;
   }
+  const inlineRe = normText.match(/\b(?:Re|DC\s+Resistance|Voice\s+coil\s+resistance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)?/i);
+  if (inlineRe) {
+    const v = parseFloat(inlineRe[1]);
+    if (v >= 1.0 && v <= 30.0) ts.re = v;
+  }
+  const inlineQes = normText.match(/\b(?:Qes|Electrical\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)/i);
+  if (inlineQes) ts.qes = parseFloat(inlineQes[1]);
+  const inlineQms = normText.match(/\b(?:Qms|Mechanical\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)/i);
+  if (inlineQms) ts.qms = parseFloat(inlineQms[1]);
+  const inlineQts = normText.match(/\b(?:Qts|Total\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)/i);
+  if (inlineQts) ts.qts = parseFloat(inlineQts[1]);
+  const inlineVas = normText.match(/\b(?:Vas|Equivalent\s+(?:Air\s+)?Volume(?:\s+to\s+Cms)?)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(l|lt|ltr|liters?|litres?|dm[3³]|cu\.?\s*ft\.?|ft[3³])?/i);
+  if (inlineVas) {
+    let v = parseFloat(inlineVas[1]);
+    if (inlineVas[2] && (inlineVas[2].toLowerCase().includes('ft') || inlineVas[2].toLowerCase().includes('cu'))) v *= 28.3168;
+    ts.vas = parseFloat(v.toFixed(1));
+  }
+  const inlineLe = normText.match(/\b(?:Le|Inductance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
+  if (inlineLe) ts.le = parseFloat(inlineLe[1]);
+  const inlineSd = normText.match(/\b(?:Sd|Surface\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(cm[2²]|m[2²])?/i);
+  if (inlineSd) {
+    let v = parseFloat(inlineSd[1]);
+    if (inlineSd[2] && inlineSd[2].toLowerCase().startsWith('m')) v *= 10000;
+    ts.sd = parseFloat(v.toFixed(1));
+  }
+  const inlineXmax = normText.match(/\bX-?max\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mm)?/i);
+  if (inlineXmax) ts.xmax = parseFloat(inlineXmax[1]);
 
   // 7. Column/Table Layout Fallback Strategy (e.g. B&C, Beyma, 18 Sound, FaitalPRO)
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const paramIdx = lines.findIndex(l => /^PARAMETERS$/i.test(l) || /THIELE-SMALL/i.test(l));
+  const numRegex = /\b(\d+(?:\.\d+)?)\b/g;
+  const numbers = [];
+  let nm;
+  while ((nm = numRegex.exec(normText)) !== null) {
+    numbers.push({ val: parseFloat(nm[1]), index: nm.index });
+  }
 
-  if (paramIdx !== -1) {
-    const block = lines.slice(Math.max(0, paramIdx - 35), Math.min(lines.length, paramIdx + 35)).join('\n');
-
-    if (!ts.fs) {
-      const m = block.match(/(\d+(?:\.\d+)?)\s*Hz/i);
-      if (m) ts.fs = parseFloat(m[1]);
-    }
-    if (!ts.re) {
-      const m = block.match(/(\d+(?:\.\d+)?)\s*Ω/i);
-      if (m) ts.re = parseFloat(m[1]);
-    }
-    if (!ts.vas) {
-      const m = block.match(/(\d+(?:\.\d+)?)\s*(?:dm|L|liters)/i);
-      if (m) ts.vas = parseFloat(m[1]);
-    }
-    if (!ts.sd) {
-      const m = block.match(/(\d+(?:\.\d+)?)\s*cm/i);
-      if (m) ts.sd = parseFloat(m[1]);
-    }
-    if (!ts.xmax) {
-      const m = block.match(/(\d+(?:\.\d+)?)\s*mm/i);
-      if (m) ts.xmax = parseFloat(m[1]);
-    }
-    if (!ts.le) {
-      const m = block.match(/(\d+(?:\.\d+)?)\s*mH/i);
-      if (m) ts.le = parseFloat(m[1]);
-    }
-
-    // Sequence check for Qes, Qms, Qts from numbers in the table block
-    if (!ts.qes || !ts.qms || !ts.qts) {
-      const numbers = [];
-      const numRegex = /\b(\d+(?:\.\d+)?)\b/g;
-      let match;
-      while ((match = numRegex.exec(block)) !== null) {
-        numbers.push(parseFloat(match[1]));
-      }
-
-      for (let i = 0; i < numbers.length - 2; i++) {
-        const n1 = numbers[i];
-        const n2 = numbers[i + 1];
-        const n3 = numbers[i + 2];
-        if (n1 >= 0.05 && n1 <= 2.0 && n2 >= 1.0 && n2 <= 30.0 && n3 >= 0.05 && n3 <= 2.0) {
-          const expectedQts = (n1 * n2) / (n1 + n2);
-          if (Math.abs(n3 - expectedQts) < 0.08) {
-            if (!ts.qes) ts.qes = n1;
-            if (!ts.qms) ts.qms = n2;
-            if (!ts.qts) ts.qts = n3;
-            break;
-          }
+  let qFoundIndex = -1;
+  if (!ts.qes || !ts.qms || !ts.qts) {
+    for (let i = 0; i < numbers.length - 2; i++) {
+      const n1 = numbers[i].val;
+      const n2 = numbers[i + 1].val;
+      const n3 = numbers[i + 2].val;
+      const expectedQts = (n1 * n2) / (n1 + n2);
+      if (Math.abs(n3 - expectedQts) < 0.08 || Math.abs(n3 - expectedQts) / n3 < 0.15) {
+        const large = Math.max(n1, n2);
+        const small = Math.min(n1, n2);
+        if (large >= 1.0 && large <= 30.0 && small >= 0.05 && small <= 3.0 && n3 >= 0.05 && n3 <= 2.5) {
+          if (!ts.qms) ts.qms = large;
+          if (!ts.qes) ts.qes = small;
+          if (!ts.qts) ts.qts = n3;
+          qFoundIndex = numbers[i + 2].index;
+          break;
         }
       }
     }
   }
 
-  // Set Woofer Le if missing from mH values
-  if (!ts.le && mhValues.length > 0) {
-    ts.le = Math.max(...mhValues);
+  // Recalculate Q parameters if 2 out of 3 are known
+  if (ts.qes > 0 && ts.qms > 0 && !ts.qts) {
+    ts.qts = parseFloat(((ts.qes * ts.qms) / (ts.qes + ts.qms)).toFixed(3));
+  } else if (ts.qes > 0 && ts.qts > 0 && !ts.qms && ts.qes > ts.qts) {
+    ts.qms = parseFloat(((ts.qes * ts.qts) / (ts.qes - ts.qts)).toFixed(2));
+  } else if (ts.qms > 0 && ts.qts > 0 && !ts.qes && ts.qms > ts.qts) {
+    ts.qes = parseFloat(((ts.qms * ts.qts) / (ts.qms - ts.qts)).toFixed(3));
   }
 
-  // Set Tweeter Re if missing
-  if (!tweeter.re) {
-    const hfReMatch = text.match(/Minimum\s+Impedance\s+HF[^\n]*\n*[\s\S]*?(\d+(?:\.\d+)?)\s*Ω/i) ||
-                      text.match(/HF\s+Re\s*[:=.]*\s*([\d.]+)/i);
-    if (hfReMatch) {
-      tweeter.re = parseFloat(hfReMatch[1]);
-    } else if (ohmValues.length > 0) {
-      const twOhm = ohmValues.find(o => o !== ts.re && o >= 4);
-      tweeter.re = twOhm || 6.0;
+  // Look before Q for Re and Fs if still 0
+  if (qFoundIndex !== -1) {
+    const windowBeforeQ = normText.slice(Math.max(0, qFoundIndex - 350), qFoundIndex);
+    if (!ts.re) {
+      const reM = windowBeforeQ.match(/(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)/i);
+      if (reM) ts.re = parseFloat(reM[1]);
+    }
+    if (!ts.fs) {
+      const fsM = windowBeforeQ.match(/(\d+(?:\.\d+)?)\s*Hz/i);
+      if (fsM) ts.fs = parseFloat(fsM[1]);
     }
   }
 
-  // Recalculate Qts if missing
-  if (ts.qes > 0 && ts.qms > 0 && !ts.qts) {
-    ts.qts = parseFloat(((ts.qes * ts.qms) / (ts.qes + ts.qms)).toFixed(3));
+  // Vas fallback near Q parameters in table block (normalized to L)
+  if (!ts.vas && qFoundIndex !== -1) {
+    const windowAroundQ = normText.slice(Math.max(0, qFoundIndex - 150), Math.min(normText.length, qFoundIndex + 350));
+    const vasM = windowAroundQ.match(/(\d+(?:\.\d+)?)\s*(l|lt|ltr|liters?|litres?|dm[3³]|m[3³]|m\^3|cu\.?\s*ft\.?|ft[3³])\b/i);
+    if (vasM) {
+      ts.vas = normalizeUnitValue(parseFloat(vasM[1]), vasM[2]);
+    }
+  }
+  if (!ts.vas) {
+    const globalVas = normText.match(/\b(\d+(?:\.\d+)?)\s*(dm[3³]|liters?|litres?|m[3³]|m\^3)\b/i);
+    if (globalVas) ts.vas = normalizeUnitValue(parseFloat(globalVas[1]), globalVas[2]);
   }
 
-  return { driverName, ts, tweeter, rawText: text };
+  // Re fallback from ohmValues
+  if (!ts.re && ohmValues.length > 0) {
+    const reCand = ohmValues.filter(o => o >= 3.0 && o <= 10.0);
+    if (reCand.length > 0) ts.re = reCand[reCand.length - 1];
+    else ts.re = ohmValues[0];
+  }
+
+  // Sd fallback near Q (normalized to cm^2)
+  if (!ts.sd && qFoundIndex !== -1) {
+    const windowAfterQ = normText.slice(qFoundIndex, qFoundIndex + 400);
+    const sdM = windowAfterQ.match(/(\d+(?:\.\d+)?)\s*(m\s*[2²]|m\^2|cm\s*[2²]|cm\^2)/i);
+    if (sdM) ts.sd = normalizeUnitValue(parseFloat(sdM[1]), sdM[2]);
+  }
+
+  // Xmax fallback near Q
+  if (!ts.xmax && qFoundIndex !== -1) {
+    const windowAfterQ = normText.slice(qFoundIndex, qFoundIndex + 400);
+    const xmM = windowAfterQ.match(/(\d+(?:\.\d+)?)\s*mm\b/i);
+    if (xmM) ts.xmax = parseFloat(xmM[1]);
+  }
+
+  // Le fallback near Q (normalized to mH)
+  if (!ts.le && qFoundIndex !== -1) {
+    const windowAfterQ = normText.slice(qFoundIndex, qFoundIndex + 500);
+    const leM = windowAfterQ.match(/(\d+(?:\.\d+)?)\s*(mH|H)\b/i);
+    if (leM) ts.le = normalizeUnitValue(parseFloat(leM[1]), leM[2]);
+  }
+  if (!ts.le) {
+    if (mhValues.length > 0) ts.le = Math.max(...mhValues);
+    else {
+      const mhMatch = normText.match(/(\d+(?:\.\d+)?)\s*mH/i);
+      if (mhMatch) ts.le = parseFloat(mhMatch[1]);
+    }
+  }
+
+  // Fs fallback
+  if (!ts.fs) {
+    const hzMatches = [...normText.matchAll(/\b(\d+(?:\.\d+)?)\s*Hz\b/gi)].map(h => parseFloat(h[1]));
+    const fsCand = hzMatches.find(f => f >= 20 && f <= 150);
+    if (fsCand) ts.fs = fsCand;
+  }
+
+  // Tweeter Fs & Re
+  if (recommendedCrossover > 0) {
+    tweeter.fs = Math.round(recommendedCrossover * 0.75);
+  } else if (!tweeter.fs) {
+    const twFsM = normText.match(/(?:Tweeter|HF)\s*(?:Fs|Resonance)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?/i);
+    if (twFsM) {
+      let v = parseFloat(twFsM[1]);
+      if ((twFsM[2] && twFsM[2].toLowerCase().startsWith('k')) || v < 20) v *= 1000;
+      tweeter.fs = v;
+    } else {
+      tweeter.fs = 1200;
+    }
+  }
+
+  if (!tweeter.re) {
+    const twOhmCand = ohmValues.filter(o => o >= 4.0 && Math.abs(o - ts.re) > 0.5);
+    if (twOhmCand.length > 0) tweeter.re = twOhmCand[0];
+    else tweeter.re = 6.0;
+  }
+
+  // 8. Plausibility Validation & Missing Parameter Detection
+  const missingParams = [];
+  const warnings = [];
+
+  if (!ts.fs) missingParams.push('Fs');
+  else if (ts.fs < 15 || ts.fs > 250) warnings.push(`Fs (${ts.fs} Hz) is outside typical woofer range (15–200 Hz).`);
+
+  if (!ts.qes) missingParams.push('Qes');
+  else if (ts.qes < 0.08 || ts.qes > 2.5) warnings.push(`Qes (${ts.qes}) is outside typical range (0.1–2.0).`);
+
+  if (!ts.qms) missingParams.push('Qms');
+  else if (ts.qms < 0.8 || ts.qms > 30.0) warnings.push(`Qms (${ts.qms}) is outside typical range (1.0–25.0).`);
+
+  if (!ts.qts) missingParams.push('Qts');
+  else if (ts.qts < 0.08 || ts.qts > 2.0) warnings.push(`Qts (${ts.qts}) is outside typical range (0.1–1.5).`);
+
+  if (!ts.vas) missingParams.push('Vas');
+  else if (ts.vas < 1.0 || ts.vas > 900.0) warnings.push(`Vas (${ts.vas} L) is outside typical range (2–800 L).`);
+
+  if (!ts.re) missingParams.push('Re');
+  else if (ts.re < 1.0 || ts.re > 25.0) warnings.push(`Woofer Re (${ts.re} Ω) is outside typical range (1.5–20 Ω).`);
+
+  if (!ts.spl) missingParams.push('Sensitivity');
+  else if (ts.spl < 75 || ts.spl > 115) warnings.push(`Woofer Sensitivity (${ts.spl} dB) seems implausible.`);
+
+  if (tweeter.spl && (tweeter.spl < 85 || tweeter.spl > 125)) {
+    warnings.push(`Tweeter Sensitivity (${tweeter.spl} dB) seems implausible.`);
+  }
+
+  if (recommendedCrossover > 0 && (recommendedCrossover < 500 || recommendedCrossover > 8000)) {
+    warnings.push(`Recommended Crossover (${recommendedCrossover} Hz) seems outside typical coaxial range.`);
+  }
+
+  return { driverName, ts, tweeter, recommendedCrossover, missingParams, warnings, rawText: text };
 }
 
 /**
  * Extracts raw textual content across all pages of a PDF given an ArrayBuffer or Uint8Array.
  */
 export async function extractTextFromPDF(data) {
-  const loadingTask = pdfjs.getDocument({ data: data instanceof Uint8Array ? data : new Uint8Array(data) });
+  const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice ? data.slice(0) : data);
+  const loadingTask = pdfjs.getDocument({ data: bytes });
   const pdf = await loadingTask.promise;
 
   let extractedText = '';
