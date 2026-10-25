@@ -51,9 +51,13 @@ public class MainDesignerViewModel: ObservableObject {
         recalculateSimulation()
     }
 
+    private var isRecalculating: Bool = false
+
     /// Re-runs the physics simulation and recalculates passive filter component values.
     public func recalculateSimulation() {
-        objectWillChange.send()
+        guard !isRecalculating else { return }
+        isRecalculating = true
+        defer { isRecalculating = false }
         
         // If curves are synthetic (no custom FRD imported), keep them in sync with current manual/parsed T/S parameters
         if self.wooferFRDText.isEmpty {
