@@ -137,177 +137,85 @@ public struct SidebarView: View {
                 HStack {
                     Text("Crossover Freq:")
                     Spacer()
-                    DecimalInputField("fx", value: $viewModel.crossover.crossoverFrequency, isEuropean: viewModel.isEuropeanDecimal, unit: "Hz")
+                    HStack(spacing: 4) {
+                        TextField("fx", text: decimalBinding(for: $viewModel.crossover.crossoverFrequency))
+                            .frame(width: 70)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.trailing)
+                        Text("Hz")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(width: 28, alignment: .leading)
+                    }
                 }
             }
 
             Section(header: Label("Woofer Thiele-Small Specs", systemImage: "waveform")) {
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                    GridRow {
-                        Text("Fs:")
-                        Spacer()
-                        DecimalInputField("Fs", value: $viewModel.driver.wooferTS.fs, isEuropean: viewModel.isEuropeanDecimal, unit: "Hz")
-                    }
-                    GridRow {
-                        Text("Qes:")
-                        Spacer()
-                        DecimalInputField("Qes", value: $viewModel.driver.wooferTS.qes, isEuropean: viewModel.isEuropeanDecimal)
-                    }
-                    GridRow {
-                        Text("Qms:")
-                        Spacer()
-                        DecimalInputField("Qms", value: $viewModel.driver.wooferTS.qms, isEuropean: viewModel.isEuropeanDecimal)
-                    }
-                    GridRow {
-                        Text("Qts:")
-                        Spacer()
-                        DecimalInputField("Qts", value: $viewModel.driver.wooferTS.qts, isEuropean: viewModel.isEuropeanDecimal)
-                    }
-                    GridRow {
-                        Text("Vas:")
-                        Spacer()
-                        DecimalInputField("Vas", value: $viewModel.driver.wooferTS.vas, isEuropean: viewModel.isEuropeanDecimal, unit: "L")
-                    }
-                    GridRow {
-                        Text("Re:")
-                        Spacer()
-                        DecimalInputField("Re", value: $viewModel.driver.wooferTS.re, isEuropean: viewModel.isEuropeanDecimal, unit: "Ω")
-                    }
-                    GridRow {
-                        Text("Le:")
-                        Spacer()
-                        DecimalInputField("Le", value: $viewModel.driver.wooferTS.le, isEuropean: viewModel.isEuropeanDecimal, unit: "mH")
-                    }
-                    GridRow {
-                        Text("Sd:")
-                        Spacer()
-                        DecimalInputField("Sd", value: $viewModel.driver.wooferTS.sd, isEuropean: viewModel.isEuropeanDecimal, unit: "cm²")
-                    }
-                    GridRow {
-                        Text("Xmax:")
-                        Spacer()
-                        DecimalInputField("Xmax", value: $viewModel.driver.wooferTS.xmax, isEuropean: viewModel.isEuropeanDecimal, unit: "mm")
-                    }
-                    GridRow {
-                        Text("Sensitivity:")
-                        Spacer()
-                        DecimalInputField("SPL", value: $viewModel.driver.wooferTS.spl, isEuropean: viewModel.isEuropeanDecimal, unit: "dB")
-                    }
+                    decimalRow("Fs:", value: $viewModel.driver.wooferTS.fs, unit: "Hz")
+                    decimalRow("Qes:", value: $viewModel.driver.wooferTS.qes)
+                    decimalRow("Qms:", value: $viewModel.driver.wooferTS.qms)
+                    decimalRow("Qts:", value: $viewModel.driver.wooferTS.qts)
+                    decimalRow("Vas:", value: $viewModel.driver.wooferTS.vas, unit: "L")
+                    decimalRow("Re:", value: $viewModel.driver.wooferTS.re, unit: "Ω")
+                    decimalRow("Le:", value: $viewModel.driver.wooferTS.le, unit: "mH")
+                    decimalRow("Sd:", value: $viewModel.driver.wooferTS.sd, unit: "cm²")
+                    decimalRow("Xmax:", value: $viewModel.driver.wooferTS.xmax, unit: "mm")
+                    decimalRow("Sensitivity:", value: $viewModel.driver.wooferTS.spl, unit: "dB")
                 }
                 .padding(.vertical, 8)
             }
 
             Section(header: Label("Tweeter Specifications", systemImage: "bolt.horizontal")) {
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                    GridRow {
-                        Text("Tweeter Fs:")
-                        Spacer()
-                        DecimalInputField("Fs", value: $viewModel.driver.tweeter.fs, isEuropean: viewModel.isEuropeanDecimal, unit: "Hz")
-                    }
-                    GridRow {
-                        Text("Tweeter Re:")
-                        Spacer()
-                        DecimalInputField("Re", value: $viewModel.driver.tweeter.re, isEuropean: viewModel.isEuropeanDecimal, unit: "Ω")
-                    }
-                    GridRow {
-                        Text("Tweeter Le:")
-                        Spacer()
-                        DecimalInputField("Le", value: $viewModel.driver.tweeter.le, isEuropean: viewModel.isEuropeanDecimal, unit: "mH")
-                    }
-                    GridRow {
-                        Text("Sensitivity:")
-                        Spacer()
-                        DecimalInputField("SPL", value: $viewModel.driver.tweeter.spl, isEuropean: viewModel.isEuropeanDecimal, unit: "dB")
-                    }
+                    decimalRow("Tweeter Fs:", value: $viewModel.driver.tweeter.fs, unit: "Hz")
+                    decimalRow("Tweeter Re:", value: $viewModel.driver.tweeter.re, unit: "Ω")
+                    decimalRow("Tweeter Le:", value: $viewModel.driver.tweeter.le, unit: "mH")
+                    decimalRow("Sensitivity:", value: $viewModel.driver.tweeter.spl, unit: "dB")
                 }
             }
         }
         .formStyle(.grouped)
     }
-}
 
-/// A resilient decimal input text field that accepts both '.' and ',' as separators,
-/// and dynamically formats the value according to the chosen US/European style.
-public struct DecimalInputField: View {
-    let title: String
-    @Binding var value: Double
-    var isEuropean: Bool
-    var width: CGFloat = 70
-    var unit: String = ""
-    var onCommit: (() -> Void)? = nil
-
-    @State private var text: String = ""
-    @FocusState private var isFocused: Bool
-
-    public init(
-        _ title: String,
-        value: Binding<Double>,
-        isEuropean: Bool,
-        width: CGFloat = 70,
-        unit: String = "",
-        onCommit: (() -> Void)? = nil
-    ) {
-        self.title = title
-        self._value = value
-        self.isEuropean = isEuropean
-        self.width = width
-        self.unit = unit
-        self.onCommit = onCommit
+    private func decimalBinding(for valueBinding: Binding<Double>) -> Binding<String> {
+        Binding<String>(
+            get: {
+                let val = valueBinding.wrappedValue
+                guard val != 0 else { return "0" }
+                let str = String(format: "%g", val)
+                return viewModel.isEuropeanDecimal ? str.replacingOccurrences(of: ".", with: ",") : str
+            },
+            set: { newStr in
+                let clean = newStr.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: ",", with: ".")
+                if let num = Double(clean) {
+                    if valueBinding.wrappedValue != num {
+                        valueBinding.wrappedValue = num
+                    }
+                }
+            }
+        )
     }
 
-    private func formatValue(_ v: Double) -> String {
-        guard v != 0 else { return "0" }
-        let str = String(format: "%g", v)
-        return isEuropean ? str.replacingOccurrences(of: ".", with: ",") : str
-    }
-
-    private func parseText(_ str: String) -> Double? {
-        let clean = str.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ",", with: ".")
-        return Double(clean)
-    }
-
-    public var body: some View {
-        HStack(spacing: 4) {
-            TextField(title, text: $text)
-                .focused($isFocused)
-                .frame(width: width)
-                .textFieldStyle(.roundedBorder)
-                .multilineTextAlignment(.trailing)
-                .onChange(of: text) { newText in
-                    if let parsed = parseText(newText) {
-                        if parsed != value {
-                            value = parsed
-                            onCommit?()
-                        }
-                    }
+    @ViewBuilder
+    private func decimalRow(_ title: String, value: Binding<Double>, unit: String = "") -> some View {
+        GridRow {
+            Text(title)
+            Spacer()
+            HStack(spacing: 4) {
+                TextField(title, text: decimalBinding(for: value))
+                    .frame(width: 70)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                if !unit.isEmpty {
+                    Text(unit)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 28, alignment: .leading)
+                } else {
+                    Spacer().frame(width: 28)
                 }
-                .onChange(of: isFocused) { focused in
-                    if !focused {
-                        text = formatValue(value)
-                    }
-                }
-                .onChange(of: value) { newValue in
-                    if !isFocused {
-                        text = formatValue(newValue)
-                    }
-                }
-                .onChange(of: isEuropean) { _ in
-                    if !isFocused {
-                        text = formatValue(value)
-                    }
-                }
-                .onAppear {
-                    text = formatValue(value)
-                }
-
-            if !unit.isEmpty {
-                Text(unit)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(width: 28, alignment: .leading)
-            } else {
-                Spacer().frame(width: 28)
             }
         }
     }
