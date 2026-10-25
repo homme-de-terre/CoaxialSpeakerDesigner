@@ -302,4 +302,181 @@ public enum SimulationEngine {
             return zVC
         }
     }
+
+    /// Computes transient step response across a time window (0 to durationMs).
+    public static func computeStepResponse(
+        driver: CoaxialDriver,
+        cabinet: SealedCabinet,
+        crossover: CrossoverNetwork,
+        durationMs: Double = 6.0,
+        sampleRate: Double = 48000.0,
+        fftSize: Int = 1024
+    ) -> [StepResponsePoint] {
+        let n = fftSize
+        let fs = sampleRate
+
+        var rw = [Double](repeating: 0.0, count: n)
+        var iw = [Double](repeating: 0.0, count: n)
+        var rt = [Double](repeating: 0.0, count: n)
+        var it = [Double](repeating: 0.0, count: n)
+        var rTot = [Double](repeating: 0.0, count: n)
+        var iTot = [Double](repeating: 0.0, count: n)
+
+        let rawWooferCurve = driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve
+        let rawTweeterCurve = driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve
+
+        let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
+        let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)
+
+        let gLpad = crossover.lpadVoltageGain
+
+        for k in 1..<(n / 2) {
+            let f = Double(k) * fs / Double(n)
+
+            let pWooferRaw = interpolateAcousticPressure(freq: f, curve: wooferAcousticP)
+            let pTweeterRaw = interpolateAcousticPressure(freq: f, curve: tweeterAcousticP)
+
+            let hCab = cabinet.transferFunction(frequency: f, ts: driver.wooferTS)
+            let hLP = crossover.wooferFilterTransferFunction(frequency: f)
+            let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
+            let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
+
+            let pWooferFinal = pWooferRaw * hCab * hLP
+            let pTweeterFinal = pTweeterRaw * hHP * gLpad * hDelay
+            let pTotal = pWooferFinal + pTweeterFinal
+
+            // Anti-aliasing smooth rolloff near Nyquist to eliminate sinc ringing
+            let rollOff = exp(-pow(f / 21000.0, 4.0))
+
+            let wR = pWooferFinal.real * rollOff
+            let wI = pWooferFinal.imag * rollOff
+            let tR = pTweeterFinal.real * rollOff
+            let tI = pTweeterFinal.imag * rollOff
+            let totR = pTotal.real * rollOff
+            let totI = pTotal.imag * rollOff
+
+            rw[k] = wR
+            iw[k] = wI
+            rw[n - k] = wR
+            iw[n - k] = -wI
+
+            rt[k] = tR
+            it[k] = tI
+            rt[n - k] = tR
+            it[n - k] = -tI
+
+            rTot[k] = totR
+            iTot[k] = totI
+            rTot[n - k] = totR
+            iTot[n - k] = -totI
+        }
+
+        // Perform Inverse FFT
+        ifft(&rw, &iw)
+        ifft(&rt, &it)
+        ifft(&rTot, &iTot)
+
+        // Integrate impulse response to obtain step response (cumulative sum)
+        var stepW = [Double](repeating: 0.0, count: n)
+        var stepT = [Double](repeating: 0.0, count: n)
+        var stepTot = [Double](repeating: 0.0, count: n)
+
+        stepW[0] = rw[0]
+        stepT[0] = rt[0]
+        stepTot[0] = rTot[0]
+
+        for i in 1..<n {
+            stepW[i] = stepW[i - 1] + rw[i]
+            stepT[i] = stepT[i - 1] + rt[i]
+            stepTot[i] = stepTot[i - 1] + rTot[i]
+        }
+
+        // Peak normalization
+        var maxPeak = 0.001
+        for i in 0..<n {
+            let p = abs(stepTot[i])
+            if p > maxPeak { maxPeak = p }
+        }
+        let normFactor = 1.0 / maxPeak
+
+        // Sample points across time window
+        let stepCount = 200
+        var points: [StepResponsePoint] = []
+        points.reserveCapacity(stepCount + 1)
+
+        for i in 0...stepCount {
+            let tMs = Double(i) * durationMs / Double(stepCount)
+            let sampleIdx = min(n - 1, max(0, Int(round((tMs / 1000.0) * fs))))
+            points.append(
+                StepResponsePoint(
+                    timeMs: tMs,
+                    woofer: stepW[sampleIdx] * normFactor,
+                    tweeter: stepT[sampleIdx] * normFactor,
+                    total: stepTot[sampleIdx] * normFactor
+                )
+            )
+        }
+
+        return points
+    }
+
+    /// Fast Radix-2 Cooley-Tukey Inverse FFT (in-place)
+    private static func ifft(_ real: inout [Double], _ imag: inout [Double]) {
+        let n = real.count
+        for i in 0..<n { imag[i] = -imag[i] }
+        fft(&real, &imag)
+        let scale = 1.0 / Double(n)
+        for i in 0..<n {
+            real[i] *= scale
+            imag[i] = -imag[i] * scale
+        }
+    }
+
+    /// Fast Radix-2 Cooley-Tukey Forward FFT (in-place)
+    private static func fft(_ real: inout [Double], _ imag: inout [Double]) {
+        let n = real.count
+        var j = 0
+        for i in 0..<(n - 1) {
+            if i < j {
+                real.swapAt(i, j)
+                imag.swapAt(i, j)
+            }
+            var k = n >> 1
+            while k <= j {
+                j -= k
+                k >>= 1
+            }
+            j += k
+        }
+
+        var len = 2
+        while len <= n {
+            let half = len >> 1
+            let angle = -2.0 * .pi / Double(len)
+            let wStepR = cos(angle)
+            let wStepI = sin(angle)
+
+            var i = 0
+            while i < n {
+                var wr = 1.0
+                var wi = 0.0
+                for m in 0..<half {
+                    let idx1 = i + m
+                    let idx2 = i + m + half
+                    let tr = wr * real[idx2] - wi * imag[idx2]
+                    let ti = wr * imag[idx2] + wi * real[idx2]
+                    real[idx2] = real[idx1] - tr
+                    imag[idx2] = imag[idx1] - ti
+                    real[idx1] += tr
+                    imag[idx1] += ti
+
+                    let nextWr = wr * wStepR - wi * wStepI
+                    wi = wr * wStepI + wi * wStepR
+                    wr = nextWr
+                }
+                i += len
+            }
+            len <<= 1
+        }
+    }
 }

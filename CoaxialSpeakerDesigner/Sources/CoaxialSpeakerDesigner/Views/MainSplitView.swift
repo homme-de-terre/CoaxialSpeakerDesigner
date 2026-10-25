@@ -15,6 +15,7 @@ public struct MainSplitView: View {
                 Picker("View Mode", selection: $viewModel.selectedTab) {
                     Label("Amplitude Response", systemImage: "chart.xyaxis.line").tag(0)
                     Label("Phase & Delay", systemImage: "waveform").tag(1)
+                    Label("Step Response", systemImage: "waveform.path.ecg").tag(7)
                     Label("System Impedance", systemImage: "bolt.horizontal").tag(2)
                     Label("Closed Cabinet", systemImage: "cube.box").tag(3)
                     Label("Crossover Network", systemImage: "line.horizontal.3.decrease.circle").tag(4)
@@ -34,6 +35,8 @@ public struct MainSplitView: View {
                         AmplitudeBodeChartView(viewModel: viewModel)
                     case 1:
                         PhaseBodeChartView(viewModel: viewModel)
+                    case 7:
+                        StepResponseChartView(viewModel: viewModel)
                     case 2:
                         ImpedanceChartView(viewModel: viewModel)
                     case 3:

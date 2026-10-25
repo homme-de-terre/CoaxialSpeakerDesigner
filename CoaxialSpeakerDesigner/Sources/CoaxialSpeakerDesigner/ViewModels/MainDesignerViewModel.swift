@@ -17,6 +17,7 @@ public class MainDesignerViewModel: ObservableObject {
     }
 
     @Published public var simulationPoints: [SimulationPoint] = []
+    @Published public var stepResponsePoints: [StepResponsePoint] = []
     @Published public var calculatedComponents: CalculatedComponents = CalculatedComponents()
 
     // UI State
@@ -82,8 +83,15 @@ public class MainDesignerViewModel: ObservableObject {
             wooferLe: driver.wooferTS.le
         )
 
+        let newStepPoints = SimulationEngine.computeStepResponse(
+            driver: driver,
+            cabinet: cabinet,
+            crossover: crossover
+        )
+
         self.simulationPoints = newPoints
         self.calculatedComponents = newComponents
+        self.stepResponsePoints = newStepPoints
         self.validateParameters()
     }
 

@@ -163,6 +163,7 @@ export default function App() {
   const amplitudeCanvasRef = useRef(null);
   const phaseCanvasRef = useRef(null);
   const impedanceCanvasRef = useRef(null);
+  const stepCanvasRef = useRef(null);
 
   // --- Sealed Cabinet Computations ---
   const cabinetCalculations = useMemo(() => {
@@ -564,6 +565,255 @@ export default function App() {
     ctx.stroke();
 
   }, [simulationData, activeTab]);
+
+  // --- Step Response Transient Simulation Engine ---
+  const stepResponseData = useMemo(() => {
+    const N = 1024;
+    const fs = 48000;
+    const durationMs = 6.0;
+
+    const rw = new Float64Array(N);
+    const iw = new Float64Array(N);
+    const rt = new Float64Array(N);
+    const it = new Float64Array(N);
+    const rTot = new Float64Array(N);
+    const iTot = new Float64Array(N);
+
+    const delaySec = (acousticDelayMM / 1000.0) / 343.0;
+    const polaritySign = invertTweeterPolarity ? -1.0 : 1.0;
+
+    for (let k = 1; k < N / 2; k++) {
+      const f = (k * fs) / N;
+      const s = f / Math.max(fx, 1.0);
+
+      const fRatio = f / Math.max(cabinetCalculations.fc, 1.0);
+      const sCab = Math.pow(fRatio, 2);
+      const denomCabR = 1.0 - sCab;
+      const denomCabI = fRatio / Math.max(cabinetCalculations.actualQtc, 0.1);
+      const dCabMag2 = denomCabR * denomCabR + denomCabI * denomCabI;
+      const hCabR = (sCab * denomCabR) / dCabMag2;
+      const hCabI = (-sCab * denomCabI) / dCabMag2;
+
+      let hLPR = 1.0, hLPI = 0.0;
+      if (wooferOrder === 'firstOrder') {
+        const d = 1.0 + s * s;
+        hLPR = 1.0 / d;
+        hLPI = -s / d;
+      } else {
+        const dR = 1.0 - s * s;
+        const dI = Math.SQRT2 * s;
+        const dM2 = dR * dR + dI * dI;
+        hLPR = dR / dM2;
+        hLPI = -dI / dM2;
+      }
+
+      const pWR = hCabR * hLPR - hCabI * hLPI;
+      const pWI = hCabR * hLPI + hCabI * hLPR;
+
+      let hHPR = 1.0, hHPI = 0.0;
+      if (tweeterOrder === 'firstOrder') {
+        const d = 1.0 + s * s;
+        hHPR = (s * s) / d;
+        hHPI = s / d;
+      } else {
+        const num = -s * s;
+        const dR = 1.0 - s * s;
+        const dI = Math.SQRT2 * s;
+        const dM2 = dR * dR + dI * dI;
+        hHPR = (num * dR) / dM2;
+        hHPI = (-num * dI) / dM2;
+      }
+
+      const phaseDelay = -2.0 * Math.PI * f * delaySec;
+      const cosD = Math.cos(phaseDelay) * polaritySign;
+      const sinD = Math.sin(phaseDelay) * polaritySign;
+
+      const pTR = hHPR * cosD - hHPI * sinD;
+      const pTI = hHPR * sinD + hHPI * cosD;
+
+      const rollOff = Math.exp(-Math.pow(f / 21000.0, 4.0));
+
+      rw[k] = pWR * rollOff;
+      iw[k] = pWI * rollOff;
+      rw[N - k] = rw[k];
+      iw[N - k] = -iw[k];
+
+      rt[k] = pTR * rollOff;
+      it[k] = pTI * rollOff;
+      rt[N - k] = rt[k];
+      it[N - k] = -it[k];
+
+      rTot[k] = (pWR + pTR) * rollOff;
+      iTot[k] = (pWI + pTI) * rollOff;
+      rTot[N - k] = rTot[k];
+      iTot[N - k] = -iTot[k];
+    }
+
+    const ifft = (real, imag) => {
+      const n = real.length;
+      for (let i = 0; i < n; i++) imag[i] = -imag[i];
+      let j = 0;
+      for (let i = 0; i < n - 1; i++) {
+        if (i < j) {
+          let tr = real[i]; real[i] = real[j]; real[j] = tr;
+          let ti = imag[i]; imag[i] = imag[j]; imag[j] = ti;
+        }
+        let k = n >> 1;
+        while (k <= j) { j -= k; k >>= 1; }
+        j += k;
+      }
+      for (let len = 2; len <= n; len <<= 1) {
+        const half = len >> 1;
+        const angle = -2.0 * Math.PI / len;
+        const wStepR = Math.cos(angle);
+        const wStepI = Math.sin(angle);
+        for (let i = 0; i < n; i += len) {
+          let wr = 1.0, wi = 0.0;
+          for (let m = 0; m < half; m++) {
+            const idx1 = i + m;
+            const idx2 = i + m + half;
+            const tr = wr * real[idx2] - wi * imag[idx2];
+            const ti = wr * imag[idx2] + wi * real[idx2];
+            real[idx2] = real[idx1] - tr;
+            imag[idx2] = imag[idx1] - ti;
+            real[idx1] += tr;
+            imag[idx1] += ti;
+            const nextWr = wr * wStepR - wi * wStepI;
+            wi = wr * wStepI + wi * wStepR;
+            wr = nextWr;
+          }
+        }
+      }
+      const scale = 1.0 / n;
+      for (let i = 0; i < n; i++) {
+        real[i] *= scale;
+        imag[i] = -imag[i] * scale;
+      }
+    };
+
+    ifft(rw, iw);
+    ifft(rt, it);
+    ifft(rTot, iTot);
+
+    const stepW = new Float64Array(N);
+    const stepT = new Float64Array(N);
+    const stepTot = new Float64Array(N);
+
+    stepW[0] = rw[0];
+    stepT[0] = rt[0];
+    stepTot[0] = rTot[0];
+
+    for (let i = 1; i < N; i++) {
+      stepW[i] = stepW[i - 1] + rw[i];
+      stepT[i] = stepT[i - 1] + rt[i];
+      stepTot[i] = stepTot[i - 1] + rTot[i];
+    }
+
+    let maxPeak = 0.001;
+    for (let i = 0; i < N; i++) {
+      const p = Math.abs(stepTot[i]);
+      if (p > maxPeak) maxPeak = p;
+    }
+    const norm = 1.0 / maxPeak;
+
+    const stepCount = 200;
+    const points = [];
+    for (let i = 0; i <= stepCount; i++) {
+      const tMs = (i * durationMs) / stepCount;
+      const idx = Math.min(N - 1, Math.max(0, Math.round((tMs / 1000.0) * fs)));
+      points.push({
+        timeMs: tMs,
+        woofer: stepW[idx] * norm,
+        tweeter: stepT[idx] * norm,
+        total: stepTot[idx] * norm
+      });
+    }
+
+    return points;
+  }, [cabinetCalculations, fx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity]);
+
+  // --- Render Step Response Plot ---
+  useEffect(() => {
+    const canvas = stepCanvasRef.current;
+    if (!canvas || activeTab !== 'step' || stepResponseData.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const maxTimeMs = 6.0;
+    const minAmp = -0.6;
+    const maxAmp = 1.4;
+
+    const toCanvas = (tMs, a) => {
+      const x = width * (tMs / maxTimeMs);
+      const y = height * (1.0 - (a - minAmp) / (maxAmp - minAmp));
+      return [x, y];
+    };
+
+    ctx.lineWidth = 1;
+    for (let t = 0; t <= maxTimeMs; t += 0.5) {
+      const [x] = toCanvas(t, 0);
+      const isMajor = Math.round(t * 10) % 10 === 0;
+      ctx.strokeStyle = isMajor ? 'rgba(100, 116, 139, 0.35)' : 'rgba(100, 116, 139, 0.15)';
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+
+      if (isMajor) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px monospace';
+        ctx.fillText(`${t} ms`, x + 4, height - 8);
+      }
+    }
+
+    for (let a = minAmp; a <= maxAmp; a += 0.25) {
+      const [, y] = toCanvas(0, a);
+      const isZero = Math.abs(a) < 0.01;
+      ctx.strokeStyle = isZero ? 'rgba(148, 163, 184, 0.6)' : 'rgba(100, 116, 139, 0.2)';
+      ctx.lineWidth = isZero ? 1.5 : 0.8;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+
+      ctx.fillStyle = isZero ? '#f1f5f9' : '#64748b';
+      ctx.font = '10px monospace';
+      ctx.fillText(a.toFixed(2), 6, y - 4);
+    }
+
+    // Woofer (Blue)
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    stepResponseData.forEach((p, i) => {
+      const [x, y] = toCanvas(p.timeMs, p.woofer);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Tweeter (Red)
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    stepResponseData.forEach((p, i) => {
+      const [x, y] = toCanvas(p.timeMs, p.tweeter);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Total System (Green)
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    stepResponseData.forEach((p, i) => {
+      const [x, y] = toCanvas(p.timeMs, p.total);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }, [stepResponseData, activeTab]);
 
   // --- Shared Datasheet Application Helper ---
   const applyParsedDatasheet = (parsed, sourceName) => {
@@ -1105,6 +1355,7 @@ export default function App() {
         <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-6">
           <div className="flex items-center space-x-1">
             <button onClick={() => setActiveTab('amplitude')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'amplitude' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Amplitude Plot</button>
+            <button onClick={() => setActiveTab('step')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'step' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Step Response</button>
             <button onClick={() => setActiveTab('cabinet')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'cabinet' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Sealed Cabinet</button>
             <button onClick={() => setActiveTab('crossover')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'crossover' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Crossover Designer</button>
             <button onClick={() => setActiveTab('bom')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'bom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Schematic & BOM</button>
@@ -1126,6 +1377,28 @@ export default function App() {
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
                 <canvas ref={amplitudeCanvasRef} width={800} height={400} className="w-full h-[400px]" />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'step' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Transient Acoustic Step Response (Normalized Amplitude vs Time)</h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Acoustic Delay Offset: {acousticDelayMM} mm ({((acousticDelayMM / 1000.0) / 343.0 * 1000.0).toFixed(2)} ms) • Tweeter Polarity: {invertTweeterPolarity ? 'Inverted (-)' : 'Normal (+)'}
+                  </p>
+                </div>
+                <div className="flex items-center space-x-4 text-xs">
+                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-blue-500"></span><span className="text-slate-300">Woofer (LP)</span></span>
+                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-red-500"></span><span className="text-slate-300">Tweeter (HP)</span></span>
+                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500"></span><span className="text-slate-300">Total System</span></span>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
+                <canvas ref={stepCanvasRef} width={800} height={400} className="w-full h-[400px]" />
               </div>
             </div>
           )}

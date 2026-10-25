@@ -221,4 +221,27 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertTrue(result.missingParams.isEmpty)
         XCTAssertTrue(result.warnings.isEmpty)
     }
+
+    func testStepResponseComputation() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        let crossover = CrossoverNetwork(crossoverFrequency: 1500.0, acousticCenterOffsetMM: 35.0)
+
+        let stepPoints = SimulationEngine.computeStepResponse(driver: driver, cabinet: cabinet, crossover: crossover)
+        XCTAssertFalse(stepPoints.isEmpty)
+        XCTAssertEqual(stepPoints.count, 201)
+
+        if let first = stepPoints.first {
+            XCTAssertEqual(first.timeMs, 0.0, accuracy: 0.001)
+            XCTAssertLessThan(abs(first.total), 0.25)
+        }
+
+        let maxTotal = stepPoints.map { abs($0.total) }.max() ?? 0.0
+        XCTAssertGreaterThan(maxTotal, 0.5)
+
+        var invertedCrossover = crossover
+        invertedCrossover.invertTweeterPolarity = true
+        let invertedStep = SimulationEngine.computeStepResponse(driver: driver, cabinet: cabinet, crossover: invertedCrossover)
+        XCTAssertFalse(invertedStep.isEmpty)
+    }
 }
