@@ -9,15 +9,58 @@ public struct PhaseBodeChartView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 Text("Acoustic Phase & Driver Delay Alignment (Degrees vs Log Hz)")
                     .font(.headline)
                 Spacer()
 
-                Text("Woofer Phase").foregroundColor(.blue).font(.caption).bold()
-                Text("Tweeter Phase").foregroundColor(.red).font(.caption).bold()
-                Text("System Phase").foregroundColor(.green).font(.caption).bold()
-                Text("Phase Difference (ΔΦ)").foregroundColor(.orange).font(.caption).bold()
+                Button(action: { viewModel.showWoofer.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Woofer Phase")
+                            .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { viewModel.showTweeter.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Tweeter Phase")
+                            .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { viewModel.showTotalSystem.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("System Phase")
+                            .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { viewModel.showPhaseDiff.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showPhaseDiff ? Color.orange : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Phase Difference (ΔΦ)")
+                            .foregroundColor(viewModel.showPhaseDiff ? .orange : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal)
 
@@ -113,15 +156,23 @@ public struct PhaseBodeChartView: View {
         }
 
         // Woofer Phase
-        drawPhaseCurve(keyPath: \.wooferPhaseDeg, color: .blue.opacity(0.85), lineWidth: 1.5)
+        if viewModel.showWoofer {
+            drawPhaseCurve(keyPath: \.wooferPhaseDeg, color: .blue.opacity(0.85), lineWidth: 1.5)
+        }
 
         // Tweeter Phase
-        drawPhaseCurve(keyPath: \.tweeterPhaseDeg, color: .red.opacity(0.85), lineWidth: 1.5)
+        if viewModel.showTweeter {
+            drawPhaseCurve(keyPath: \.tweeterPhaseDeg, color: .red.opacity(0.85), lineWidth: 1.5)
+        }
 
         // Inter-Driver Phase Difference Delta Phi
-        drawPhaseCurve(keyPath: \.phaseDifferenceDeg, color: .orange, lineWidth: 1.5, isDashed: true)
+        if viewModel.showPhaseDiff {
+            drawPhaseCurve(keyPath: \.phaseDifferenceDeg, color: .orange, lineWidth: 1.5, isDashed: true)
+        }
 
         // Total System Phase
-        drawPhaseCurve(keyPath: \.totalSystemPhaseDeg, color: .green, lineWidth: 2.5)
+        if viewModel.showTotalSystem {
+            drawPhaseCurve(keyPath: \.totalSystemPhaseDeg, color: .green, lineWidth: 2.5)
+        }
     }
 }

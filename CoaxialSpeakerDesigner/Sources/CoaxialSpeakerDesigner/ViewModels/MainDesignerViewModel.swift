@@ -33,11 +33,14 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var wooferFRDText: String = ""
     @Published public var tweeterFRDText: String = ""
     @Published public var digitizerActiveTab: Int = 0
+    @Published public var showWoofer: Bool = true
+    @Published public var showTweeter: Bool = true
+    @Published public var showTotalSystem: Bool = true
+    @Published public var showPhaseDiff: Bool = true
     @Published public var showWooferRaw: Bool = true
     @Published public var showWooferFinal: Bool = true
     @Published public var showTweeterRaw: Bool = true
     @Published public var showTweeterFinal: Bool = true
-    @Published public var showTotalSystem: Bool = true
     @Published public var showTargetReference: Bool = true
     @Published public var targetReferenceSPL: Double = 89.0
 

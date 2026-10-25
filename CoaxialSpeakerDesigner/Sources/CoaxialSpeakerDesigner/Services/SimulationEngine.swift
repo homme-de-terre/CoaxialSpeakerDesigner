@@ -36,9 +36,10 @@ public enum SimulationEngine {
             // 2. Sealed Cabinet Acoustic Transfer Function H_cab(s)
             let hCab = cabinet.transferFunction(frequency: f, ts: driver.wooferTS)
             
-            // 3. Crossover Electrical Filter Transfer Functions H_LP(s), H_HP(s)
+            // 3. Crossover Electrical Filter Transfer Functions H_LP(s), H_HP(s), H_AP(s)
             let hLP = crossover.wooferFilterTransferFunction(frequency: f)
             let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
+            let hAP = crossover.allpassFilterTransferFunction(frequency: f)
             
             // 4. Acoustic Delay & Polarity & L-Pad Gain Factor
             let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
@@ -46,7 +47,7 @@ public enum SimulationEngine {
             
             // 5. Compute Woofer Final Acoustic Pressure
             let pWooferCab = pWooferRaw * hCab
-            let pWooferFinal = pWooferCab * hLP
+            let pWooferFinal = pWooferCab * hLP * hAP
             
             // 6. Compute Tweeter Final Acoustic Pressure
             let pTweeterFinal = pTweeterRaw * hHP * gLpad * hDelay
@@ -340,8 +341,9 @@ public enum SimulationEngine {
             let hLP = crossover.wooferFilterTransferFunction(frequency: f)
             let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
             let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
+            let hAP = crossover.allpassFilterTransferFunction(frequency: f)
 
-            let pWooferFinal = pWooferRaw * hCab * hLP
+            let pWooferFinal = pWooferRaw * hCab * hLP * hAP
             let pTweeterFinal = pTweeterRaw * hHP * gLpad * hDelay
             let pTotal = pWooferFinal + pTweeterFinal
 

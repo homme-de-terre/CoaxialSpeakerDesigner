@@ -154,6 +154,12 @@ export default function App() {
   const [acousticDelayMM, setAcousticDelayMM] = useState(35.0);
   const [invertTweeterPolarity, setInvertTweeterPolarity] = useState(false);
   const [snapToE12, setSnapToE12] = useState(false);
+  const [enableAllpass, setEnableAllpass] = useState(false);
+
+  // Curve Visibility Toggles
+  const [showWoofer, setShowWoofer] = useState(true);
+  const [showTweeter, setShowTweeter] = useState(true);
+  const [showTotalSystem, setShowTotalSystem] = useState(true);
 
   // FRD Custom Data Strings
   const [wooferFRDText, setWooferFRDText] = useState("");
@@ -298,6 +304,16 @@ export default function App() {
       }
     }
 
+    // All-Pass Delay Compensation Network
+    if (enableAllpass && acousticDelayMM > 0) {
+      const c = 343.0;
+      const tau = (acousticDelayMM / 1000.0) / c;
+      const w0 = 2.0 * Math.PI * fx;
+      const qAP = Math.max(0.5, Math.min(2.5, 2.0 / (w0 * Math.max(tau, 1e-6))));
+      comp.L_AP = (Zw / (w0 * qAP)) * 1000.0;
+      comp.C_AP = (1.0 / (w0 * qAP * Zw)) * 1e6;
+    }
+
     // Snap if requested
     if (snapToE12) {
       for (const key of Object.keys(comp)) {
@@ -306,7 +322,7 @@ export default function App() {
     }
 
     return comp;
-  }, [fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, ts, tweeter]);
+  }, [fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, ts, tweeter, enableAllpass, acousticDelayMM]);
 
   // --- Complete Simulation Engine Calculations ---
   const simulationData = useMemo(() => {
@@ -358,7 +374,19 @@ export default function App() {
         hLP = h2.mul(h2);
       }
 
-      const pWooferFinal = pWooferCab.mul(hLP);
+      // Woofer All-Pass Delay Compensation Network H_AP
+      let hAP = new Complex(1, 0);
+      if (enableAllpass && acousticDelayMM > 0) {
+        const c = 343.0;
+        const tau = (acousticDelayMM / 1000.0) / c;
+        const w0 = 2.0 * Math.PI * fx;
+        const qAP = Math.max(0.5, Math.min(2.5, 2.0 / (w0 * Math.max(tau, 1e-6))));
+        const num = new Complex(1.0 - xW * xW, -xW / qAP);
+        const denom = new Complex(1.0 - xW * xW, xW / qAP);
+        hAP = num.div(denom);
+      }
+
+      const pWooferFinal = (pWooferCab.mul(hLP)).mul(hAP);
 
       // 2. Raw Tweeter SPL & High-Pass Electrical Filter
       let pTweeterRawSPL = tweeter.spl;
@@ -480,7 +508,7 @@ export default function App() {
     }
 
     return points;
-  }, [ts, tweeter, cabinetCalculations, fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity]);
+  }, [ts, tweeter, cabinetCalculations, fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass]);
 
   // --- Render Bode Amplitude Plot ---
   useEffect(() => {
@@ -532,39 +560,45 @@ export default function App() {
     }
 
     // Woofer Curve (Blue)
-    ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    simulationData.forEach((p, i) => {
-      const [x, y] = toCanvas(p.frequency, p.wooferFinalSPL);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    if (showWoofer) {
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      simulationData.forEach((p, i) => {
+        const [x, y] = toCanvas(p.frequency, p.wooferFinalSPL);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
     // Tweeter Curve (Red)
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    simulationData.forEach((p, i) => {
-      const [x, y] = toCanvas(p.frequency, p.tweeterFinalSPL);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    if (showTweeter) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      simulationData.forEach((p, i) => {
+        const [x, y] = toCanvas(p.frequency, p.tweeterFinalSPL);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
     // Summed Total Curve (Green)
-    ctx.strokeStyle = '#22c55e';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    simulationData.forEach((p, i) => {
-      const [x, y] = toCanvas(p.frequency, p.totalSPL);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    if (showTotalSystem) {
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      simulationData.forEach((p, i) => {
+        const [x, y] = toCanvas(p.frequency, p.totalSPL);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
-  }, [simulationData, activeTab]);
+  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem]);
 
   // --- Step Response Transient Simulation Engine ---
   const stepResponseData = useMemo(() => {
@@ -607,8 +641,24 @@ export default function App() {
         hLPI = -dI / dM2;
       }
 
-      const pWR = hCabR * hLPR - hCabI * hLPI;
-      const pWI = hCabR * hLPI + hCabI * hLPR;
+      // All-pass delay compensation on woofer branch
+      let hAPR = 1.0, hAPI = 0.0;
+      if (enableAllpass && acousticDelayMM > 0) {
+        const c = 343.0;
+        const tau = (acousticDelayMM / 1000.0) / c;
+        const w0 = 2.0 * Math.PI * fx;
+        const qAP = Math.max(0.5, Math.min(2.5, 2.0 / (w0 * Math.max(tau, 1e-6))));
+        const dR = 1.0 - s * s;
+        const dI = s / qAP;
+        const dM2 = dR * dR + dI * dI;
+        hAPR = (dR * dR - dI * dI) / dM2;
+        hAPI = (-2.0 * dR * dI) / dM2;
+      }
+
+      const pW_raw_R = hCabR * hLPR - hCabI * hLPI;
+      const pW_raw_I = hCabR * hLPI + hCabI * hLPR;
+      const pWR = pW_raw_R * hAPR - pW_raw_I * hAPI;
+      const pWI = pW_raw_R * hAPI + pW_raw_I * hAPR;
 
       let hHPR = 1.0, hHPI = 0.0;
       if (tweeterOrder === 'firstOrder') {
@@ -730,7 +780,7 @@ export default function App() {
     }
 
     return points;
-  }, [cabinetCalculations, fx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity]);
+  }, [cabinetCalculations, fx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass]);
 
   // --- Render Step Response Plot ---
   useEffect(() => {
@@ -785,35 +835,41 @@ export default function App() {
     }
 
     // Woofer (Blue)
-    ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    stepResponseData.forEach((p, i) => {
-      const [x, y] = toCanvas(p.timeMs, p.woofer);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    if (showWoofer) {
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      stepResponseData.forEach((p, i) => {
+        const [x, y] = toCanvas(p.timeMs, p.woofer);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
     // Tweeter (Red)
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    stepResponseData.forEach((p, i) => {
-      const [x, y] = toCanvas(p.timeMs, p.tweeter);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    if (showTweeter) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      stepResponseData.forEach((p, i) => {
+        const [x, y] = toCanvas(p.timeMs, p.tweeter);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
     // Total System (Green)
-    ctx.strokeStyle = '#22c55e';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    stepResponseData.forEach((p, i) => {
-      const [x, y] = toCanvas(p.timeMs, p.total);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-  }, [stepResponseData, activeTab]);
+    if (showTotalSystem) {
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      stepResponseData.forEach((p, i) => {
+        const [x, y] = toCanvas(p.timeMs, p.total);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+  }, [stepResponseData, activeTab, showWoofer, showTweeter, showTotalSystem]);
 
   // --- Shared Datasheet Application Helper ---
   const applyParsedDatasheet = (parsed, sourceName) => {
@@ -1368,10 +1424,31 @@ export default function App() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-bold text-white">Acoustic Amplitude Frequency Response (dB SPL vs Log Hz)</h2>
-                <div className="flex items-center space-x-4 text-xs">
-                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-blue-500"></span><span className="text-slate-300">Woofer</span></span>
-                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-red-500"></span><span className="text-slate-300">Tweeter</span></span>
-                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500"></span><span className="text-slate-300">Summed System</span></span>
+                <div className="flex items-center space-x-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowWoofer(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showWoofer ? 'bg-blue-950/60 border-blue-500 text-blue-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showWoofer ? 'bg-blue-500' : 'bg-slate-600'}`}></span>
+                    <span>Woofer (LP)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTweeter(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTweeter ? 'bg-red-950/60 border-red-500 text-red-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTweeter ? 'bg-red-500' : 'bg-slate-600'}`}></span>
+                    <span>Tweeter (HP)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTotalSystem(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTotalSystem ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
+                    <span>Total System</span>
+                  </button>
                 </div>
               </div>
 
@@ -1387,13 +1464,34 @@ export default function App() {
                 <div>
                   <h2 className="text-lg font-bold text-white">Transient Acoustic Step Response (Normalized Amplitude vs Time)</h2>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Acoustic Delay Offset: {acousticDelayMM} mm ({((acousticDelayMM / 1000.0) / 343.0 * 1000.0).toFixed(2)} ms) • Tweeter Polarity: {invertTweeterPolarity ? 'Inverted (-)' : 'Normal (+)'}
+                    Acoustic Delay Offset: {acousticDelayMM} mm ({((acousticDelayMM / 1000.0) / 343.0 * 1000.0).toFixed(2)} ms) • Tweeter Polarity: {invertTweeterPolarity ? 'Inverted (-)' : 'Normal (+)'} • All-Pass Comp: {enableAllpass ? 'Enabled (Active)' : 'Disabled'}
                   </p>
                 </div>
-                <div className="flex items-center space-x-4 text-xs">
-                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-blue-500"></span><span className="text-slate-300">Woofer (LP)</span></span>
-                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-red-500"></span><span className="text-slate-300">Tweeter (HP)</span></span>
-                  <span className="flex items-center space-x-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500"></span><span className="text-slate-300">Total System</span></span>
+                <div className="flex items-center space-x-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowWoofer(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showWoofer ? 'bg-blue-950/60 border-blue-500 text-blue-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showWoofer ? 'bg-blue-500' : 'bg-slate-600'}`}></span>
+                    <span>Woofer (LP)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTweeter(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTweeter ? 'bg-red-950/60 border-red-500 text-red-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTweeter ? 'bg-red-500' : 'bg-slate-600'}`}></span>
+                    <span>Tweeter (HP)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTotalSystem(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTotalSystem ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
+                    <span>Total System</span>
+                  </button>
                 </div>
               </div>
 
@@ -1614,6 +1712,20 @@ export default function App() {
                   <label className="text-xs font-semibold text-slate-400">Coaxial Tweeter Depth Offset: {acousticDelayMM} mm</label>
                   <input type="range" min="0" max="100" value={acousticDelayMM} onChange={(e) => setAcousticDelayMM(+e.target.value)} className="w-full mt-2" />
                 </div>
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={enableAllpass} 
+                      onChange={(e) => setEnableAllpass(e.target.checked)} 
+                      className="rounded bg-slate-800 border-slate-700 text-blue-600"
+                    />
+                    <span className="font-medium">Enable All-Pass Woofer Delay Compensation Network</span>
+                  </label>
+                  <p className="text-[11px] text-slate-400 pl-5">
+                    Inserts an optional 2nd-order all-pass delay network on the woofer branch to acoustically align phase with the physically recessed tweeter at {fx} Hz.
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -1644,6 +1756,8 @@ export default function App() {
                     {crossoverComponents.C1 && <tr><td className="py-2.5 font-bold text-blue-400">C1</td><td>Woofer Parallel Capacitor</td><td>{crossoverComponents.C1.toFixed(2)} µF</td></tr>}
                     {crossoverComponents.C_HP1 && <tr><td className="py-2.5 font-bold text-red-400">C_HP1</td><td>Tweeter Series Capacitor</td><td>{crossoverComponents.C_HP1.toFixed(2)} µF</td></tr>}
                     {crossoverComponents.L_HP1 && <tr><td className="py-2.5 font-bold text-red-400">L_HP1</td><td>Tweeter Parallel Inductor</td><td>{crossoverComponents.L_HP1.toFixed(2)} mH</td></tr>}
+                    {enableAllpass && crossoverComponents.L_AP && <tr><td className="py-2.5 font-bold text-teal-400">L_AP</td><td>Woofer All-Pass Inductor</td><td>{crossoverComponents.L_AP.toFixed(2)} mH</td></tr>}
+                    {enableAllpass && crossoverComponents.C_AP && <tr><td className="py-2.5 font-bold text-teal-400">C_AP</td><td>Woofer All-Pass Capacitor</td><td>{crossoverComponents.C_AP.toFixed(2)} µF</td></tr>}
                     {crossoverComponents.R_zobel && <tr><td className="py-2.5 font-bold text-amber-400">R_zobel</td><td>Zobel Resistor</td><td>{crossoverComponents.R_zobel.toFixed(2)} Ω</td></tr>}
                     {crossoverComponents.C_zobel && <tr><td className="py-2.5 font-bold text-amber-400">C_zobel</td><td>Zobel Capacitor</td><td>{crossoverComponents.C_zobel.toFixed(2)} µF</td></tr>}
                   </tbody>

@@ -9,14 +9,46 @@ public struct ImpedanceChartView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 Text("System Electrical Load Impedance (|Z| in Ohms vs Log Hz)")
                     .font(.headline)
                 Spacer()
 
-                Text("Woofer |Z|").foregroundColor(.blue).font(.caption).bold()
-                Text("Tweeter |Z|").foregroundColor(.red).font(.caption).bold()
-                Text("Amplifier System Load |Z|").foregroundColor(.purple).font(.caption).bold()
+                Button(action: { viewModel.showWoofer.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Woofer |Z|")
+                            .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { viewModel.showTweeter.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Tweeter |Z|")
+                            .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { viewModel.showTotalSystem.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showTotalSystem ? Color.purple : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Amplifier System Load |Z|")
+                            .foregroundColor(viewModel.showTotalSystem ? .purple : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal)
 
@@ -84,27 +116,33 @@ public struct ImpedanceChartView: View {
         }
 
         // Woofer Raw / Box Impedance
-        var wPath = Path()
-        wPath.move(to: zToCanvas(freq: points[0].frequency, zMag: points[0].wooferImpedanceMag))
-        for p in points.dropFirst() {
-            wPath.addLine(to: zToCanvas(freq: p.frequency, zMag: p.wooferImpedanceMag))
+        if viewModel.showWoofer {
+            var wPath = Path()
+            wPath.move(to: zToCanvas(freq: points[0].frequency, zMag: points[0].wooferImpedanceMag))
+            for p in points.dropFirst() {
+                wPath.addLine(to: zToCanvas(freq: p.frequency, zMag: p.wooferImpedanceMag))
+            }
+            context.stroke(wPath, with: .color(.blue.opacity(0.8)), lineWidth: 1.5)
         }
-        context.stroke(wPath, with: .color(.blue.opacity(0.8)), lineWidth: 1.5)
 
         // Tweeter Raw Impedance
-        var tPath = Path()
-        tPath.move(to: zToCanvas(freq: points[0].frequency, zMag: points[0].tweeterImpedanceMag))
-        for p in points.dropFirst() {
-            tPath.addLine(to: zToCanvas(freq: p.frequency, zMag: p.tweeterImpedanceMag))
+        if viewModel.showTweeter {
+            var tPath = Path()
+            tPath.move(to: zToCanvas(freq: points[0].frequency, zMag: points[0].tweeterImpedanceMag))
+            for p in points.dropFirst() {
+                tPath.addLine(to: zToCanvas(freq: p.frequency, zMag: p.tweeterImpedanceMag))
+            }
+            context.stroke(tPath, with: .color(.red.opacity(0.8)), lineWidth: 1.5)
         }
-        context.stroke(tPath, with: .color(.red.opacity(0.8)), lineWidth: 1.5)
 
         // Total Amplifier System Load Impedance
-        var totalPath = Path()
-        totalPath.move(to: zToCanvas(freq: points[0].frequency, zMag: points[0].totalSystemImpedanceMag))
-        for p in points.dropFirst() {
-            totalPath.addLine(to: zToCanvas(freq: p.frequency, zMag: p.totalSystemImpedanceMag))
+        if viewModel.showTotalSystem {
+            var totalPath = Path()
+            totalPath.move(to: zToCanvas(freq: points[0].frequency, zMag: points[0].totalSystemImpedanceMag))
+            for p in points.dropFirst() {
+                totalPath.addLine(to: zToCanvas(freq: p.frequency, zMag: p.totalSystemImpedanceMag))
+            }
+            context.stroke(totalPath, with: .color(.purple), lineWidth: 2.5)
         }
-        context.stroke(totalPath, with: .color(.purple), lineWidth: 2.5)
     }
 }

@@ -23,9 +23,41 @@ public struct StepResponseChartView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
-                    Text("Woofer (LP)").foregroundColor(.blue).font(.caption).bold()
-                    Text("Tweeter (HP)").foregroundColor(.red).font(.caption).bold()
-                    Text("Total System").foregroundColor(.green).font(.caption).bold()
+                    Button(action: { viewModel.showWoofer.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Woofer (LP)")
+                                .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                                .font(.caption).bold()
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { viewModel.showTweeter.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Tweeter (HP)")
+                                .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                                .font(.caption).bold()
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { viewModel.showTotalSystem.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Total System")
+                                .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
+                                .font(.caption).bold()
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 Divider().frame(height: 18)
@@ -132,12 +164,18 @@ public struct StepResponseChartView: View {
         }
 
         // 1. Woofer (Low-Pass Filtered) - Blue
-        drawPath(color: Color.blue.opacity(0.85), lineWidth: 2.0, keyPath: \.woofer)
+        if viewModel.showWoofer {
+            drawPath(color: Color.blue.opacity(0.85), lineWidth: 2.0, keyPath: \.woofer)
+        }
 
         // 2. Tweeter (High-Pass + Delay + Polarity) - Red
-        drawPath(color: Color.red.opacity(0.85), lineWidth: 2.0, keyPath: \.tweeter)
+        if viewModel.showTweeter {
+            drawPath(color: Color.red.opacity(0.85), lineWidth: 2.0, keyPath: \.tweeter)
+        }
 
         // 3. Combined Total System - Green
-        drawPath(color: Color.green, lineWidth: 2.5, keyPath: \.total)
+        if viewModel.showTotalSystem {
+            drawPath(color: Color.green, lineWidth: 2.5, keyPath: \.total)
+        }
     }
 }

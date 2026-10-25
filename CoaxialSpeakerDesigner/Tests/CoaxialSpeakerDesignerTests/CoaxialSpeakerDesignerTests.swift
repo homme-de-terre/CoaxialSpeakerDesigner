@@ -244,4 +244,26 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         let invertedStep = SimulationEngine.computeStepResponse(driver: driver, cabinet: cabinet, crossover: invertedCrossover)
         XCTAssertFalse(invertedStep.isEmpty)
     }
+
+    func testAllpassFilterPhaseAndDelay() {
+        var crossover = CrossoverNetwork(crossoverFrequency: 1500.0, acousticCenterOffsetMM: 35.0)
+        crossover.enableAllpassFilter = true
+
+        // Magnitude must be strictly 1.0 (0 dB) across all frequencies
+        for f in [100.0, 500.0, 1000.0, 1500.0, 3000.0, 10000.0] {
+            let hAP = crossover.allpassFilterTransferFunction(frequency: f)
+            XCTAssertEqual(hAP.magnitude, 1.0, accuracy: 1e-6, "All-pass magnitude must be 1.0 at \(f) Hz")
+        }
+
+        // At crossover frequency (1500 Hz), phase shift must be -180 deg
+        let hAtXo = crossover.allpassFilterTransferFunction(frequency: 1500.0)
+        XCTAssertEqual(abs(hAtXo.phaseDegrees), 180.0, accuracy: 2.0)
+
+        // Check component values
+        let comp = crossover.computeComponentValues(wooferRe: 6.0, tweeterRe: 6.0, wooferLe: 0.8)
+        XCTAssertNotNil(comp.L_AP_mH)
+        XCTAssertNotNil(comp.C_AP_uF)
+        XCTAssertGreaterThan(comp.L_AP_mH ?? 0, 0)
+        XCTAssertGreaterThan(comp.C_AP_uF ?? 0, 0)
+    }
 }

@@ -9,16 +9,63 @@ public struct AmplitudeBodeChartView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Chart Legend Header
-            HStack(spacing: 16) {
+            // Chart Legend Header with interactive toggles
+            HStack(spacing: 14) {
                 Text("Amplitude Frequency Response (dB SPL vs Log Hz)")
                     .font(.headline)
                 Spacer()
 
-                Text("Woofer (LP)").foregroundColor(.blue).font(.caption).bold()
-                Text("Tweeter (HP)").foregroundColor(.red).font(.caption).bold()
-                Text("Total System").foregroundColor(.green).font(.caption).bold()
-                Text("Target Line").foregroundColor(.gray).font(.caption).bold()
+                Button(action: { viewModel.showWoofer.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Woofer (LP)")
+                            .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Woofer response curve")
+
+                Button(action: { viewModel.showTweeter.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Tweeter (HP)")
+                            .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Tweeter response curve")
+
+                Button(action: { viewModel.showTotalSystem.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                        Text("Total System")
+                            .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Combined System response curve")
+
+                Button(action: { viewModel.showTargetReference.toggle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(viewModel.showTargetReference ? Color.gray : Color.gray.opacity(0.2))
+                            .frame(width: 8, height: 8)
+                        Text("Target Line")
+                            .foregroundColor(viewModel.showTargetReference ? .secondary : Color.gray.opacity(0.5))
+                            .font(.caption).bold()
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Toggle target reference line")
             }
             .padding(.horizontal)
 
@@ -111,19 +158,27 @@ public struct AmplitudeBodeChartView: View {
         }
 
         // Target Reference Line (Dashed)
-        let yRef = size.height * CGFloat(1.0 - (viewModel.targetReferenceSPL - minSPL) / (maxSPL - minSPL))
-        var refPath = Path()
-        refPath.move(to: CGPoint(x: 0, y: yRef))
-        refPath.addLine(to: CGPoint(x: size.width, y: yRef))
-        context.stroke(refPath, with: .color(.gray.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+        if viewModel.showTargetReference {
+            let yRef = size.height * CGFloat(1.0 - (viewModel.targetReferenceSPL - minSPL) / (maxSPL - minSPL))
+            var refPath = Path()
+            refPath.move(to: CGPoint(x: 0, y: yRef))
+            refPath.addLine(to: CGPoint(x: size.width, y: yRef))
+            context.stroke(refPath, with: .color(.gray.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+        }
 
         // Woofer Final Curve (Blue)
-        drawSplCurve(keyPath: \.wooferFinalSPL, color: .blue, lineWidth: 2)
+        if viewModel.showWoofer {
+            drawSplCurve(keyPath: \.wooferFinalSPL, color: .blue, lineWidth: 2)
+        }
 
         // Tweeter Final Curve (Red)
-        drawSplCurve(keyPath: \.tweeterFinalSPL, color: .red, lineWidth: 2)
+        if viewModel.showTweeter {
+            drawSplCurve(keyPath: \.tweeterFinalSPL, color: .red, lineWidth: 2)
+        }
 
         // Total System Curve (Green)
-        drawSplCurve(keyPath: \.totalSystemSPL, color: .green, lineWidth: 3)
+        if viewModel.showTotalSystem {
+            drawSplCurve(keyPath: \.totalSystemSPL, color: .green, lineWidth: 3)
+        }
     }
 }

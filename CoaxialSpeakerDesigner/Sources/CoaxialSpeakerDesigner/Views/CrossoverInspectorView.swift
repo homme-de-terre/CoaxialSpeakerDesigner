@@ -100,6 +100,8 @@ public struct CrossoverInspectorView: View {
                         Spacer()
                         Toggle("Snap Components to Commercial E12 Series", isOn: $viewModel.crossover.snapToStandardValues)
                     }
+
+                    Toggle("Enable All-Pass Woofer Delay Compensation Network", isOn: $viewModel.crossover.enableAllpassFilter)
                 }
                 .padding(8)
             }
@@ -120,6 +122,13 @@ public struct CrossoverInspectorView: View {
                         if let c1 = comp.C_HP1_uF { Text("C_HP1 = \(String(format: "%.2f", c1)) µF") }
                         if let l1 = comp.L_HP1_mH { Text("L_HP1 = \(String(format: "%.2f", l1)) mH") }
                         if let c2 = comp.C_HP2_uF { Text("C_HP2 = \(String(format: "%.2f", c2)) µF") }
+                    }
+                    if viewModel.crossover.enableAllpassFilter {
+                        GridRow {
+                            Text("All-Pass Delay Comp:").bold().foregroundColor(.teal)
+                            if let lap = comp.L_AP_mH { Text("L_AP = \(String(format: "%.2f", lap)) mH") }
+                            if let cap = comp.C_AP_uF { Text("C_AP = \(String(format: "%.2f", cap)) µF") }
+                        }
                     }
                     if viewModel.crossover.enableZobelNetwork {
                         GridRow {

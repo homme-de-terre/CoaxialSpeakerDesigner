@@ -41,6 +41,10 @@ public struct CalculatedComponents: Codable, Sendable {
     // L-Pad
     public var R1_lpad_ohms: Double? = nil // Series
     public var R2_lpad_ohms: Double? = nil // Parallel
+
+    // All-Pass Delay Compensation Network
+    public var L_AP_mH: Double? = nil
+    public var C_AP_uF: Double? = nil
 }
 
 /// Coaxial Crossover Network model and calculation engine.
@@ -53,6 +57,7 @@ public struct CrossoverNetwork: Codable, Sendable {
     public var enableZobelNetwork: Bool = true
     public var enableLPadAttenuator: Bool = true
     public var userTargetAttenuationdB: Double = 5.0 // dB attenuation for tweeter
+    public var enableAllpassFilter: Bool = false     // Optional woofer delay compensation all-pass network
     
     // Coaxial Acoustic Alignment
     public var acousticCenterOffsetMM: Double = 35.0 // Tweeter physical delay offset behind woofer cone (mm)
@@ -68,7 +73,8 @@ public struct CrossoverNetwork: Codable, Sendable {
         userTargetAttenuationdB: Double = 5.0,
         acousticCenterOffsetMM: Double = 35.0,
         invertTweeterPolarity: Bool = false,
-        snapToStandardValues: Bool = false
+        snapToStandardValues: Bool = false,
+        enableAllpassFilter: Bool = false
     ) {
         self.crossoverFrequency = crossoverFrequency
         self.wooferOrder = wooferOrder
@@ -79,6 +85,7 @@ public struct CrossoverNetwork: Codable, Sendable {
         self.acousticCenterOffsetMM = acousticCenterOffsetMM
         self.invertTweeterPolarity = invertTweeterPolarity
         self.snapToStandardValues = snapToStandardValues
+        self.enableAllpassFilter = enableAllpassFilter
     }
 
     /// Compute ideal passive filter component values based on target driver nominal impedances.
@@ -150,6 +157,18 @@ public struct CrossoverNetwork: Codable, Sendable {
             }
         }
 
+        // 5. All-Pass Delay Compensation Network for Woofer
+        if enableAllpassFilter && acousticCenterOffsetMM > 0 {
+            let c = 343.0
+            let tau = (acousticCenterOffsetMM / 1000.0) / c
+            let w0 = 2.0 * .pi * fx
+            let qAP = max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
+            let lAP = (Zw / (w0 * qAP)) * 1000.0
+            let cAP = (1.0 / (w0 * qAP * Zw)) * 1e6
+            comp.L_AP_mH = snapToStandardValues ? snapE12(lAP) : lAP
+            comp.C_AP_uF = snapToStandardValues ? snapE12(cAP) : cAP
+        }
+
         // Snap to standard E12 values if requested
         if snapToStandardValues {
             comp.L1_mH = comp.L1_mH.map { snapE12($0) }
@@ -166,6 +185,8 @@ public struct CrossoverNetwork: Codable, Sendable {
             comp.C_zobel_uF = comp.C_zobel_uF.map { snapE12($0) }
             comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { snapE12($0) }
             comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { snapE12($0) }
+            comp.L_AP_mH = comp.L_AP_mH.map { snapE12($0) }
+            comp.C_AP_uF = comp.C_AP_uF.map { snapE12($0) }
         }
 
         return comp
@@ -235,6 +256,25 @@ public struct CrossoverNetwork: Codable, Sendable {
         let polarityMultiplier = invertTweeterPolarity ? -1.0 : 1.0
 
         return ComplexNumber(r: polarityMultiplier, theta: -phaseShiftRad)
+    }
+
+    /// Complex electrical all-pass delay compensation filter transfer function H_AP(f) on woofer branch.
+    /// Magnitude is strictly 1.0 (0 dB) at all frequencies, providing phase delay to match the recessed tweeter.
+    public func allpassFilterTransferFunction(frequency f: Double) -> ComplexNumber {
+        guard enableAllpassFilter && acousticCenterOffsetMM > 0 else {
+            return ComplexNumber(real: 1.0, imag: 0.0)
+        }
+        let c = 343.0 // m/s
+        let tau = (acousticCenterOffsetMM / 1000.0) / c
+        let f0 = crossoverFrequency
+        let w0 = 2.0 * .pi * f0
+        let qAP = max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
+        let x = f / f0
+
+        // 2nd-order All-Pass: [ (1 - x^2) - j(x/Q) ] / [ (1 - x^2) + j(x/Q) ]
+        let num = ComplexNumber(real: 1.0 - x * x, imag: -x / qAP)
+        let denom = ComplexNumber(real: 1.0 - x * x, imag: x / qAP)
+        return num / denom
     }
 
     /// L-Pad complex attenuation factor
