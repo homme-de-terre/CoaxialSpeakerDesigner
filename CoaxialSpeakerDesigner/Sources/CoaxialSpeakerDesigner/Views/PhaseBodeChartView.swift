@@ -1,5 +1,7 @@
 import SwiftUI
 
+import SwiftUI
+
 public struct PhaseBodeChartView: View {
     @ObservedObject var viewModel: MainDesignerViewModel
 
@@ -21,6 +23,11 @@ public struct PhaseBodeChartView: View {
                         Text("All-Pass Nelder-Mead Optimization: F0 = \(f0) Hz, Q = \(qVal) • Crossover Window [\(Int(viewModel.crossover.crossoverFrequency / 2))–\(Int(viewModel.crossover.crossoverFrequency * 2)) Hz] Residual RMS: \(errVal)")
                             .font(.caption2)
                             .foregroundColor(statusColor)
+                    } else if viewModel.compensateTweeterDelay {
+                        let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
+                        Text("Tweeter Acoustic Center Delay Compensated: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) removed from tweeter phase")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 }
                 Spacer()
@@ -66,18 +73,29 @@ public struct PhaseBodeChartView: View {
                         Circle()
                             .fill(viewModel.showPhaseDiff ? Color.orange : Color.gray.opacity(0.35))
                             .frame(width: 8, height: 8)
-                        Text("Phase Difference (ΔΦ)")
+                        Text("Phase Diff (ΔΦ)")
                             .foregroundColor(viewModel.showPhaseDiff ? .orange : .secondary)
                             .font(.caption).bold()
                     }
                 }
                 .buttonStyle(.plain)
+
+                Divider().frame(height: 16)
+
+                Toggle("Unwrap Phase", isOn: $viewModel.unwrapPhase)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+
+                Toggle("Compensate Delay", isOn: $viewModel.compensateTweeterDelay)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
             }
             .padding(.horizontal)
 
             Canvas { context, size in
-                drawLogGrid(context: context, size: size)
-                drawPhaseCurves(context: context, size: size)
+                let (minDeg, maxDeg) = determinePhaseRange()
+                drawLogGrid(context: context, size: size, minDeg: minDeg, maxDeg: maxDeg)
+                drawPhaseCurves(context: context, size: size, minDeg: minDeg, maxDeg: maxDeg)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
@@ -88,7 +106,34 @@ public struct PhaseBodeChartView: View {
         .padding()
     }
 
-    private func drawLogGrid(context: GraphicsContext, size: CGSize) {
+    private func determinePhaseRange() -> (minDeg: Double, maxDeg: Double) {
+        guard viewModel.unwrapPhase, !viewModel.simulationPoints.isEmpty else {
+            return (-180.0, 180.0)
+        }
+        var minVal = 0.0
+        var maxVal = 180.0
+
+        for p in viewModel.simulationPoints {
+            if viewModel.showWoofer {
+                minVal = min(minVal, p.wooferUnwrappedPhaseDeg)
+                maxVal = max(maxVal, p.wooferUnwrappedPhaseDeg)
+            }
+            if viewModel.showTweeter {
+                let twPhase = viewModel.compensateTweeterDelay ? p.tweeterDelayCompensatedPhaseDeg : p.tweeterUnwrappedPhaseDeg
+                minVal = min(minVal, twPhase)
+                maxVal = max(maxVal, twPhase)
+            }
+            if viewModel.showTotalSystem {
+                minVal = min(minVal, p.totalSystemUnwrappedPhaseDeg)
+                maxVal = max(maxVal, p.totalSystemUnwrappedPhaseDeg)
+            }
+        }
+        let snappedMin = floor((minVal - 15.0) / 90.0) * 90.0
+        let snappedMax = ceil((maxVal + 15.0) / 90.0) * 90.0
+        return (min(snappedMin, -180.0), max(snappedMax, 180.0))
+    }
+
+    private func drawLogGrid(context: GraphicsContext, size: CGSize, minDeg: Double, maxDeg: Double) {
         let minF = 20.0
         let maxF = 20000.0
         let logMin = log10(minF)
@@ -118,51 +163,56 @@ public struct PhaseBodeChartView: View {
             context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: x + 10, y: size.height - 12))
         }
 
-        // Horizontal Phase Gridlines (-180, -90, 0, 90, 180)
-        let phaseAngles = [-180.0, -135.0, -90.0, -45.0, 0.0, 45.0, 90.0, 135.0, 180.0]
-        for deg in phaseAngles {
-            let y = size.height * CGFloat(1.0 - (deg - (-180.0)) / (360.0))
+        // Horizontal Phase Gridlines
+        let span = maxDeg - minDeg
+        let step: Double = span > 540.0 ? 180.0 : (span > 360.0 ? 90.0 : 45.0)
+        var deg = minDeg
+        while deg <= maxDeg + 0.1 {
+            let y = size.height * CGFloat(1.0 - (deg - minDeg) / span)
             var path = Path()
             path.move(to: CGPoint(x: 0, y: y))
             path.addLine(to: CGPoint(x: size.width, y: y))
-            context.stroke(path, with: .color(deg == 0 ? Color.gray.opacity(0.6) : Color.gray.opacity(0.2)), lineWidth: deg == 0 ? 1.5 : 1)
+            context.stroke(path, with: .color(abs(deg) < 0.01 ? Color.gray.opacity(0.6) : Color.gray.opacity(0.2)), lineWidth: abs(deg) < 0.01 ? 1.5 : 1)
 
             context.draw(Text("\(Int(deg))°").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: y - 8))
+            deg += step
         }
     }
 
-    private func drawPhaseCurves(context: GraphicsContext, size: CGSize) {
+    private func drawPhaseCurves(context: GraphicsContext, size: CGSize, minDeg: Double, maxDeg: Double) {
         let minF = 20.0
         let maxF = 20000.0
         let logMin = log10(minF)
         let logMax = log10(maxF)
+        let span = maxDeg - minDeg
 
         let points = viewModel.simulationPoints
         guard !points.isEmpty else { return }
 
         func phaseToCanvas(freq: Double, deg: Double) -> CGPoint {
             let safeDeg = deg.isFinite ? deg : 0.0
-            let clampedDeg = max(min(safeDeg, 180.0), -180.0)
+            let clampedDeg = max(min(safeDeg, maxDeg), minDeg)
             let safeF = (freq.isFinite && freq > 0) ? freq : minF
             let x = size.width * CGFloat((log10(safeF) - logMin) / (logMax - logMin))
-            let y = size.height * CGFloat(1.0 - (clampedDeg - (-180.0)) / 360.0)
+            let y = size.height * CGFloat(1.0 - (clampedDeg - minDeg) / span)
             return CGPoint(x: x, y: y)
         }
 
-        func drawPhaseCurve(keyPath: KeyPath<SimulationPoint, Double>, color: Color, lineWidth: CGFloat = 1.5, isDashed: Bool = false) {
+        func drawCurve(phases: [Double], color: Color, lineWidth: CGFloat = 1.5, isDashed: Bool = false) {
+            guard phases.count == points.count else { return }
             var path = Path()
             var started = false
             var prevDeg: Double = 0.0
 
-            for p in points {
-                let deg = p[keyPath: keyPath]
+            for i in 0..<points.count {
+                let deg = phases[i]
                 guard deg.isFinite else { continue }
-                let pt = phaseToCanvas(freq: p.frequency, deg: deg)
+                let pt = phaseToCanvas(freq: points[i].frequency, deg: deg)
 
                 if !started {
                     path.move(to: pt)
                     started = true
-                } else if abs(deg - prevDeg) > 170.0 {
+                } else if !viewModel.unwrapPhase && abs(deg - prevDeg) > 170.0 {
                     // Phase wrap jump (-180 to +180 boundary). Break path to avoid vertical sawtooth line.
                     path.move(to: pt)
                 } else {
@@ -180,22 +230,33 @@ public struct PhaseBodeChartView: View {
 
         // Woofer Phase
         if viewModel.showWoofer {
-            drawPhaseCurve(keyPath: \.wooferPhaseDeg, color: .blue.opacity(0.85), lineWidth: 1.5)
+            let wPhases = viewModel.unwrapPhase ? points.map { $0.wooferUnwrappedPhaseDeg } : points.map { $0.wooferPhaseDeg }
+            drawCurve(phases: wPhases, color: .blue.opacity(0.85), lineWidth: 1.5)
         }
 
-        // Tweeter Phase
+        // Tweeter Phase (Supports unwrapped and delay-compensated phase)
         if viewModel.showTweeter {
-            drawPhaseCurve(keyPath: \.tweeterPhaseDeg, color: .red.opacity(0.85), lineWidth: 1.5)
+            let tPhases: [Double]
+            if viewModel.compensateTweeterDelay {
+                tPhases = points.map { $0.tweeterDelayCompensatedPhaseDeg }
+            } else if viewModel.unwrapPhase {
+                tPhases = points.map { $0.tweeterUnwrappedPhaseDeg }
+            } else {
+                tPhases = points.map { $0.tweeterPhaseDeg }
+            }
+            drawCurve(phases: tPhases, color: .red.opacity(0.85), lineWidth: 1.5)
         }
 
         // Inter-Driver Phase Difference Delta Phi
         if viewModel.showPhaseDiff {
-            drawPhaseCurve(keyPath: \.phaseDifferenceDeg, color: .orange, lineWidth: 1.5, isDashed: true)
+            drawCurve(phases: points.map { $0.phaseDifferenceDeg }, color: .orange, lineWidth: 1.5, isDashed: true)
         }
 
         // Total System Phase
         if viewModel.showTotalSystem {
-            drawPhaseCurve(keyPath: \.totalSystemPhaseDeg, color: .green, lineWidth: 2.5)
+            let sPhases = viewModel.unwrapPhase ? points.map { $0.totalSystemUnwrappedPhaseDeg } : points.map { $0.totalSystemPhaseDeg }
+            drawCurve(phases: sPhases, color: .green, lineWidth: 2.5)
         }
     }
+}
 }

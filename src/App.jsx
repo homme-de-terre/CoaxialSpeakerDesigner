@@ -160,6 +160,9 @@ export default function App() {
   const [showWoofer, setShowWoofer] = useState(true);
   const [showTweeter, setShowTweeter] = useState(true);
   const [showTotalSystem, setShowTotalSystem] = useState(true);
+  const [showPhaseDiff, setShowPhaseDiff] = useState(true);
+  const [unwrapPhase, setUnwrapPhase] = useState(true);
+  const [compensateTweeterDelay, setCompensateTweeterDelay] = useState(false);
 
   // FRD Custom Data Strings
   const [wooferFRDText, setWooferFRDText] = useState("");
@@ -170,6 +173,7 @@ export default function App() {
   const phaseCanvasRef = useRef(null);
   const impedanceCanvasRef = useRef(null);
   const stepCanvasRef = useRef(null);
+  const groupDelayCanvasRef = useRef(null);
 
   // --- Sealed Cabinet Computations ---
   const cabinetCalculations = useMemo(() => {
@@ -581,6 +585,7 @@ export default function App() {
 
       const hDelay = Complex.polar(polarityMult, -w * delaySec);
       const pTweeterFinal = pTweeterRawComp.mul(hHP).mul(lpadGain).mul(hDelay);
+      const pTweeterDelayComp = pTweeterRawComp.mul(hHP).mul(lpadGain).scale(polarityMult);
 
       // 3. Acoustic Summation
       const pTotal = pWooferFinal.add(pTweeterFinal);
@@ -591,6 +596,7 @@ export default function App() {
 
       const wooferPhase = pWooferFinal.phaseDeg;
       const tweeterPhase = pTweeterFinal.phaseDeg;
+      const tweeterDelayCompPhase = pTweeterDelayComp.phaseDeg;
       const totalPhase = pTotal.phaseDeg;
       let deltaPhase = Math.abs(wooferPhase - tweeterPhase) % 360;
       if (deltaPhase > 180) deltaPhase = 360 - deltaPhase;
@@ -674,10 +680,63 @@ export default function App() {
         tweeterPhase,
         totalPhase,
         deltaPhase,
+        tweeterDelayCompPhase,
         zWooferMag: zWooferRaw.mag,
         zTweeterMag: zTweeterRaw.mag,
         zTotalMag: zTotal.mag
       });
+    }
+
+    function unwrapPhaseArray(phases) {
+      if (!phases || phases.length === 0) return [];
+      const unwrapped = [...phases];
+      for (let i = 1; i < unwrapped.length; i++) {
+        let diff = unwrapped[i] - unwrapped[i - 1];
+        while (diff > 180) diff -= 360;
+        while (diff < -180) diff += 360;
+        unwrapped[i] = unwrapped[i - 1] + diff;
+      }
+      return unwrapped;
+    }
+
+    const freqs = points.map(p => p.frequency);
+    const wooferUnwrapped = unwrapPhaseArray(points.map(p => p.wooferPhase));
+    const tweeterUnwrapped = unwrapPhaseArray(points.map(p => p.tweeterPhase));
+    const totalUnwrapped = unwrapPhaseArray(points.map(p => p.totalPhase));
+
+    function computeGDArray(frequencies, unwrappedPhases) {
+      const n = frequencies.length;
+      if (!frequencies || n === 0) return [];
+      const gd = new Float64Array(n);
+      const scale = -1000.0 / 360.0;
+      for (let i = 0; i < n; i++) {
+        let dPhiDf;
+        if (i === 0) {
+          const df = frequencies[1] - frequencies[0];
+          dPhiDf = df !== 0 ? (unwrappedPhases[1] - unwrappedPhases[0]) / df : 0;
+        } else if (i === n - 1) {
+          const df = frequencies[n - 1] - frequencies[n - 2];
+          dPhiDf = df !== 0 ? (unwrappedPhases[n - 1] - unwrappedPhases[n - 2]) / df : 0;
+        } else {
+          const df = frequencies[i + 1] - frequencies[i - 1];
+          dPhiDf = df !== 0 ? (unwrappedPhases[i + 1] - unwrappedPhases[i - 1]) / df : 0;
+        }
+        gd[i] = scale * dPhiDf;
+      }
+      return gd;
+    }
+
+    const wooferGD = computeGDArray(freqs, wooferUnwrapped);
+    const tweeterGD = computeGDArray(freqs, tweeterUnwrapped);
+    const totalGD = computeGDArray(freqs, totalUnwrapped);
+
+    for (let i = 0; i < points.length; i++) {
+      points[i].wooferUnwrappedPhase = wooferUnwrapped[i];
+      points[i].tweeterUnwrappedPhase = tweeterUnwrapped[i];
+      points[i].totalUnwrappedPhase = totalUnwrapped[i];
+      points[i].wooferGD = wooferGD[i];
+      points[i].tweeterGD = tweeterGD[i];
+      points[i].totalGD = totalGD[i];
     }
 
     return points;
@@ -772,6 +831,238 @@ export default function App() {
     }
 
   }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem]);
+
+  // --- Render Bode Phase Plot ---
+  useEffect(() => {
+    const canvas = phaseCanvasRef.current;
+    if (!canvas || activeTab !== 'phase' || simulationData.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const minF = 20.0;
+    const maxF = 20000.0;
+    const logMin = Math.log10(minF);
+    const logMax = Math.log10(maxF);
+
+    // Determine phase range (unwrap vs wrapped)
+    let minDeg = -180.0;
+    let maxDeg = 180.0;
+    if (unwrapPhase) {
+      let minVal = 0.0, maxVal = 180.0;
+      simulationData.forEach(p => {
+        if (showWoofer && Number.isFinite(p.wooferUnwrappedPhase)) {
+          minVal = Math.min(minVal, p.wooferUnwrappedPhase);
+          maxVal = Math.max(maxVal, p.wooferUnwrappedPhase);
+        }
+        if (showTweeter) {
+          const twP = compensateTweeterDelay ? p.tweeterDelayCompPhase : p.tweeterUnwrappedPhase;
+          if (Number.isFinite(twP)) {
+            minVal = Math.min(minVal, twP);
+            maxVal = Math.max(maxVal, twP);
+          }
+        }
+        if (showTotalSystem && Number.isFinite(p.totalUnwrappedPhase)) {
+          minVal = Math.min(minVal, p.totalUnwrappedPhase);
+          maxVal = Math.max(maxVal, p.totalUnwrappedPhase);
+        }
+      });
+      minDeg = Math.min(-180, Math.floor((minVal - 15) / 90) * 90);
+      maxDeg = Math.max(180, Math.ceil((maxVal + 15) / 90) * 90);
+    }
+    const spanDeg = maxDeg - minDeg;
+
+    // Gridlines for frequency
+    const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px sans-serif';
+
+    // Crossover highlight band [fx/2, 2*fx]
+    const f1 = Math.max(minF, fx / 2.0);
+    const f2 = Math.min(maxF, fx * 2.0);
+    const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
+    const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
+    ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
+    ctx.fillRect(x1, 0, x2 - x1, height);
+
+    ctx.fillStyle = '#94a3b8';
+    freqs.forEach(f => {
+      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+      ctx.fillText(f >= 1000 ? `${f/1000}k` : `${f}`, x + 4, height - 8);
+    });
+
+    const stepDeg = spanDeg > 540 ? 180 : (spanDeg > 360 ? 90 : 45);
+    for (let d = minDeg; d <= maxDeg + 0.1; d += stepDeg) {
+      const y = height * (1 - (d - minDeg) / spanDeg);
+      ctx.strokeStyle = Math.abs(d) < 0.01 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = Math.abs(d) < 0.01 ? 1.5 : 1;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+      ctx.fillText(`${Math.round(d)}°`, 8, y - 4);
+    }
+
+    function toCanvas(f, deg) {
+      const clamped = Math.max(Math.min(deg, maxDeg), minDeg);
+      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+      const y = height * (1 - (clamped - minDeg) / spanDeg);
+      return [x, y];
+    }
+
+    function drawCurve(dataKey, color, lineWidth = 2, isDashed = false) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      if (isDashed) ctx.setLineDash([4, 4]);
+      else ctx.setLineDash([]);
+      ctx.beginPath();
+      let started = false;
+      let prevDeg = 0;
+
+      simulationData.forEach(p => {
+        const deg = p[dataKey];
+        if (deg === undefined || !Number.isFinite(deg)) return;
+        const [x, y] = toCanvas(p.frequency, deg);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else if (!unwrapPhase && Math.abs(deg - prevDeg) > 170) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        prevDeg = deg;
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    if (showWoofer) {
+      drawCurve(unwrapPhase ? 'wooferUnwrappedPhase' : 'wooferPhase', '#3b82f6', 2);
+    }
+    if (showTweeter) {
+      const twKey = compensateTweeterDelay ? 'tweeterDelayCompPhase' : (unwrapPhase ? 'tweeterUnwrappedPhase' : 'tweeterPhase');
+      drawCurve(twKey, '#ef4444', 2);
+    }
+    if (showPhaseDiff) {
+      drawCurve('deltaPhase', '#f97316', 1.5, true);
+    }
+    if (showTotalSystem) {
+      drawCurve(unwrapPhase ? 'totalUnwrappedPhase' : 'totalPhase', '#22c55e', 2.5);
+    }
+  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem, showPhaseDiff, unwrapPhase, compensateTweeterDelay, fx]);
+
+  // --- Render Group Delay Plot ---
+  useEffect(() => {
+    const canvas = groupDelayCanvasRef.current;
+    if (!canvas || activeTab !== 'delay' || simulationData.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const minF = 20.0;
+    const maxF = 20000.0;
+    const logMin = Math.log10(minF);
+    const logMax = Math.log10(maxF);
+
+    let maxObserved = 5.0;
+    let minObserved = 0.0;
+    simulationData.forEach(p => {
+      if (showWoofer && Number.isFinite(p.wooferGD)) {
+        maxObserved = Math.max(maxObserved, p.wooferGD);
+        minObserved = Math.min(minObserved, p.wooferGD);
+      }
+      if (showTweeter && Number.isFinite(p.tweeterGD)) {
+        maxObserved = Math.max(maxObserved, p.tweeterGD);
+        minObserved = Math.min(minObserved, p.tweeterGD);
+      }
+      if (showTotalSystem && Number.isFinite(p.totalGD)) {
+        maxObserved = Math.max(maxObserved, p.totalGD);
+        minObserved = Math.min(minObserved, p.totalGD);
+      }
+    });
+
+    const minMs = minObserved < -0.2 ? -1.0 : 0.0;
+    const maxMs = Math.max(6.0, Math.ceil(maxObserved + 0.5));
+    const spanMs = maxMs - minMs;
+
+    // Gridlines for frequency
+    const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px sans-serif';
+
+    // Crossover highlight band [fx/2, 2*fx]
+    const f1 = Math.max(minF, fx / 2.0);
+    const f2 = Math.min(maxF, fx * 2.0);
+    const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
+    const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
+    ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
+    ctx.fillRect(x1, 0, x2 - x1, height);
+
+    ctx.fillStyle = '#94a3b8';
+    freqs.forEach(f => {
+      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+      ctx.fillText(f >= 1000 ? `${f/1000}k` : `${f}`, x + 4, height - 8);
+    });
+
+    const stepMs = spanMs > 10 ? 2 : 1;
+    for (let ms = minMs; ms <= maxMs + 0.05; ms += stepMs) {
+      const y = height * (1 - (ms - minMs) / spanMs);
+      ctx.strokeStyle = Math.abs(ms) < 0.01 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = Math.abs(ms) < 0.01 ? 1.5 : 1;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+      ctx.fillText(`${ms} ms`, 8, y - 4);
+    }
+
+    function toCanvas(f, ms) {
+      const clamped = Math.max(Math.min(ms, maxMs), minMs);
+      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+      const y = height * (1 - (clamped - minMs) / spanMs);
+      return [x, y];
+    }
+
+    function drawGDCurve(dataKey, color, lineWidth = 2) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.beginPath();
+      let started = false;
+      simulationData.forEach(p => {
+        const ms = p[dataKey];
+        if (ms === undefined || !Number.isFinite(ms)) return;
+        const [x, y] = toCanvas(p.frequency, ms);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+    }
+
+    if (showWoofer) drawGDCurve('wooferGD', '#3b82f6', 2);
+    if (showTweeter) drawGDCurve('tweeterGD', '#ef4444', 2);
+    if (showTotalSystem) drawGDCurve('totalGD', '#22c55e', 2.5);
+  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem, fx]);
 
   // --- Step Response Transient Simulation Engine ---
   const stepResponseData = useMemo(() => {
@@ -1583,6 +1874,8 @@ export default function App() {
         <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-6">
           <div className="flex items-center space-x-1">
             <button onClick={() => setActiveTab('amplitude')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'amplitude' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Amplitude Plot</button>
+            <button onClick={() => setActiveTab('phase')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'phase' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Phase & Delay</button>
+            <button onClick={() => setActiveTab('delay')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'delay' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Group Delay</button>
             <button onClick={() => setActiveTab('step')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'step' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Step Response</button>
             <button onClick={() => setActiveTab('cabinet')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'cabinet' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Sealed Cabinet</button>
             <button onClick={() => setActiveTab('crossover')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'crossover' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Crossover Designer</button>
@@ -1626,6 +1919,125 @@ export default function App() {
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
                 <canvas ref={amplitudeCanvasRef} width={800} height={400} className="w-full h-[400px]" />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'phase' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Acoustic Phase & Driver Alignment (Degrees vs Log Hz)</h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {enableAllpass
+                      ? `All-Pass Optimization: F0 = ${Math.round(apfOptimization?.f0 || fx)} Hz, Q = ${(apfOptimization?.q || 0.7).toFixed(2)} • Residual RMS: ${(apfOptimization?.rmsErrorDeg || 0).toFixed(1)}°`
+                      : (compensateTweeterDelay
+                          ? `Acoustic Center Depth Delay (${acousticDelayMM.toFixed(1)} mm / ${((acousticDelayMM / 1000.0) / 343.0 * 1000.0).toFixed(2)} ms) Compensated`
+                          : `Acoustic Delay Offset: ${acousticDelayMM} mm • Tweeter Polarity: ${invertTweeterPolarity ? 'Inverted (-)' : 'Normal (+)'}`
+                        )
+                    }
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowWoofer(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showWoofer ? 'bg-blue-950/60 border-blue-500 text-blue-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showWoofer ? 'bg-blue-500' : 'bg-slate-600'}`}></span>
+                    <span>Woofer</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTweeter(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTweeter ? 'bg-red-950/60 border-red-500 text-red-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTweeter ? 'bg-red-500' : 'bg-slate-600'}`}></span>
+                    <span>Tweeter</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTotalSystem(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTotalSystem ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
+                    <span>Total System</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPhaseDiff(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showPhaseDiff ? 'bg-amber-950/60 border-amber-500 text-amber-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showPhaseDiff ? 'bg-amber-500' : 'bg-slate-600'}`}></span>
+                    <span>ΔΦ (Diff)</span>
+                  </button>
+                  <div className="h-4 w-px bg-slate-700 mx-1"></div>
+                  <label className="flex items-center space-x-1.5 text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={unwrapPhase}
+                      onChange={(e) => setUnwrapPhase(e.target.checked)}
+                      className="rounded border-slate-600 text-blue-500 focus:ring-0"
+                    />
+                    <span>Unwrap Phase</span>
+                  </label>
+                  <label className="flex items-center space-x-1.5 text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={compensateTweeterDelay}
+                      onChange={(e) => setCompensateTweeterDelay(e.target.checked)}
+                      className="rounded border-slate-600 text-blue-500 focus:ring-0"
+                    />
+                    <span>Compensate Delay</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
+                <canvas ref={phaseCanvasRef} width={800} height={400} className="w-full h-[400px]" />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'delay' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Acoustic & Electrical Group Delay (Milliseconds vs Log Hz)</h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Tweeter Delay Offset: {acousticDelayMM} mm ({((acousticDelayMM / 1000.0) / 343.0 * 1000.0).toFixed(2)} ms) • Polarity: {invertTweeterPolarity ? 'Inverted (-)' : 'Normal (+)'} {enableAllpass ? `• APF Delay Active (${Math.round(apfOptimization?.f0 || fx)} Hz)` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowWoofer(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showWoofer ? 'bg-blue-950/60 border-blue-500 text-blue-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showWoofer ? 'bg-blue-500' : 'bg-slate-600'}`}></span>
+                    <span>Woofer GD</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTweeter(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTweeter ? 'bg-red-950/60 border-red-500 text-red-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTweeter ? 'bg-red-500' : 'bg-slate-600'}`}></span>
+                    <span>Tweeter GD</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTotalSystem(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTotalSystem ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
+                    <span>Total System GD</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
+                <canvas ref={groupDelayCanvasRef} width={800} height={400} className="w-full h-[400px]" />
               </div>
             </div>
           )}

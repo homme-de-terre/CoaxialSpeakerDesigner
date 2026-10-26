@@ -44,34 +44,37 @@ public enum SimulationEngine {
             // 4. Acoustic Delay & Polarity & L-Pad Gain Factor
             let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
             let gLpad = crossover.lpadVoltageGain
-            
+            let polarityMultiplier = crossover.invertTweeterPolarity ? -1.0 : 1.0
+
             // 5. Compute Woofer Final Acoustic Pressure
             let pWooferCab = pWooferRaw * hCab
             let pWooferFinal = pWooferCab * hLP * hAP
-            
-            // 6. Compute Tweeter Final Acoustic Pressure
+
+            // 6. Compute Tweeter Final Acoustic Pressure (and pure delay-compensated pressure)
             let pTweeterFinal = pTweeterRaw * hHP * gLpad * hDelay
-            
+            let pTweeterDelayComp = pTweeterRaw * hHP * gLpad * polarityMultiplier
+
             // 7. Summed Complex Acoustic Pressure Vector
             let pTotal = pWooferFinal + pTweeterFinal
-            
+
             // 8. Magnitudes and Phase Angles
             let wooferRawSPL = 20.0 * log10(max(pWooferRaw.magnitude, 1e-6))
             let wooferCabSPL = 20.0 * log10(max(pWooferCab.magnitude, 1e-6))
             let wooferFinalSPL = 20.0 * log10(max(pWooferFinal.magnitude, 1e-6))
             let wooferPhaseDeg = pWooferFinal.phaseDegrees
-            
+
             let tweeterRawSPL = 20.0 * log10(max(pTweeterRaw.magnitude, 1e-6))
             let tweeterFinalSPL = 20.0 * log10(max(pTweeterFinal.magnitude, 1e-6))
             let tweeterPhaseDeg = pTweeterFinal.phaseDegrees
-            
+            let tweeterDelayCompPhaseDeg = pTweeterDelayComp.phaseDegrees
+
             let totalSPL = 20.0 * log10(max(pTotal.magnitude, 1e-6))
             let totalPhaseDeg = pTotal.phaseDegrees
-            
+
             // Inter-driver phase difference delta phi
             var deltaPhase = abs(wooferPhaseDeg - tweeterPhaseDeg).truncatingRemainder(dividingBy: 360.0)
             if deltaPhase > 180.0 { deltaPhase = 360.0 - deltaPhase }
-            
+
             // 9. Raw Driver & System Impedance Calculations
             let zWooferRaw = computeWooferRawImpedance(freq: f, ts: driver.wooferTS, cabinet: cabinet)
             let zTweeterRaw = computeTweeterRawImpedance(freq: f, tw: driver.tweeter)
@@ -81,7 +84,7 @@ public enum SimulationEngine {
 
             // Total parallel load impedance seen by amplifier
             let zTotalSystem = (zWooferInput * zTweeterInput) / (zWooferInput + zTweeterInput)
-            
+
             points.append(
                 SimulationPoint(
                     frequency: f,
@@ -98,12 +101,71 @@ public enum SimulationEngine {
                     wooferImpedanceMag: zWooferRaw.magnitude,
                     tweeterImpedanceMag: zTweeterRaw.magnitude,
                     totalSystemImpedanceMag: zTotalSystem.magnitude,
-                    totalSystemImpedancePhaseDeg: zTotalSystem.phaseDegrees
+                    totalSystemImpedancePhaseDeg: zTotalSystem.phaseDegrees,
+                    tweeterDelayCompensatedPhaseDeg: tweeterDelayCompPhaseDeg
                 )
             )
         }
-        
+
+        // 10. Compute Unwrapped Phase & Acoustic Group Delay
+        let freqs = points.map { $0.frequency }
+        let wooferUnwrapped = unwrapPhase(phases: points.map { $0.wooferPhaseDeg })
+        let tweeterUnwrapped = unwrapPhase(phases: points.map { $0.tweeterPhaseDeg })
+        let totalUnwrapped = unwrapPhase(phases: points.map { $0.totalSystemPhaseDeg })
+
+        let wooferGD = computeGroupDelay(frequencies: freqs, unwrappedPhases: wooferUnwrapped)
+        let tweeterGD = computeGroupDelay(frequencies: freqs, unwrappedPhases: tweeterUnwrapped)
+        let totalGD = computeGroupDelay(frequencies: freqs, unwrappedPhases: totalUnwrapped)
+
+        for i in 0..<points.count {
+            points[i].wooferUnwrappedPhaseDeg = wooferUnwrapped[i]
+            points[i].tweeterUnwrappedPhaseDeg = tweeterUnwrapped[i]
+            points[i].totalSystemUnwrappedPhaseDeg = totalUnwrapped[i]
+            points[i].wooferGroupDelayMs = wooferGD[i]
+            points[i].tweeterGroupDelayMs = tweeterGD[i]
+            points[i].totalSystemGroupDelayMs = totalGD[i]
+        }
+
         return points
+    }
+
+    /// Canonical 1D phase unwrapping algorithm removing +/- 360 degree discontinuities.
+    public static func unwrapPhase(phases: [Double]) -> [Double] {
+        guard !phases.isEmpty else { return [] }
+        var unwrapped = phases
+        for i in 1..<phases.count {
+            var diff = unwrapped[i] - unwrapped[i - 1]
+            while diff > 180.0 { diff -= 360.0 }
+            while diff < -180.0 { diff += 360.0 }
+            unwrapped[i] = unwrapped[i - 1] + diff
+        }
+        return unwrapped
+    }
+
+    /// Numerical group delay calculation in milliseconds: tau_g(f) = -dPhi/dOmega = -(1000/360) * dPhi_deg/df.
+    public static func computeGroupDelay(frequencies: [Double], unwrappedPhases: [Double]) -> [Double] {
+        let n = frequencies.count
+        guard n > 0, unwrappedPhases.count == n else { return [] }
+        if n == 1 { return [0.0] }
+
+        var gd = [Double](repeating: 0.0, count: n)
+        let scale = -1000.0 / 360.0
+
+        for i in 0..<n {
+            let dPhiDf: Double
+            if i == 0 {
+                let df = frequencies[1] - frequencies[0]
+                dPhiDf = df != 0 ? (unwrappedPhases[1] - unwrappedPhases[0]) / df : 0.0
+            } else if i == n - 1 {
+                let df = frequencies[n - 1] - frequencies[n - 2]
+                dPhiDf = df != 0 ? (unwrappedPhases[n - 1] - unwrappedPhases[n - 2]) / df : 0.0
+            } else {
+                let df = frequencies[i + 1] - frequencies[i - 1]
+                dPhiDf = df != 0 ? (unwrappedPhases[i + 1] - unwrappedPhases[i - 1]) / df : 0.0
+            }
+            gd[i] = scale * dPhiDf
+        }
+        return gd
     }
     
     private static func ensurePhase(curve: [ResponseDataPoint]) -> [ResponseDataPoint] {

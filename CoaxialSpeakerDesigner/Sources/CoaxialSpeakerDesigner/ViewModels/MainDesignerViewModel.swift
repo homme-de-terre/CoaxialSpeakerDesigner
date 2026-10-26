@@ -29,7 +29,7 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var plausibilityWarnings: [String] = []
     @Published public var isEuropeanDecimal: Bool = false
 
-    @Published public var selectedTab: Int = 0 // 0: Amplitude, 1: Phase, 2: Impedance, 3: Cabinet, 4: Crossover, 5: BOM, 6: FRD
+    @Published public var selectedTab: Int = 0 // 0: Amplitude, 1: Phase, 8: Group Delay, 7: Step, 2: Impedance, 3: Cabinet, 4: Crossover, 5: BOM, 6: FRD
     @Published public var wooferFRDText: String = ""
     @Published public var tweeterFRDText: String = ""
     @Published public var digitizerActiveTab: Int = 0
@@ -37,6 +37,8 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var showTweeter: Bool = true
     @Published public var showTotalSystem: Bool = true
     @Published public var showPhaseDiff: Bool = true
+    @Published public var unwrapPhase: Bool = true
+    @Published public var compensateTweeterDelay: Bool = false
     @Published public var showWooferRaw: Bool = true
     @Published public var showWooferFinal: Bool = true
     @Published public var showTweeterRaw: Bool = true

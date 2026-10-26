@@ -27,6 +27,17 @@ public struct SimulationPoint: Identifiable, Codable, Sendable {
     public var totalSystemImpedanceMag: Double
     public var totalSystemImpedancePhaseDeg: Double
 
+    // Unwrapped Continuous Phase (Degrees)
+    public var wooferUnwrappedPhaseDeg: Double
+    public var tweeterUnwrappedPhaseDeg: Double
+    public var totalSystemUnwrappedPhaseDeg: Double
+    public var tweeterDelayCompensatedPhaseDeg: Double
+
+    // Acoustic & Electrical Group Delay (Milliseconds)
+    public var wooferGroupDelayMs: Double
+    public var tweeterGroupDelayMs: Double
+    public var totalSystemGroupDelayMs: Double
+
     public init(
         frequency: Double,
         wooferRawSPL: Double,
@@ -42,7 +53,14 @@ public struct SimulationPoint: Identifiable, Codable, Sendable {
         wooferImpedanceMag: Double,
         tweeterImpedanceMag: Double,
         totalSystemImpedanceMag: Double,
-        totalSystemImpedancePhaseDeg: Double
+        totalSystemImpedancePhaseDeg: Double,
+        wooferUnwrappedPhaseDeg: Double = 0.0,
+        tweeterUnwrappedPhaseDeg: Double = 0.0,
+        totalSystemUnwrappedPhaseDeg: Double = 0.0,
+        tweeterDelayCompensatedPhaseDeg: Double = 0.0,
+        wooferGroupDelayMs: Double = 0.0,
+        tweeterGroupDelayMs: Double = 0.0,
+        totalSystemGroupDelayMs: Double = 0.0
     ) {
         self.frequency = frequency
         self.wooferRawSPL = wooferRawSPL
@@ -59,5 +77,12 @@ public struct SimulationPoint: Identifiable, Codable, Sendable {
         self.tweeterImpedanceMag = tweeterImpedanceMag
         self.totalSystemImpedanceMag = totalSystemImpedanceMag
         self.totalSystemImpedancePhaseDeg = totalSystemImpedancePhaseDeg
+        self.wooferUnwrappedPhaseDeg = wooferUnwrappedPhaseDeg
+        self.tweeterUnwrappedPhaseDeg = tweeterUnwrappedPhaseDeg
+        self.totalSystemUnwrappedPhaseDeg = totalSystemUnwrappedPhaseDeg
+        self.tweeterDelayCompensatedPhaseDeg = tweeterDelayCompensatedPhaseDeg
+        self.wooferGroupDelayMs = wooferGroupDelayMs
+        self.tweeterGroupDelayMs = tweeterGroupDelayMs
+        self.totalSystemGroupDelayMs = totalSystemGroupDelayMs
     }
 }

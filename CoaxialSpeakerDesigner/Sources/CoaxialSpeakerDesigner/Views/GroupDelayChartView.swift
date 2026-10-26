@@ -1,0 +1,214 @@
+import SwiftUI
+
+public struct GroupDelayChartView: View {
+    @ObservedObject var viewModel: MainDesignerViewModel
+
+    public init(viewModel: MainDesignerViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header with legend and delay alignment summary
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Acoustic & Electrical Group Delay (Milliseconds vs Log Hz)")
+                        .font(.headline)
+                    let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
+                    let apfStatus = viewModel.crossover.enableAllpassFilter
+                        ? " • APF Delay: Active (\(Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)) Hz, Q=\(String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.70)))"
+                        : ""
+                    Text("Tweeter Depth Delay: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) • Polarity: \(viewModel.crossover.invertTweeterPolarity ? "Inverted (-)" : "Normal (+)")\(apfStatus)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                HStack(spacing: 12) {
+                    Button(action: { viewModel.showWoofer.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Woofer GD")
+                                .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                                .font(.caption).bold()
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { viewModel.showTweeter.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Tweeter GD")
+                                .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                                .font(.caption).bold()
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { viewModel.showTotalSystem.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Total System GD")
+                                .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
+                                .font(.caption).bold()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal)
+
+            // Group Delay Canvas Plot
+            Canvas { context, size in
+                let (minMs, maxMs) = determineRange()
+                drawLogGrid(context: context, size: size, minMs: minMs, maxMs: maxMs)
+                drawGroupDelayCurves(context: context, size: size, minMs: minMs, maxMs: maxMs)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minHeight: 380)
+            .background(Color(NSColor.textBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3), lineWidth: 1))
+        }
+        .padding()
+    }
+
+    private func determineRange() -> (minMs: Double, maxMs: Double) {
+        guard !viewModel.simulationPoints.isEmpty else {
+            return (0.0, 10.0)
+        }
+        var maxObserved: Double = 5.0
+        var minObserved: Double = 0.0
+
+        for p in viewModel.simulationPoints {
+            if viewModel.showWoofer && p.wooferGroupDelayMs.isFinite {
+                maxObserved = max(maxObserved, p.wooferGroupDelayMs)
+                minObserved = min(minObserved, p.wooferGroupDelayMs)
+            }
+            if viewModel.showTweeter && p.tweeterGroupDelayMs.isFinite {
+                maxObserved = max(maxObserved, p.tweeterGroupDelayMs)
+                minObserved = min(minObserved, p.tweeterGroupDelayMs)
+            }
+            if viewModel.showTotalSystem && p.totalSystemGroupDelayMs.isFinite {
+                maxObserved = max(maxObserved, p.totalSystemGroupDelayMs)
+                minObserved = min(minObserved, p.totalSystemGroupDelayMs)
+            }
+        }
+
+        let minMs = minObserved < -0.2 ? -1.0 : 0.0
+        let maxMs = max(6.0, ceil(maxObserved + 0.5))
+        return (minMs, maxMs)
+    }
+
+    private func drawLogGrid(context: GraphicsContext, size: CGSize, minMs: Double, maxMs: Double) {
+        let minF = 20.0
+        let maxF = 20000.0
+        let logMin = log10(minF)
+        let logMax = log10(maxF)
+
+        let majorFreqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+
+        // Subtle shaded band for 2-octave crossover zone [fx/2, 2*fx]
+        let fx = viewModel.crossover.crossoverFrequency
+        let f1 = max(minF, fx / 2.0)
+        let f2 = min(maxF, fx * 2.0)
+        let x1 = size.width * CGFloat((log10(f1) - logMin) / (logMax - logMin))
+        let x2 = size.width * CGFloat((log10(f2) - logMin) / (logMax - logMin))
+        let zoneRect = CGRect(x: x1, y: 0, width: x2 - x1, height: size.height)
+        context.fill(Path(zoneRect), with: .color(Color.teal.opacity(0.06)))
+
+        // Vertical Logarithmic Frequency Gridlines
+        for f in majorFreqs {
+            let x = size.width * CGFloat((log10(Double(f)) - logMin) / (logMax - logMin))
+            var path = Path()
+            path.move(to: CGPoint(x: x, y: 0))
+            path.addLine(to: CGPoint(x: x, y: size.height))
+            context.stroke(path, with: .color(Color.gray.opacity(0.25)), lineWidth: 1)
+
+            let labelText = f >= 1000 ? "\(f/1000)k" : "\(f)"
+            context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: x + 10, y: size.height - 12))
+        }
+
+        // Horizontal Group Delay Gridlines (ms)
+        let span = maxMs - minMs
+        let step: Double = span > 10.0 ? 2.0 : 1.0
+        var ms = minMs
+        while ms <= maxMs + 0.05 {
+            let y = size.height * CGFloat(1.0 - (ms - minMs) / span)
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: y))
+            path.addLine(to: CGPoint(x: size.width, y: y))
+            let isZero = abs(ms) < 0.01
+            context.stroke(
+                path,
+                with: .color(isZero ? Color.gray.opacity(0.6) : Color.gray.opacity(0.2)),
+                lineWidth: isZero ? 1.5 : 0.8
+            )
+
+            let label = String(format: "%.0f ms", ms)
+            context.draw(Text(label).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 22, y: y - 8))
+            ms += step
+        }
+    }
+
+    private func drawGroupDelayCurves(context: GraphicsContext, size: CGSize, minMs: Double, maxMs: Double) {
+        let minF = 20.0
+        let maxF = 20000.0
+        let logMin = log10(minF)
+        let logMax = log10(maxF)
+        let span = maxMs - minMs
+
+        let points = viewModel.simulationPoints
+        guard !points.isEmpty else { return }
+
+        func gdToCanvas(freq: Double, gdMs: Double) -> CGPoint {
+            let safeMs = gdMs.isFinite ? gdMs : 0.0
+            let clampedMs = max(min(safeMs, maxMs), minMs)
+            let safeF = (freq.isFinite && freq > 0) ? freq : minF
+            let x = size.width * CGFloat((log10(safeF) - logMin) / (logMax - logMin))
+            let y = size.height * CGFloat(1.0 - (clampedMs - minMs) / span)
+            return CGPoint(x: x, y: y)
+        }
+
+        func drawGDCurve(keyPath: KeyPath<SimulationPoint, Double>, color: Color, lineWidth: CGFloat = 1.8) {
+            var path = Path()
+            var started = false
+
+            for p in points {
+                let ms = p[keyPath: keyPath]
+                guard ms.isFinite else { continue }
+                let pt = gdToCanvas(freq: p.frequency, gdMs: ms)
+
+                if !started {
+                    path.move(to: pt)
+                    started = true
+                } else {
+                    path.addLine(to: pt)
+                }
+            }
+            context.stroke(path, with: .color(color), lineWidth: lineWidth)
+        }
+
+        // Woofer Group Delay
+        if viewModel.showWoofer {
+            drawGDCurve(keyPath: \.wooferGroupDelayMs, color: .blue.opacity(0.85), lineWidth: 1.8)
+        }
+
+        // Tweeter Group Delay
+        if viewModel.showTweeter {
+            drawGDCurve(keyPath: \.tweeterGroupDelayMs, color: .red.opacity(0.85), lineWidth: 1.8)
+        }
+
+        // Total System Group Delay
+        if viewModel.showTotalSystem {
+            drawGDCurve(keyPath: \.totalSystemGroupDelayMs, color: .green, lineWidth: 2.5)
+        }
+    }
+}

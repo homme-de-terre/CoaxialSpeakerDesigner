@@ -386,4 +386,87 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(maxAbs, 0.8)
         XCTAssertLessThanOrEqual(maxAbs, 1.25)
     }
+
+    func testPhaseUnwrappingAlgorithm() {
+        // 1. Synthetic phase wrap jump test
+        let wrappedInput = [160.0, 175.0, -170.0, -155.0]
+        let unwrapped = SimulationEngine.unwrapPhase(phases: wrappedInput)
+        XCTAssertEqual(unwrapped[0], 160.0, accuracy: 1e-4)
+        XCTAssertEqual(unwrapped[1], 175.0, accuracy: 1e-4)
+        XCTAssertEqual(unwrapped[2], 190.0, accuracy: 1e-4)
+        XCTAssertEqual(unwrapped[3], 205.0, accuracy: 1e-4)
+
+        // 2. Full simulation unwrapped tweeter phase test
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        let crossover = CrossoverNetwork(crossoverFrequency: 2200.0, acousticCenterOffsetMM: 35.0)
+
+        let points = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: crossover)
+        XCTAssertEqual(points.count, 201)
+
+        // At low frequencies (20 Hz), tweeter unwrapped phase starts near +180 deg
+        XCTAssertGreaterThan(points[0].tweeterUnwrappedPhaseDeg, 150.0)
+
+        // At 20 kHz, due to 35mm acoustic center delay, unwrapped phase reaches ~ -720 deg
+        let lastPt = points.last!
+        XCTAssertLessThan(lastPt.tweeterUnwrappedPhaseDeg, -600.0)
+
+        // Check continuity: adjacent unwrapped points must never jump by more than 45 degrees
+        for i in 1..<points.count {
+            let step = abs(points[i].tweeterUnwrappedPhaseDeg - points[i - 1].tweeterUnwrappedPhaseDeg)
+            XCTAssertLessThan(step, 45.0, "Unwrapped phase must be smooth and continuous at point \(i)")
+        }
+    }
+
+    func testDelayCompensatedPhase() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        let crossover = CrossoverNetwork(crossoverFrequency: 2200.0, acousticCenterOffsetMM: 35.0)
+
+        let points = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: crossover)
+
+        // High frequency (20 kHz) delay-compensated phase should be near 0° in passband (not -720°)
+        let hfPoint = points.last!
+        XCTAssertEqual(hfPoint.tweeterDelayCompensatedPhaseDeg, 0.0, accuracy: 25.0, "HF delay-compensated phase should be near 0 deg")
+        XCTAssertLessThan(abs(hfPoint.tweeterDelayCompensatedPhaseDeg), 45.0)
+
+        // Low frequency (20 Hz) delay-compensated phase should approach 180° for 2nd order HP filter
+        let lfPoint = points.first!
+        XCTAssertEqual(abs(lfPoint.tweeterDelayCompensatedPhaseDeg), 180.0, accuracy: 10.0)
+    }
+
+    func testGroupDelayCalculations() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        let crossover = CrossoverNetwork(crossoverFrequency: 2000.0, acousticCenterOffsetMM: 35.0)
+
+        let points = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: crossover)
+        XCTAssertEqual(points.count, 201)
+
+        // 1. All group delay values must be finite numbers
+        for (i, p) in points.enumerated() {
+            XCTAssertTrue(p.wooferGroupDelayMs.isFinite, "Woofer GD must be finite at point \(i)")
+            XCTAssertTrue(p.tweeterGroupDelayMs.isFinite, "Tweeter GD must be finite at point \(i)")
+            XCTAssertTrue(p.totalSystemGroupDelayMs.isFinite, "Total GD must be finite at point \(i)")
+        }
+
+        // 2. High frequency tweeter group delay converges to acoustic delay tau = d / c
+        // d = 35mm => tau = 0.035 / 343 = 0.102 ms
+        let expectedDelayMs = (35.0 / 1000.0) / 343.0 * 1000.0
+        let hfPoint = points.last!
+        XCTAssertEqual(hfPoint.tweeterGroupDelayMs, expectedDelayMs, accuracy: 0.02, "HF Tweeter GD must approach physical delay (0.102 ms)")
+
+        // 3. Low frequency woofer group delay reflects closed box resonance (typically 3-10 ms)
+        let lfPoint = points.first!
+        XCTAssertGreaterThan(lfPoint.wooferGroupDelayMs, 2.5, "LF Woofer GD should reflect cabinet resonance delay")
+
+        // 4. All-Pass Filter adds peak group delay on woofer branch around F0
+        var apfCrossover = crossover
+        apfCrossover.enableAllpassFilter = true
+        let apfPoints = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: apfCrossover)
+
+        // At crossover frequency 2000 Hz, APF woofer GD should be significantly higher than without APF
+        let midIdx = apfPoints.count / 2
+        XCTAssertGreaterThan(apfPoints[midIdx].wooferGroupDelayMs, points[midIdx].wooferGroupDelayMs)
+    }
 }
