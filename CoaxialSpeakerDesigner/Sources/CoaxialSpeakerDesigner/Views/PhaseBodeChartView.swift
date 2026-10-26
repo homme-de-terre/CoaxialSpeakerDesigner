@@ -259,4 +259,3 @@ public struct PhaseBodeChartView: View {
         }
     }
 }
-}
