@@ -74,6 +74,26 @@ public class MainDesignerViewModel: ObservableObject {
         driver.wooferImpedanceCurve = CoaxialDriver.generateSyntheticWooferImpedance(ts: driver.wooferTS)
         driver.tweeterImpedanceCurve = CoaxialDriver.generateSyntheticTweeterImpedance(tw: driver.tweeter)
 
+        // Run Nelder-Mead All-Pass Filter Phase Alignment Optimization if APF is enabled
+        if crossover.enableAllpassFilter {
+            let opt = AllpassFilterOptimizer.optimize(
+                driver: driver,
+                cabinet: cabinet,
+                crossover: crossover
+            )
+            crossover.allpassOptimizedF0 = opt.f0
+            crossover.allpassOptimizedQ = opt.q
+            crossover.allpassOptimizationErrorDeg = opt.rmsErrorDeg
+            crossover.allpassOptimizationAchieved = opt.isGoalAchieved
+            crossover.allpassWarnings = opt.warnings
+        } else {
+            crossover.allpassOptimizedF0 = nil
+            crossover.allpassOptimizedQ = nil
+            crossover.allpassOptimizationErrorDeg = nil
+            crossover.allpassOptimizationAchieved = true
+            crossover.allpassWarnings = []
+        }
+
         let newPoints = SimulationEngine.simulate(
             driver: driver,
             cabinet: cabinet,
@@ -130,6 +150,11 @@ public class MainDesignerViewModel: ObservableObject {
 
         if crossover.crossoverFrequency < 500.0 || crossover.crossoverFrequency > 8000.0 {
             warns.append("Crossover Frequency (\(Int(crossover.crossoverFrequency)) Hz) outside typical coaxial range.")
+        }
+
+        // Include All-Pass Filter optimization and setup warnings
+        if crossover.enableAllpassFilter {
+            warns.append(contentsOf: crossover.allpassWarnings)
         }
 
         self.missingParameters = missing

@@ -242,6 +242,180 @@ export default function App() {
     return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, qbVal, minFeasibleF3, warningMsg };
   }, [ts, alignment, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
 
+  // --- Nelder-Mead All-Pass Filter Phase Alignment Optimizer ---
+  const apfOptimization = useMemo(() => {
+    if (!enableAllpass || acousticDelayMM <= 0) {
+      return { f0: fx, q: 0.707, rmsErrorDeg: 0, isGoalAchieved: true, warnings: [] };
+    }
+
+    const fLow = Math.max(20.0, fx / 2.0);
+    const fHigh = Math.min(20000.0, fx * 2.0);
+    const sampleCount = 31;
+    const freqs = [];
+    const logLow = Math.log(fLow);
+    const logHigh = Math.log(fHigh);
+    const logStep = (logHigh - logLow) / (sampleCount - 1);
+    for (let i = 0; i < sampleCount; i++) {
+      freqs.push(Math.exp(logLow + i * logStep));
+    }
+
+    const speedOfSound = 343.0;
+    const delaySec = (acousticDelayMM / 1000.0) / speedOfSound;
+    const polarityMult = invertTweeterPolarity ? -1.0 : 1.0;
+    const gLpad = (enableLPad && lpadAttenDB > 0) ? Math.pow(10, -lpadAttenDB / 20.0) : 1.0;
+
+    const fc = cabinetCalculations.fc;
+    const qtc = cabinetCalculations.actualQtc;
+    const wc = 2.0 * Math.PI * fc;
+
+    const pTweeterFixed = [];
+    const pWooferBase = [];
+
+    freqs.forEach(f => {
+      const w = 2.0 * Math.PI * f;
+      let pTweeterRawSPL = tweeter.spl;
+      if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
+      const pTweeterRawComp = new Complex(Math.pow(10, pTweeterRawSPL / 20.0), 0);
+
+      const xT = f / fx;
+      let hHP = new Complex(1, 0);
+      if (tweeterOrder === 'firstOrder') {
+        hHP = new Complex(0, xT).div(new Complex(1, xT));
+      } else if (tweeterOrder === 'secondOrderLR') {
+        hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, 2 * xT));
+      } else if (tweeterOrder === 'secondOrderBW') {
+        hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
+      } else if (tweeterOrder === 'fourthOrderLR') {
+        const h2 = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
+        hHP = h2.mul(h2);
+      }
+      const hDelay = Complex.polar(polarityMult, -w * delaySec);
+      pTweeterFixed.push(pTweeterRawComp.mul(hHP).mul(gLpad).mul(hDelay));
+
+      let pWooferRawSPL = ts.spl;
+      if (f < ts.fs) pWooferRawSPL -= 12 * Math.log2(ts.fs / Math.max(f, 10));
+      const pWooferRawComp = new Complex(Math.pow(10, pWooferRawSPL / 20.0), 0);
+
+      const s = new Complex(0, w);
+      const s2 = s.mul(s);
+      const denomCab = s2.add(s.mul(wc / qtc)).add(wc * wc);
+      const hCab = s2.div(denomCab);
+
+      const xW = f / fx;
+      let hLP = new Complex(1, 0);
+      if (wooferOrder === 'firstOrder') {
+        hLP = new Complex(1, 0).div(new Complex(1, xW));
+      } else if (wooferOrder === 'secondOrderLR') {
+        hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, 2 * xW));
+      } else if (wooferOrder === 'secondOrderBW') {
+        hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, Math.SQRT2 * xW));
+      } else if (wooferOrder === 'fourthOrderLR') {
+        const h2 = new Complex(1, 0).div(new Complex(1 - xW * xW, Math.SQRT2 * xW));
+        hLP = h2.mul(h2);
+      }
+      pWooferBase.push(pWooferRawComp.mul(hCab).mul(hLP));
+    });
+
+    function evalCost(f0, q) {
+      if (f0 < 0.1 * fx || f0 > 10.0 * fx || q < 0.05 || q > 25.0) return 1e8;
+      const deltas = [];
+      for (let i = 0; i < sampleCount; i++) {
+        const f = freqs[i];
+        const x = f / f0;
+        const num = new Complex(1.0 - x * x, -x / q);
+        const denom = new Complex(1.0 - x * x, x / q);
+        const hAP = num.div(denom);
+        const pWooferFinal = pWooferBase[i].mul(hAP);
+        deltas.push(pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg);
+      }
+      for (let i = 1; i < sampleCount; i++) {
+        while (deltas[i] - deltas[i - 1] > 180.0) deltas[i] -= 360.0;
+        while (deltas[i] - deltas[i - 1] < -180.0) deltas[i] += 360.0;
+      }
+      const mean = deltas.reduce((a, b) => a + b, 0) / sampleCount;
+      let sse = 0;
+      for (let i = 0; i < sampleCount; i++) {
+        const diff = deltas[i] - mean;
+        sse += diff * diff;
+      }
+      return sse;
+    }
+
+    const tau = delaySec;
+    const qInit = Math.max(0.5, Math.min(2.5, 2.0 / (2.0 * Math.PI * fx * Math.max(tau, 1e-6))));
+    let simplex = [
+      { f0: fx, q: qInit, cost: evalCost(fx, qInit) },
+      { f0: fx * 1.2, q: qInit, cost: evalCost(fx * 1.2, qInit) },
+      { f0: fx, q: qInit * 1.25, cost: evalCost(fx, qInit * 1.25) }
+    ];
+
+    for (let it = 0; it < 120; it++) {
+      simplex.sort((a, b) => a.cost - b.cost);
+      if (Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5) break;
+      const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
+      const cQ = (simplex[0].q + simplex[1].q) / 2.0;
+
+      const xrF0 = cF0 + (cF0 - simplex[2].f0);
+      const xrQ = cQ + (cQ - simplex[2].q);
+      const xrCost = evalCost(xrF0, xrQ);
+
+      if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) {
+        simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost };
+        continue;
+      }
+      if (xrCost < simplex[0].cost) {
+        const xeF0 = cF0 + 2.0 * (xrF0 - cF0);
+        const xeQ = cQ + 2.0 * (xrQ - cQ);
+        const xeCost = evalCost(xeF0, xeQ);
+        simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost };
+        continue;
+      }
+      if (xrCost < simplex[2].cost) {
+        const xcF0 = cF0 + 0.5 * (xrF0 - cF0);
+        const xcQ = cQ + 0.5 * (xrQ - cQ);
+        const xcCost = evalCost(xcF0, xcQ);
+        if (xcCost < xrCost) {
+          simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
+          continue;
+        }
+      } else {
+        const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0);
+        const xcQ = cQ - 0.5 * (cQ - simplex[2].q);
+        const xcCost = evalCost(xcF0, xcQ);
+        if (xcCost < simplex[2].cost) {
+          simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
+          continue;
+        }
+      }
+      for (let i = 1; i <= 2; i++) {
+        const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
+        const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
+        simplex[i] = { f0: sf0, q: sq, cost: evalCost(sf0, sq) };
+      }
+    }
+
+    simplex.sort((a, b) => a.cost - b.cost);
+    const opt = simplex[0];
+    const rmsErrorDeg = Math.sqrt(opt.cost / sampleCount);
+    const isGoalAchieved = rmsErrorDeg <= 8.0;
+
+    const warnings = [];
+    if (!isGoalAchieved) {
+      warnings.push(`All-Pass Optimization Warning: Residual phase error is ${rmsErrorDeg.toFixed(1)}° across the crossover zone. Consider adjusting crossover frequency.`);
+    }
+    if (!enableZobel) {
+      warnings.push('All-Pass Filter Warning: Zobel network is disabled. All-pass filter requires resistive woofer termination to prevent inductive detuning.');
+    }
+
+    return {
+      f0: opt.f0,
+      q: opt.q,
+      rmsErrorDeg,
+      isGoalAchieved,
+      warnings
+    };
+  }, [enableAllpass, acousticDelayMM, fx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel]);
+
   // --- Passive Crossover Component Calculations ---
   const crossoverComponents = useMemo(() => {
     const w = 2.0 * Math.PI * fx;
@@ -252,7 +426,8 @@ export default function App() {
       L1: null, C1: null, L2: null, C2: null,
       C_HP1: null, L_HP1: null, C_HP2: null, L_HP2: null,
       R_zobel: null, C_zobel: null,
-      R1_lpad: null, R2_lpad: null
+      R1_lpad: null, R2_lpad: null,
+      L_AP: null, C_AP: null
     };
 
     // Woofer Low-Pass
@@ -304,12 +479,11 @@ export default function App() {
       }
     }
 
-    // All-Pass Delay Compensation Network
+    // All-Pass Delay Compensation Network (using Nelder-Mead optimized F0 & Q)
     if (enableAllpass && acousticDelayMM > 0) {
-      const c = 343.0;
-      const tau = (acousticDelayMM / 1000.0) / c;
-      const w0 = 2.0 * Math.PI * fx;
-      const qAP = Math.max(0.5, Math.min(2.5, 2.0 / (w0 * Math.max(tau, 1e-6))));
+      const f0 = apfOptimization.f0 || fx;
+      const qAP = apfOptimization.q || 0.707;
+      const w0 = 2.0 * Math.PI * f0;
       comp.L_AP = (Zw / (w0 * qAP)) * 1000.0;
       comp.C_AP = (1.0 / (w0 * qAP * Zw)) * 1e6;
     }
@@ -322,7 +496,7 @@ export default function App() {
     }
 
     return comp;
-  }, [fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, ts, tweeter, enableAllpass, acousticDelayMM]);
+  }, [fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, ts, tweeter, enableAllpass, acousticDelayMM, apfOptimization]);
 
   // --- Complete Simulation Engine Calculations ---
   const simulationData = useMemo(() => {
@@ -377,12 +551,11 @@ export default function App() {
       // Woofer All-Pass Delay Compensation Network H_AP
       let hAP = new Complex(1, 0);
       if (enableAllpass && acousticDelayMM > 0) {
-        const c = 343.0;
-        const tau = (acousticDelayMM / 1000.0) / c;
-        const w0 = 2.0 * Math.PI * fx;
-        const qAP = Math.max(0.5, Math.min(2.5, 2.0 / (w0 * Math.max(tau, 1e-6))));
-        const num = new Complex(1.0 - xW * xW, -xW / qAP);
-        const denom = new Complex(1.0 - xW * xW, xW / qAP);
+        const f0 = apfOptimization.f0 || fx;
+        const qAP = apfOptimization.q || 0.707;
+        const xAP = f / f0;
+        const num = new Complex(1.0 - xAP * xAP, -xAP / qAP);
+        const denom = new Complex(1.0 - xAP * xAP, xAP / qAP);
         hAP = num.div(denom);
       }
 
@@ -508,7 +681,7 @@ export default function App() {
     }
 
     return points;
-  }, [ts, tweeter, cabinetCalculations, fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass]);
+  }, [ts, tweeter, cabinetCalculations, fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
 
   // --- Render Bode Amplitude Plot ---
   useEffect(() => {
@@ -644,12 +817,11 @@ export default function App() {
       // All-pass delay compensation on woofer branch
       let hAPR = 1.0, hAPI = 0.0;
       if (enableAllpass && acousticDelayMM > 0) {
-        const c = 343.0;
-        const tau = (acousticDelayMM / 1000.0) / c;
-        const w0 = 2.0 * Math.PI * fx;
-        const qAP = Math.max(0.5, Math.min(2.5, 2.0 / (w0 * Math.max(tau, 1e-6))));
-        const dR = 1.0 - s * s;
-        const dI = s / qAP;
+        const f0 = apfOptimization.f0 || fx;
+        const qAP = apfOptimization.q || 0.707;
+        const sAP = f / f0;
+        const dR = 1.0 - sAP * sAP;
+        const dI = sAP / qAP;
         const dM2 = dR * dR + dI * dI;
         hAPR = (dR * dR - dI * dI) / dM2;
         hAPI = (-2.0 * dR * dI) / dM2;
@@ -780,7 +952,7 @@ export default function App() {
     }
 
     return points;
-  }, [cabinetCalculations, fx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass]);
+  }, [cabinetCalculations, fx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
 
   // --- Render Step Response Plot ---
   useEffect(() => {
@@ -1712,7 +1884,7 @@ export default function App() {
                   <label className="text-xs font-semibold text-slate-400">Coaxial Tweeter Depth Offset: {acousticDelayMM} mm</label>
                   <input type="range" min="0" max="100" value={acousticDelayMM} onChange={(e) => setAcousticDelayMM(+e.target.value)} className="w-full mt-2" />
                 </div>
-                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <div className="pt-2 border-t border-slate-800 space-y-2">
                   <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
                     <input 
                       type="checkbox" 
@@ -1725,6 +1897,26 @@ export default function App() {
                   <p className="text-[11px] text-slate-400 pl-5">
                     Inserts an optional 2nd-order all-pass delay network on the woofer branch to acoustically align phase with the physically recessed tweeter at {fx} Hz.
                   </p>
+
+                  {enableAllpass && (
+                    <div className="p-3 bg-teal-950/30 border border-teal-800/50 rounded-lg space-y-2 text-xs mt-2">
+                      <div className="flex items-center justify-between text-teal-300 font-semibold">
+                        <span>Nelder-Mead Phase Optimization</span>
+                        <span className={apfOptimization.isGoalAchieved ? "text-teal-400" : "text-amber-400"}>
+                          RMS Phase Error: {apfOptimization.rmsErrorDeg.toFixed(2)}°
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Optimal F0: {Math.round(apfOptimization.f0)} Hz • Optimal Q: {apfOptimization.q.toFixed(2)} • Alignment Window: [{Math.round(fx / 2)} Hz – {Math.round(fx * 2)} Hz]
+                      </div>
+                      {apfOptimization.warnings.map((warn, i) => (
+                        <div key={i} className="flex items-start space-x-2 p-2 bg-amber-950/40 border border-amber-800/40 rounded text-amber-300 text-[11px]">
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                          <span>{warn}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

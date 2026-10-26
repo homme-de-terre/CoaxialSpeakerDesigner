@@ -102,6 +102,50 @@ public struct CrossoverInspectorView: View {
                     }
 
                     Toggle("Enable All-Pass Woofer Delay Compensation Network", isOn: $viewModel.crossover.enableAllpassFilter)
+
+                    if viewModel.crossover.enableAllpassFilter {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Image(systemName: "wand.and.stars")
+                                    .foregroundColor(.teal)
+                                Text("Nelder-Mead Phase Optimization:")
+                                    .font(.caption)
+                                    .bold()
+                                    .foregroundColor(.teal)
+                                Spacer()
+                                if let err = viewModel.crossover.allpassOptimizationErrorDeg {
+                                    Text("RMS Error: \(String(format: "%.2f°", err))")
+                                        .font(.caption)
+                                        .bold()
+                                        .foregroundColor(viewModel.crossover.allpassOptimizationAchieved ? .teal : .orange)
+                                }
+                            }
+
+                            if let f0 = viewModel.crossover.allpassOptimizedF0, let q = viewModel.crossover.allpassOptimizedQ {
+                                Text("Optimal Resonance (F0): \(Int(f0)) Hz  •  Damping (Q): \(String(format: "%.2f", q))")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            // Show APF warnings
+                            ForEach(viewModel.crossover.allpassWarnings, id: \.self) { warn in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.orange)
+                                        .font(.caption)
+                                    Text(warn)
+                                        .font(.caption2)
+                                        .foregroundColor(.orange)
+                                }
+                                .padding(6)
+                                .background(Color.orange.opacity(0.1))
+                                .cornerRadius(6)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color.teal.opacity(0.06))
+                        .cornerRadius(8)
+                    }
                 }
                 .padding(8)
             }

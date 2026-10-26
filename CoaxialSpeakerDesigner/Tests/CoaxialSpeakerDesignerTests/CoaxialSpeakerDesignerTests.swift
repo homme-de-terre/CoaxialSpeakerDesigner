@@ -266,4 +266,124 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertGreaterThan(comp.L_AP_mH ?? 0, 0)
         XCTAssertGreaterThan(comp.C_AP_uF ?? 0, 0)
     }
+
+    func testNelderMeadAllpassOptimizerConvergence() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        var crossover = CrossoverNetwork(
+            crossoverFrequency: 2200.0,
+            wooferOrder: .secondOrderLR,
+            tweeterOrder: .secondOrderLR,
+            enableZobelNetwork: true,
+            acousticCenterOffsetMM: 30.0,
+            enableAllpassFilter: true
+        )
+
+        let result = AllpassFilterOptimizer.optimize(
+            driver: driver,
+            cabinet: cabinet,
+            crossover: crossover,
+            sampleCount: 31,
+            maxIterations: 150
+        )
+
+        // F0 should be in the vicinity of the crossover region
+        XCTAssertGreaterThan(result.f0, 500.0)
+        XCTAssertLessThan(result.f0, 8000.0)
+
+        // Q should be well-behaved
+        XCTAssertGreaterThan(result.q, 0.1)
+        XCTAssertLessThan(result.q, 10.0)
+
+        // Residual RMS phase deviation across the 2-octave crossover window should be low
+        XCTAssertLessThan(result.rmsErrorDeg, 8.0, "Optimizer should converge to parallel phase traces (RMS < 8 deg)")
+        XCTAssertTrue(result.isGoalAchieved)
+
+        // Component values generated from optimized parameters
+        crossover.allpassOptimizedF0 = result.f0
+        crossover.allpassOptimizedQ = result.q
+        let comp = crossover.computeComponentValues(wooferRe: driver.wooferTS.re, tweeterRe: driver.tweeter.re, wooferLe: driver.wooferTS.le)
+        XCTAssertNotNil(comp.L_AP_mH)
+        XCTAssertNotNil(comp.C_AP_uF)
+        XCTAssertGreaterThan(comp.L_AP_mH!, 0.05)
+        XCTAssertGreaterThan(comp.C_AP_uF!, 0.1)
+    }
+
+    func testAllpassWarnings() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+
+        // 1. Warning when APF is enabled but Zobel is disabled
+        var noZobelCrossover = CrossoverNetwork(
+            crossoverFrequency: 2000.0,
+            enableZobelNetwork: false,
+            acousticCenterOffsetMM: 25.0,
+            enableAllpassFilter: true
+        )
+        let optResultNoZobel = AllpassFilterOptimizer.optimize(
+            driver: driver,
+            cabinet: cabinet,
+            crossover: noZobelCrossover
+        )
+        let hasZobelWarning = optResultNoZobel.warnings.contains(where: { $0.contains("Zobel") })
+        XCTAssertTrue(hasZobelWarning, "Should issue warning if APF is enabled without Zobel network")
+
+        // 2. Warning in MainDesignerViewModel validateParameters
+        noZobelCrossover.allpassWarnings = optResultNoZobel.warnings
+        let vm = MainDesignerViewModel(driver: driver, cabinet: cabinet, crossover: noZobelCrossover)
+        XCTAssertTrue(vm.plausibilityWarnings.contains(where: { $0.contains("Zobel") }))
+    }
+
+    func testTwoPagePDFExportData() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        var crossover = CrossoverNetwork(
+            crossoverFrequency: 1800.0,
+            enableZobelNetwork: true,
+            acousticCenterOffsetMM: 35.0,
+            enableAllpassFilter: true
+        )
+        let opt = AllpassFilterOptimizer.optimize(driver: driver, cabinet: cabinet, crossover: crossover)
+        crossover.allpassOptimizedF0 = opt.f0
+        crossover.allpassOptimizedQ = opt.q
+        crossover.allpassOptimizationErrorDeg = opt.rmsErrorDeg
+        crossover.allpassOptimizationAchieved = opt.isGoalAchieved
+        crossover.allpassWarnings = opt.warnings
+
+        let components = crossover.computeComponentValues(
+            wooferRe: driver.wooferTS.re,
+            tweeterRe: driver.tweeter.re,
+            wooferLe: driver.wooferTS.le
+        )
+
+        let pdfData = PDFExporter.generateSchematicPDF(
+            driver: driver,
+            cabinet: cabinet,
+            crossover: crossover,
+            components: components
+        )
+
+        XCTAssertFalse(pdfData.isEmpty)
+        // Check standard PDF header signature "%PDF"
+        let headerPrefix = String(data: pdfData.prefix(4), encoding: .ascii)
+        XCTAssertEqual(headerPrefix, "%PDF")
+    }
+
+    func testStepResponseProperties() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        let crossover = CrossoverNetwork(crossoverFrequency: 2000.0, acousticCenterOffsetMM: 25.0)
+
+        let points = SimulationEngine.computeStepResponse(driver: driver, cabinet: cabinet, crossover: crossover, durationMs: 6.0)
+        XCTAssertEqual(points.count, 201)
+
+        // At t=0 ms, response should start near 0
+        XCTAssertEqual(points[0].timeMs, 0.0)
+        XCTAssertLessThan(abs(points[0].total), 0.2)
+
+        // Peak normalized to 1.0 (or within normal acoustic overshoot bounds)
+        let maxAbs = points.map { abs($0.total) }.max() ?? 0.0
+        XCTAssertGreaterThanOrEqual(maxAbs, 0.8)
+        XCTAssertLessThanOrEqual(maxAbs, 1.25)
+    }
 }

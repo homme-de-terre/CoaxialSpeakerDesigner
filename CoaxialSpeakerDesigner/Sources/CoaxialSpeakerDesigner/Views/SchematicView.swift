@@ -36,6 +36,23 @@ public struct SchematicView: View {
 
             Divider()
 
+            if viewModel.crossover.enableAllpassFilter && !viewModel.crossover.allpassWarnings.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.crossover.allpassWarnings, id: \.self) { warn in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text(warn)
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(8)
+            }
+
             let comp = viewModel.calculatedComponents
 
             // Schematic Graphical Diagram Placeholder / Layout

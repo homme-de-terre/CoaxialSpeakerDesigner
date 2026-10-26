@@ -10,8 +10,19 @@ public struct PhaseBodeChartView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 14) {
-                Text("Acoustic Phase & Driver Delay Alignment (Degrees vs Log Hz)")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Acoustic Phase & Driver Delay Alignment (Degrees vs Log Hz)")
+                        .font(.headline)
+                    if viewModel.crossover.enableAllpassFilter {
+                        let f0 = Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)
+                        let qVal = String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.70)
+                        let errVal = String(format: "%.1f°", viewModel.crossover.allpassOptimizationErrorDeg ?? 0.0)
+                        let statusColor: Color = viewModel.crossover.allpassOptimizationAchieved ? .teal : .orange
+                        Text("All-Pass Nelder-Mead Optimization: F0 = \(f0) Hz, Q = \(qVal) • Crossover Window [\(Int(viewModel.crossover.crossoverFrequency / 2))–\(Int(viewModel.crossover.crossoverFrequency * 2)) Hz] Residual RMS: \(errVal)")
+                            .font(.caption2)
+                            .foregroundColor(statusColor)
+                    }
+                }
                 Spacer()
 
                 Button(action: { viewModel.showWoofer.toggle() }) {
@@ -84,6 +95,18 @@ public struct PhaseBodeChartView: View {
         let logMax = log10(maxF)
 
         let majorFreqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+
+        // Subtle shaded band for 2-octave crossover zone [fx/2, 2*fx] when APF is enabled
+        if viewModel.crossover.enableAllpassFilter {
+            let fx = viewModel.crossover.crossoverFrequency
+            let f1 = max(minF, fx / 2.0)
+            let f2 = min(maxF, fx * 2.0)
+            let x1 = size.width * CGFloat((log10(f1) - logMin) / (logMax - logMin))
+            let x2 = size.width * CGFloat((log10(f2) - logMin) / (logMax - logMin))
+            let zoneRect = CGRect(x: x1, y: 0, width: x2 - x1, height: size.height)
+            context.fill(Path(zoneRect), with: .color(Color.teal.opacity(0.06)))
+        }
+
         for f in majorFreqs {
             let x = size.width * CGFloat((log10(Double(f)) - logMin) / (logMax - logMin))
             var path = Path()

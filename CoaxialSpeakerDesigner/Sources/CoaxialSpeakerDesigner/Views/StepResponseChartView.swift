@@ -15,7 +15,8 @@ public struct StepResponseChartView: View {
                     Text("Acoustic Transient Step Response (Amplitude vs Time)")
                         .font(.headline)
                     let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
-                    Text("Tweeter Depth Delay: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) • Polarity: \(viewModel.crossover.invertTweeterPolarity ? "Inverted (-)" : "Normal (+)")")
+                    let apfStatus = viewModel.crossover.enableAllpassFilter ? " • All-Pass Delay: Active (\(Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)) Hz, Q=\(String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.7)))" : ""
+                    Text("Tweeter Depth Delay: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) • Polarity: \(viewModel.crossover.invertTweeterPolarity ? "Inverted (-)" : "Normal (+)")\(apfStatus)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }

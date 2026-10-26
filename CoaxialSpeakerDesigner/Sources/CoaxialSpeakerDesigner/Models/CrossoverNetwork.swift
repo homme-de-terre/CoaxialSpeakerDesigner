@@ -64,6 +64,13 @@ public struct CrossoverNetwork: Codable, Sendable {
     public var invertTweeterPolarity: Bool = false  // Tweeter inverted polarity (+180 deg)
     public var snapToStandardValues: Bool = false    // Snap component values to commercial E12 series
 
+    // All-Pass Filter Optimization State
+    public var allpassOptimizedF0: Double? = nil
+    public var allpassOptimizedQ: Double? = nil
+    public var allpassOptimizationErrorDeg: Double? = nil
+    public var allpassOptimizationAchieved: Bool = true
+    public var allpassWarnings: [String] = []
+
     public init(
         crossoverFrequency: Double = 2200.0,
         wooferOrder: FilterOrder = .secondOrderLR,
@@ -159,10 +166,10 @@ public struct CrossoverNetwork: Codable, Sendable {
 
         // 5. All-Pass Delay Compensation Network for Woofer
         if enableAllpassFilter && acousticCenterOffsetMM > 0 {
-            let c = 343.0
-            let tau = (acousticCenterOffsetMM / 1000.0) / c
-            let w0 = 2.0 * .pi * fx
-            let qAP = max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
+            let f0 = allpassOptimizedF0 ?? crossoverFrequency
+            let w0 = 2.0 * .pi * f0
+            let tau = (acousticCenterOffsetMM / 1000.0) / 343.0
+            let qAP = allpassOptimizedQ ?? max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
             let lAP = (Zw / (w0 * qAP)) * 1000.0
             let cAP = (1.0 / (w0 * qAP * Zw)) * 1e6
             comp.L_AP_mH = snapToStandardValues ? snapE12(lAP) : lAP
@@ -264,11 +271,10 @@ public struct CrossoverNetwork: Codable, Sendable {
         guard enableAllpassFilter && acousticCenterOffsetMM > 0 else {
             return ComplexNumber(real: 1.0, imag: 0.0)
         }
-        let c = 343.0 // m/s
-        let tau = (acousticCenterOffsetMM / 1000.0) / c
-        let f0 = crossoverFrequency
+        let f0 = allpassOptimizedF0 ?? crossoverFrequency
+        let tau = (acousticCenterOffsetMM / 1000.0) / 343.0
         let w0 = 2.0 * .pi * f0
-        let qAP = max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
+        let qAP = allpassOptimizedQ ?? max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
         let x = f / f0
 
         // 2nd-order All-Pass: [ (1 - x^2) - j(x/Q) ] / [ (1 - x^2) + j(x/Q) ]
