@@ -2,7 +2,6 @@ import SwiftUI
 
 public struct MainSplitView: View {
     @StateObject var viewModel = MainDesignerViewModel()
-    @State private var showingAboutDialog: Bool = false
 
     public init() {}
 
@@ -27,7 +26,7 @@ public struct MainSplitView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    Button(action: { showingAboutDialog = true }) {
+                    Button(action: { viewModel.showAboutDialog = true }) {
                         Image(systemName: "info.circle")
                             .font(.system(size: 15))
                             .foregroundColor(.secondary)
@@ -68,14 +67,17 @@ public struct MainSplitView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .sheet(isPresented: $showingAboutDialog) {
-            AboutDialogView(isPresented: $showingAboutDialog)
+        .sheet(isPresented: Binding<Bool>(
+            get: { viewModel.showAboutDialog },
+            set: { viewModel.showAboutDialog = $0 }
+        )) {
+            AboutDialogView(viewModel: viewModel)
         }
     }
 }
 
 public struct AboutDialogView: View {
-    @Binding var isPresented: Bool
+    @ObservedObject var viewModel: MainDesignerViewModel
 
     public var body: some View {
         VStack(spacing: 18) {
@@ -118,7 +120,7 @@ public struct AboutDialogView: View {
             HStack {
                 Spacer()
                 Button("Close") {
-                    isPresented = false
+                    viewModel.showAboutDialog = false
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
