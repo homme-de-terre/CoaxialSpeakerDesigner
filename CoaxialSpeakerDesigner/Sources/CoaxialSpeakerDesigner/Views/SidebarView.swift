@@ -135,20 +135,64 @@ public struct SidebarView: View {
                     .frame(width: 140)
                 }
 
-                HStack(spacing: 6) {
-                    Text("Crossover Freq:")
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    HStack(spacing: 4) {
-                        TextField("", text: decimalBinding(for: $viewModel.crossover.crossoverFrequency))
+                if viewModel.crossover.enableIndependentFrequencies {
+                    HStack(spacing: 6) {
+                        Text("Woofer LP fx:")
+                            .lineLimit(1)
+                            .foregroundColor(.blue)
+                        Spacer(minLength: 8)
+                        HStack(spacing: 4) {
+                            TextField("", text: Binding(
+                                get: { String(format: "%.0f", viewModel.crossover.actualWooferFrequency) },
+                                set: { if let v = Double($0) { viewModel.crossover.wooferCrossoverFrequency = v } }
+                            ))
                             .labelsHidden()
                             .frame(width: 65)
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.trailing)
-                        Text("Hz")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(width: 28, alignment: .leading)
+                            Text("Hz")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(width: 28, alignment: .leading)
+                        }
+                    }
+
+                    HStack(spacing: 6) {
+                        Text("Tweeter HP fx:")
+                            .lineLimit(1)
+                            .foregroundColor(.red)
+                        Spacer(minLength: 8)
+                        HStack(spacing: 4) {
+                            TextField("", text: Binding(
+                                get: { String(format: "%.0f", viewModel.crossover.actualTweeterFrequency) },
+                                set: { if let v = Double($0) { viewModel.crossover.tweeterCrossoverFrequency = v } }
+                            ))
+                            .labelsHidden()
+                            .frame(width: 65)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.trailing)
+                            Text("Hz")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(width: 28, alignment: .leading)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Text("Crossover Freq:")
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        HStack(spacing: 4) {
+                            TextField("", text: decimalBinding(for: $viewModel.crossover.crossoverFrequency))
+                                .labelsHidden()
+                                .frame(width: 65)
+                                .textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.trailing)
+                            Text("Hz")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(width: 28, alignment: .leading)
+                        }
                     }
                 }
             }

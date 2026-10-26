@@ -20,6 +20,19 @@ public struct CoaxialSpeakerDesignerApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Coaxial Speaker Designer") {
+                    NSApplication.shared.orderFrontStandardAboutPanel(
+                        options: [
+                            NSApplication.AboutPanelOptionKey.applicationName: "Coaxial Speaker Designer",
+                            NSApplication.AboutPanelOptionKey.applicationVersion: "Version 1.3.0",
+                            NSApplication.AboutPanelOptionKey.version: "Build 2026.10",
+                            NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): "© 2026 Coaxial Speaker Designer"
+                        ]
+                    )
+                }
+            }
+
             CommandGroup(replacing: .textEditing) {
                 Button("Undo") {
                     NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)

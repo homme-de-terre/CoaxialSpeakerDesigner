@@ -217,11 +217,15 @@ public class SchematicReportRenderer {
         let f3 = cabinet.actualF3(for: driver.wooferTS)
         let qtc = cabinet.actualQtc(for: driver.wooferTS)
 
+        let f0Display = Int(crossover.allpassOptimizedF0 ?? crossover.acousticCenterFrequency)
         let apfStatus = crossover.enableAllpassFilter
-            ? " | APF Delay: Active (F0 = \(Int(crossover.allpassOptimizedF0 ?? crossover.crossoverFrequency)) Hz, Q = \(String(format: "%.2f", crossover.allpassOptimizedQ ?? 0.70)))"
+            ? " | APF Delay: Active (F0 = \(f0Display) Hz, Q = \(String(format: "%.2f", crossover.allpassOptimizedQ ?? 0.70)))"
             : ""
 
-        let line1 = "Driver: \(driver.name) (\(driver.manufacturer))  |  Crossover: \(Int(crossover.crossoverFrequency)) Hz (\(crossover.wooferOrder.rawValue) / \(crossover.tweeterOrder.rawValue))\(apfStatus)"
+        let xoInfo = crossover.enableIndependentFrequencies
+            ? "Crossover: Woofer \(Int(crossover.actualWooferFrequency)) Hz (\(crossover.wooferOrder.rawValue)) / Tweeter \(Int(crossover.actualTweeterFrequency)) Hz (\(crossover.tweeterOrder.rawValue))"
+            : "Crossover: \(Int(crossover.crossoverFrequency)) Hz (\(crossover.wooferOrder.rawValue) / \(crossover.tweeterOrder.rawValue))"
+        let line1 = "Driver: \(driver.name) (\(driver.manufacturer))  |  \(xoInfo)\(apfStatus)"
         let line2 = "Sealed Enclosure: Vb = \(String(format: "%.2f", vb)) L  |  Fc = \(String(format: "%.1f", fc)) Hz  |  f3 = \(String(format: "%.1f", f3)) Hz  |  Qtc = \(String(format: "%.3f", qtc))  |  \(subtitle)"
 
         line1.draw(at: CGPoint(x: margin + 14, y: bannerY + 24), withAttributes: subAttrs)
@@ -725,12 +729,16 @@ public class SchematicReportRenderer {
         let errStr = crossover.allpassOptimizationErrorDeg != nil ? String(format: "%.2f°", crossover.allpassOptimizationErrorDeg!) : "N/A"
         let delayMs = (crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
 
+        let xoSpecPoint = crossover.enableIndependentFrequencies
+            ? "\(Int(crossover.actualWooferFrequency)) Hz (W) / \(Int(crossover.actualTweeterFrequency)) Hz (T)"
+            : "\(Int(crossover.crossoverFrequency)) Hz"
+
         drawSpecCard(
             rect: CGRect(x: margin + (cardW + gap) * 2, y: startY, width: cardW, height: cardH),
             title: "ACOUSTIC DELAY & APF OPTIMIZER",
             headerColor: NSColor(calibratedRed: 0.1, green: 0.5, blue: 0.55, alpha: 1.0),
             items: [
-                ("Crossover Point (fx)", "\(Int(crossover.crossoverFrequency)) Hz"),
+                ("Crossover Point (fx)", xoSpecPoint),
                 ("Tweeter Depth Delay", "\(String(format: "%.1f", crossover.acousticCenterOffsetMM)) mm (\(String(format: "%.2f", delayMs)) ms)"),
                 ("Tweeter Polarity", crossover.invertTweeterPolarity ? "Inverted (-180°)" : "Normal (+)"),
                 ("APF Optimization", apfAchievedStr),

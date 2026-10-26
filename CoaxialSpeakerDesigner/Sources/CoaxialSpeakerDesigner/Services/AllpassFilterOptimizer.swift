@@ -41,9 +41,9 @@ public enum AllpassFilterOptimizer {
         sampleCount: Int = 31,
         maxIterations: Int = 150
     ) -> AllpassOptimizationResult {
-        let fx = crossover.crossoverFrequency
-        let fLow = max(20.0, fx / 2.0)
-        let fHigh = min(20000.0, fx * 2.0)
+        let fx = crossover.acousticCenterFrequency
+        let fLow = max(20.0, min(crossover.actualWooferFrequency, crossover.actualTweeterFrequency) / 2.0)
+        let fHigh = min(20000.0, max(crossover.actualWooferFrequency, crossover.actualTweeterFrequency) * 2.0)
 
         // Ensure phase is available for driver curves
         let rawWooferCurve = driver.wooferAcousticCurve.isEmpty

@@ -52,6 +52,28 @@ public struct CrossoverNetwork: Codable, Sendable {
     public var crossoverFrequency: Double  // Crossover frequency fx (Hz, e.g. 2200 Hz)
     public var wooferOrder: FilterOrder      // Woofer filter topology
     public var tweeterOrder: FilterOrder     // Tweeter filter topology
+
+    // Independent target cut-off frequencies for fine-tuning amplitude and phase response
+    public var enableIndependentFrequencies: Bool = false
+    public var wooferCrossoverFrequency: Double? = nil
+    public var tweeterCrossoverFrequency: Double? = nil
+
+    /// Effective cut-off frequency for Woofer low-pass section
+    public var actualWooferFrequency: Double {
+        return (enableIndependentFrequencies ? wooferCrossoverFrequency : nil) ?? crossoverFrequency
+    }
+
+    /// Effective cut-off frequency for Tweeter high-pass section
+    public var actualTweeterFrequency: Double {
+        return (enableIndependentFrequencies ? tweeterCrossoverFrequency : nil) ?? crossoverFrequency
+    }
+
+    /// Geometric mean center frequency of the crossover handover zone
+    public var acousticCenterFrequency: Double {
+        let fW = actualWooferFrequency
+        let fT = actualTweeterFrequency
+        return (fW > 0 && fT > 0) ? sqrt(fW * fT) : crossoverFrequency
+    }
     
     // Compensation circuits
     public var enableZobelNetwork: Bool = true
@@ -81,7 +103,10 @@ public struct CrossoverNetwork: Codable, Sendable {
         acousticCenterOffsetMM: Double = 35.0,
         invertTweeterPolarity: Bool = false,
         snapToStandardValues: Bool = false,
-        enableAllpassFilter: Bool = false
+        enableAllpassFilter: Bool = false,
+        enableIndependentFrequencies: Bool = false,
+        wooferCrossoverFrequency: Double? = nil,
+        tweeterCrossoverFrequency: Double? = nil
     ) {
         self.crossoverFrequency = crossoverFrequency
         self.wooferOrder = wooferOrder
@@ -93,56 +118,61 @@ public struct CrossoverNetwork: Codable, Sendable {
         self.invertTweeterPolarity = invertTweeterPolarity
         self.snapToStandardValues = snapToStandardValues
         self.enableAllpassFilter = enableAllpassFilter
+        self.enableIndependentFrequencies = enableIndependentFrequencies
+        self.wooferCrossoverFrequency = wooferCrossoverFrequency
+        self.tweeterCrossoverFrequency = tweeterCrossoverFrequency
     }
 
     /// Compute ideal passive filter component values based on target driver nominal impedances.
     public func computeComponentValues(wooferRe: Double, tweeterRe: Double, wooferLe: Double) -> CalculatedComponents {
         var comp = CalculatedComponents()
-        let fx = crossoverFrequency
-        let w = 2.0 * .pi * fx
+        let fxW = actualWooferFrequency
+        let wW = 2.0 * .pi * fxW
+        let fxT = actualTweeterFrequency
+        let wT = 2.0 * .pi * fxT
         let Zw = max(wooferRe, 4.0)
         let Zt = max(tweeterRe, 4.0)
 
         // 1. Woofer Low-Pass Components
         switch wooferOrder {
         case .firstOrder:
-            comp.L1_mH = (Zw / w) * 1000.0
+            comp.L1_mH = (Zw / wW) * 1000.0
         case .secondOrderLR:
-            comp.L1_mH = (Zw / (w * .pi)) * 1000.0 * 2.0 // L = Zw / (2*pi*fx) = Zw/w
-            comp.C1_uF = (1.0 / (2.0 * .pi * fx * Zw)) * 1e6
+            comp.L1_mH = (Zw / (wW * .pi)) * 1000.0 * 2.0 // L = Zw / (2*pi*fx) = Zw/w
+            comp.C1_uF = (1.0 / (2.0 * .pi * fxW * Zw)) * 1e6
         case .secondOrderBW:
-            comp.L1_mH = ((sqrt(2.0) * Zw) / w) * 1000.0
-            comp.C1_uF = (1.0 / (sqrt(2.0) * w * Zw)) * 1e6
+            comp.L1_mH = ((sqrt(2.0) * Zw) / wW) * 1000.0
+            comp.C1_uF = (1.0 / (sqrt(2.0) * wW * Zw)) * 1e6
         case .thirdOrderBW:
-            comp.L1_mH = ((1.5 * Zw) / w) * 1000.0
-            comp.C1_uF = (1.033 / (w * Zw)) * 1e6
-            comp.L2_mH = ((0.5 * Zw) / w) * 1000.0
+            comp.L1_mH = ((1.5 * Zw) / wW) * 1000.0
+            comp.C1_uF = (1.033 / (wW * Zw)) * 1e6
+            comp.L2_mH = ((0.5 * Zw) / wW) * 1000.0
         case .fourthOrderLR:
-            comp.L1_mH = ((1.2 * Zw) / w) * 1000.0
-            comp.C1_uF = (0.33 / (w * Zw)) * 1e6
-            comp.L2_mH = ((0.4 * Zw) / w) * 1000.0
-            comp.C2_uF = (0.75 / (w * Zw)) * 1e6
+            comp.L1_mH = ((1.2 * Zw) / wW) * 1000.0
+            comp.C1_uF = (0.33 / (wW * Zw)) * 1e6
+            comp.L2_mH = ((0.4 * Zw) / wW) * 1000.0
+            comp.C2_uF = (0.75 / (wW * Zw)) * 1e6
         }
 
         // 2. Tweeter High-Pass Components
         switch tweeterOrder {
         case .firstOrder:
-            comp.C_HP1_uF = (1.0 / (w * Zt)) * 1e6
+            comp.C_HP1_uF = (1.0 / (wT * Zt)) * 1e6
         case .secondOrderLR:
-            comp.C_HP1_uF = (1.0 / (w * Zt)) * 1e6
-            comp.L_HP1_mH = (Zt / w) * 1000.0
+            comp.C_HP1_uF = (1.0 / (wT * Zt)) * 1e6
+            comp.L_HP1_mH = (Zt / wT) * 1000.0
         case .secondOrderBW:
-            comp.C_HP1_uF = (1.0 / (sqrt(2.0) * w * Zt)) * 1e6
-            comp.L_HP1_mH = ((sqrt(2.0) * Zt) / w) * 1000.0
+            comp.C_HP1_uF = (1.0 / (sqrt(2.0) * wT * Zt)) * 1e6
+            comp.L_HP1_mH = ((sqrt(2.0) * Zt) / wT) * 1000.0
         case .thirdOrderBW:
-            comp.C_HP1_uF = (1.0 / (1.5 * w * Zt)) * 1e6
-            comp.L_HP1_mH = (Zt / (1.033 * w)) * 1000.0
-            comp.C_HP2_uF = (1.0 / (0.5 * w * Zt)) * 1e6
+            comp.C_HP1_uF = (1.0 / (1.5 * wT * Zt)) * 1e6
+            comp.L_HP1_mH = (Zt / (1.033 * wT)) * 1000.0
+            comp.C_HP2_uF = (1.0 / (0.5 * wT * Zt)) * 1e6
         case .fourthOrderLR:
-            comp.C_HP1_uF = (1.0 / (1.2 * w * Zt)) * 1e6
-            comp.L_HP1_mH = (Zt / (0.33 * w)) * 1000.0
-            comp.C_HP2_uF = (1.0 / (0.4 * w * Zt)) * 1e6
-            comp.L_HP2_mH = (Zt / (0.75 * w)) * 1000.0
+            comp.C_HP1_uF = (1.0 / (1.2 * wT * Zt)) * 1e6
+            comp.L_HP1_mH = (Zt / (0.33 * wT)) * 1000.0
+            comp.C_HP2_uF = (1.0 / (0.4 * wT * Zt)) * 1e6
+            comp.L_HP2_mH = (Zt / (0.75 * wT)) * 1000.0
         }
 
         // 3. Zobel Network for Woofer (Rz = 1.25 * Re, Cz = Le / Rz^2)
@@ -211,7 +241,7 @@ public struct CrossoverNetwork: Codable, Sendable {
 
     /// Complex electrical low-pass filter transfer function H_LP(f)
     public func wooferFilterTransferFunction(frequency f: Double) -> ComplexNumber {
-        let x = f / crossoverFrequency
+        let x = f / actualWooferFrequency
         switch wooferOrder {
         case .firstOrder:
             // 1 / (1 + jx)
@@ -234,7 +264,7 @@ public struct CrossoverNetwork: Codable, Sendable {
 
     /// Complex electrical high-pass filter transfer function H_HP(f)
     public func tweeterFilterTransferFunction(frequency f: Double) -> ComplexNumber {
-        let x = f / crossoverFrequency
+        let x = f / actualTweeterFrequency
         switch tweeterOrder {
         case .firstOrder:
             // jx / (1 + jx)
@@ -271,7 +301,7 @@ public struct CrossoverNetwork: Codable, Sendable {
         guard enableAllpassFilter && acousticCenterOffsetMM > 0 else {
             return ComplexNumber(real: 1.0, imag: 0.0)
         }
-        let f0 = allpassOptimizedF0 ?? crossoverFrequency
+        let f0 = allpassOptimizedF0 ?? acousticCenterFrequency
         let tau = (acousticCenterOffsetMM / 1000.0) / 343.0
         let w0 = 2.0 * .pi * f0
         let qAP = allpassOptimizedQ ?? max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))

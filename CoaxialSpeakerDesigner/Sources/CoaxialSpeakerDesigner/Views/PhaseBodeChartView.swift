@@ -141,11 +141,12 @@ public struct PhaseBodeChartView: View {
 
         let majorFreqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
 
-        // Subtle shaded band for 2-octave crossover zone [fx/2, 2*fx] when APF is enabled
+        // Subtle shaded band for 2-octave crossover zone when APF is enabled
         if viewModel.crossover.enableAllpassFilter {
-            let fx = viewModel.crossover.crossoverFrequency
-            let f1 = max(minF, fx / 2.0)
-            let f2 = min(maxF, fx * 2.0)
+            let fLow = min(viewModel.crossover.actualWooferFrequency, viewModel.crossover.actualTweeterFrequency)
+            let fHigh = max(viewModel.crossover.actualWooferFrequency, viewModel.crossover.actualTweeterFrequency)
+            let f1 = max(minF, fLow / 2.0)
+            let f2 = min(maxF, fHigh * 2.0)
             let x1 = size.width * CGFloat((log10(f1) - logMin) / (logMax - logMin))
             let x2 = size.width * CGFloat((log10(f2) - logMin) / (logMax - logMin))
             let zoneRect = CGRect(x: x1, y: 0, width: x2 - x1, height: size.height)

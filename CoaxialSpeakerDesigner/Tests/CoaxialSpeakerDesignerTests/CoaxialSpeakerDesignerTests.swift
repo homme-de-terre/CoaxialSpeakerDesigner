@@ -469,4 +469,67 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         let midIdx = apfPoints.count / 2
         XCTAssertGreaterThan(apfPoints[midIdx].wooferGroupDelayMs, points[midIdx].wooferGroupDelayMs)
     }
+
+    func testIndependentCrossoverFrequencies() {
+        var xo = CrossoverNetwork(crossoverFrequency: 2200.0)
+        XCTAssertFalse(xo.enableIndependentFrequencies)
+        XCTAssertEqual(xo.actualWooferFrequency, 2200.0)
+        XCTAssertEqual(xo.actualTweeterFrequency, 2200.0)
+        XCTAssertEqual(xo.acousticCenterFrequency, 2200.0, accuracy: 1e-4)
+
+        // Enable independent cut-off frequencies: 1800 Hz (woofer LP) and 2400 Hz (tweeter HP)
+        xo.enableIndependentFrequencies = true
+        xo.wooferCrossoverFrequency = 1800.0
+        xo.tweeterCrossoverFrequency = 2400.0
+
+        XCTAssertEqual(xo.actualWooferFrequency, 1800.0)
+        XCTAssertEqual(xo.actualTweeterFrequency, 2400.0)
+        let expectedCenter = sqrt(1800.0 * 2400.0)
+        XCTAssertEqual(xo.acousticCenterFrequency, expectedCenter, accuracy: 0.1)
+
+        // Compute components with split cut-offs
+        let compSplit = xo.computeComponentValues(wooferRe: 6.0, tweeterRe: 6.0, wooferLe: 0.8)
+
+        // Compute components with unified 2200 Hz crossover
+        var xoUnified = xo
+        xoUnified.enableIndependentFrequencies = false
+        let compUnified = xoUnified.computeComponentValues(wooferRe: 6.0, tweeterRe: 6.0, wooferLe: 0.8)
+
+        // Lower woofer cut-off (1800 Hz vs 2200 Hz) -> larger series inductance L1 (L ~ 1/f)
+        XCTAssertGreaterThan(compSplit.L1_mH!, compUnified.L1_mH!)
+
+        // Higher tweeter cut-off (2400 Hz vs 2200 Hz) -> smaller series capacitance C_HP1 (C ~ 1/f)
+        XCTAssertLessThan(compSplit.C_HP1_uF!, compUnified.C_HP1_uF!)
+    }
+
+    func testAPFOptimizerWithIndependentFrequencies() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        var crossover = CrossoverNetwork(
+            crossoverFrequency: 2200.0,
+            acousticCenterOffsetMM: 35.0,
+            enableAllpassFilter: true,
+            enableIndependentFrequencies: true,
+            wooferCrossoverFrequency: 1800.0,
+            tweeterCrossoverFrequency: 2400.0
+        )
+
+        let result = AllpassFilterOptimizer.optimize(
+            driver: driver,
+            cabinet: cabinet,
+            crossover: crossover,
+            sampleCount: 31,
+            maxIterations: 150
+        )
+
+        // Optimizer should achieve parallel phase alignment across the split crossover zone
+        XCTAssertTrue(result.isGoalAchieved, "APF optimizer should achieve goal with independent cut-off frequencies")
+        XCTAssertLessThan(result.rmsErrorDeg, 8.0, "Residual RMS error should be < 8.0 deg")
+
+        // F0 should be in the acoustic handover region
+        XCTAssertGreaterThan(result.f0, 800.0)
+        XCTAssertLessThan(result.f0, 8000.0)
+        XCTAssertGreaterThan(result.q, 0.1)
+        XCTAssertLessThan(result.q, 10.0)
+    }
 }

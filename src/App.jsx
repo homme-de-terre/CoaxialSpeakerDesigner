@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { parseDatasheetFromURL, parseDatasheetFromFile } from './utils/datasheetParser';
 import { 
   Speaker, Volume2, Shield, Settings, Sliders, Cpu, FileText, Download, 
-  Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap, Upload
+  Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap, Upload, Info
 } from 'lucide-react';
 
 // --- Complex Number Physics Math Engine ---
@@ -146,6 +146,10 @@ export default function App() {
 
   // Crossover Network State
   const [fx, setFx] = useState(2200);
+  const [enableIndependentFx, setEnableIndependentFx] = useState(false);
+  const [wooferFx, setWooferFx] = useState(2200);
+  const [tweeterFx, setTweeterFx] = useState(2200);
+  const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [wooferOrder, setWooferOrder] = useState('secondOrderLR');
   const [tweeterOrder, setTweeterOrder] = useState('secondOrderLR');
   const [enableZobel, setEnableZobel] = useState(true);
@@ -248,12 +252,16 @@ export default function App() {
 
   // --- Nelder-Mead All-Pass Filter Phase Alignment Optimizer ---
   const apfOptimization = useMemo(() => {
+    const actualWooferFx = enableIndependentFx ? wooferFx : fx;
+    const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
+    const centerFx = Math.round(Math.sqrt(actualWooferFx * actualTweeterFx));
+
     if (!enableAllpass || acousticDelayMM <= 0) {
-      return { f0: fx, q: 0.707, rmsErrorDeg: 0, isGoalAchieved: true, warnings: [] };
+      return { f0: centerFx, q: 0.707, rmsErrorDeg: 0, isGoalAchieved: true, warnings: [] };
     }
 
-    const fLow = Math.max(20.0, fx / 2.0);
-    const fHigh = Math.min(20000.0, fx * 2.0);
+    const fLow = Math.max(20.0, Math.min(actualWooferFx, actualTweeterFx) / 2.0);
+    const fHigh = Math.min(20000.0, Math.max(actualWooferFx, actualTweeterFx) * 2.0);
     const sampleCount = 31;
     const freqs = [];
     const logLow = Math.log(fLow);
@@ -281,7 +289,7 @@ export default function App() {
       if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
       const pTweeterRawComp = new Complex(Math.pow(10, pTweeterRawSPL / 20.0), 0);
 
-      const xT = f / fx;
+      const xT = f / actualTweeterFx;
       let hHP = new Complex(1, 0);
       if (tweeterOrder === 'firstOrder') {
         hHP = new Complex(0, xT).div(new Complex(1, xT));
@@ -305,7 +313,7 @@ export default function App() {
       const denomCab = s2.add(s.mul(wc / qtc)).add(wc * wc);
       const hCab = s2.div(denomCab);
 
-      const xW = f / fx;
+      const xW = f / actualWooferFx;
       let hLP = new Complex(1, 0);
       if (wooferOrder === 'firstOrder') {
         hLP = new Complex(1, 0).div(new Complex(1, xW));
@@ -321,7 +329,7 @@ export default function App() {
     });
 
     function evalCost(f0, q) {
-      if (f0 < 0.1 * fx || f0 > 10.0 * fx || q < 0.05 || q > 25.0) return 1e8;
+      if (f0 < 0.1 * centerFx || f0 > 10.0 * centerFx || q < 0.05 || q > 25.0) return 1e8;
       const deltas = [];
       for (let i = 0; i < sampleCount; i++) {
         const f = freqs[i];
@@ -346,11 +354,11 @@ export default function App() {
     }
 
     const tau = delaySec;
-    const qInit = Math.max(0.5, Math.min(2.5, 2.0 / (2.0 * Math.PI * fx * Math.max(tau, 1e-6))));
+    const qInit = Math.max(0.5, Math.min(2.5, 2.0 / (2.0 * Math.PI * centerFx * Math.max(tau, 1e-6))));
     let simplex = [
-      { f0: fx, q: qInit, cost: evalCost(fx, qInit) },
-      { f0: fx * 1.2, q: qInit, cost: evalCost(fx * 1.2, qInit) },
-      { f0: fx, q: qInit * 1.25, cost: evalCost(fx, qInit * 1.25) }
+      { f0: centerFx, q: qInit, cost: evalCost(centerFx, qInit) },
+      { f0: centerFx * 1.2, q: qInit, cost: evalCost(centerFx * 1.2, qInit) },
+      { f0: centerFx, q: qInit * 1.25, cost: evalCost(centerFx, qInit * 1.25) }
     ];
 
     for (let it = 0; it < 120; it++) {
@@ -418,11 +426,14 @@ export default function App() {
       isGoalAchieved,
       warnings
     };
-  }, [enableAllpass, acousticDelayMM, fx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel]);
+  }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel]);
 
   // --- Passive Crossover Component Calculations ---
   const crossoverComponents = useMemo(() => {
-    const w = 2.0 * Math.PI * fx;
+    const actualWooferFx = enableIndependentFx ? wooferFx : fx;
+    const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
+    const wW = 2.0 * Math.PI * actualWooferFx;
+    const wT = 2.0 * Math.PI * actualTweeterFx;
     const Zw = Math.max(ts.re, 4.0);
     const Zt = Math.max(tweeter.re, 4.0);
 
@@ -436,34 +447,34 @@ export default function App() {
 
     // Woofer Low-Pass
     if (wooferOrder === 'firstOrder') {
-      comp.L1 = (Zw / w) * 1000.0;
+      comp.L1 = (Zw / wW) * 1000.0;
     } else if (wooferOrder === 'secondOrderLR') {
-      comp.L1 = (Zw / (w * Math.PI)) * 1000.0 * 2.0;
-      comp.C1 = (1.0 / (2.0 * Math.PI * fx * Zw)) * 1e6;
+      comp.L1 = (Zw / (wW * Math.PI)) * 1000.0 * 2.0;
+      comp.C1 = (1.0 / (2.0 * Math.PI * actualWooferFx * Zw)) * 1e6;
     } else if (wooferOrder === 'secondOrderBW') {
-      comp.L1 = ((Math.SQRT2 * Zw) / w) * 1000.0;
-      comp.C1 = (1.0 / (Math.SQRT2 * w * Zw)) * 1e6;
+      comp.L1 = ((Math.SQRT2 * Zw) / wW) * 1000.0;
+      comp.C1 = (1.0 / (Math.SQRT2 * wW * Zw)) * 1e6;
     } else if (wooferOrder === 'fourthOrderLR') {
-      comp.L1 = ((1.2 * Zw) / w) * 1000.0;
-      comp.C1 = (0.33 / (w * Zw)) * 1e6;
-      comp.L2 = ((0.4 * Zw) / w) * 1000.0;
-      comp.C2 = (0.75 / (w * Zw)) * 1e6;
+      comp.L1 = ((1.2 * Zw) / wW) * 1000.0;
+      comp.C1 = (0.33 / (wW * Zw)) * 1e6;
+      comp.L2 = ((0.4 * Zw) / wW) * 1000.0;
+      comp.C2 = (0.75 / (wW * Zw)) * 1e6;
     }
 
     // Tweeter High-Pass
     if (tweeterOrder === 'firstOrder') {
-      comp.C_HP1 = (1.0 / (w * Zt)) * 1e6;
+      comp.C_HP1 = (1.0 / (wT * Zt)) * 1e6;
     } else if (tweeterOrder === 'secondOrderLR') {
-      comp.C_HP1 = (1.0 / (w * Zt)) * 1e6;
-      comp.L_HP1 = (Zt / w) * 1000.0;
+      comp.C_HP1 = (1.0 / (wT * Zt)) * 1e6;
+      comp.L_HP1 = (Zt / wT) * 1000.0;
     } else if (tweeterOrder === 'secondOrderBW') {
-      comp.C_HP1 = (1.0 / (Math.SQRT2 * w * Zt)) * 1e6;
-      comp.L_HP1 = ((Math.SQRT2 * Zt) / w) * 1000.0;
+      comp.C_HP1 = (1.0 / (Math.SQRT2 * wT * Zt)) * 1e6;
+      comp.L_HP1 = ((Math.SQRT2 * Zt) / wT) * 1000.0;
     } else if (tweeterOrder === 'fourthOrderLR') {
-      comp.C_HP1 = (1.0 / (1.2 * w * Zt)) * 1e6;
-      comp.L_HP1 = (Zt / (0.33 * w)) * 1000.0;
-      comp.C_HP2 = (1.0 / (0.4 * w * Zt)) * 1e6;
-      comp.L_HP2 = (Zt / (0.75 * w)) * 1000.0;
+      comp.C_HP1 = (1.0 / (1.2 * wT * Zt)) * 1e6;
+      comp.L_HP1 = (Zt / (0.33 * wT)) * 1000.0;
+      comp.C_HP2 = (1.0 / (0.4 * wT * Zt)) * 1e6;
+      comp.L_HP2 = (Zt / (0.75 * wT)) * 1000.0;
     }
 
     // Zobel
@@ -485,7 +496,7 @@ export default function App() {
 
     // All-Pass Delay Compensation Network (using Nelder-Mead optimized F0 & Q)
     if (enableAllpass && acousticDelayMM > 0) {
-      const f0 = apfOptimization.f0 || fx;
+      const f0 = apfOptimization.f0 || Math.round(Math.sqrt(actualWooferFx * actualTweeterFx));
       const qAP = apfOptimization.q || 0.707;
       const w0 = 2.0 * Math.PI * f0;
       comp.L_AP = (Zw / (w0 * qAP)) * 1000.0;
@@ -500,7 +511,7 @@ export default function App() {
     }
 
     return comp;
-  }, [fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, ts, tweeter, enableAllpass, acousticDelayMM, apfOptimization]);
+  }, [fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, ts, tweeter, enableAllpass, acousticDelayMM, apfOptimization]);
 
   // --- Complete Simulation Engine Calculations ---
   const simulationData = useMemo(() => {
@@ -518,6 +529,8 @@ export default function App() {
     const delaySec = (acousticDelayMM / 1000.0) / speedOfSound;
     const lpadGain = (enableLPad && lpadAttenDB > 0) ? Math.pow(10, -lpadAttenDB / 20.0) : 1.0;
     const polarityMult = invertTweeterPolarity ? -1.0 : 1.0;
+    const actualWooferFx = enableIndependentFx ? wooferFx : fx;
+    const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
 
     for (let i = 0; i <= steps; i++) {
       const logF = logMin + (i / steps) * (logMax - logMin);
@@ -539,7 +552,7 @@ export default function App() {
       const pWooferCab = pWooferRawComp.mul(hCab);
 
       // Woofer Low-Pass Electrical Filter H_LP
-      const xW = f / fx;
+      const xW = f / actualWooferFx;
       let hLP = new Complex(1, 0);
       if (wooferOrder === 'firstOrder') {
         hLP = new Complex(1, 0).div(new Complex(1, xW));
@@ -555,7 +568,7 @@ export default function App() {
       // Woofer All-Pass Delay Compensation Network H_AP
       let hAP = new Complex(1, 0);
       if (enableAllpass && acousticDelayMM > 0) {
-        const f0 = apfOptimization.f0 || fx;
+        const f0 = apfOptimization.f0 || Math.round(Math.sqrt(actualWooferFx * actualTweeterFx));
         const qAP = apfOptimization.q || 0.707;
         const xAP = f / f0;
         const num = new Complex(1.0 - xAP * xAP, -xAP / qAP);
@@ -570,7 +583,7 @@ export default function App() {
       if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
       const pTweeterRawComp = new Complex(Math.pow(10, pTweeterRawSPL / 20.0), 0);
 
-      const xT = f / fx;
+      const xT = f / actualTweeterFx;
       let hHP = new Complex(1, 0);
       if (tweeterOrder === 'firstOrder') {
         hHP = new Complex(0, xT).div(new Complex(1, xT));
@@ -740,7 +753,7 @@ export default function App() {
     }
 
     return points;
-  }, [ts, tweeter, cabinetCalculations, fx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
+  }, [ts, tweeter, cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
 
   // --- Render Bode Amplitude Plot ---
   useEffect(() => {
@@ -1079,10 +1092,13 @@ export default function App() {
 
     const delaySec = (acousticDelayMM / 1000.0) / 343.0;
     const polaritySign = invertTweeterPolarity ? -1.0 : 1.0;
+    const actualWooferFx = enableIndependentFx ? wooferFx : fx;
+    const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
 
     for (let k = 1; k < N / 2; k++) {
       const f = (k * fs) / N;
-      const s = f / Math.max(fx, 1.0);
+      const sW = f / Math.max(actualWooferFx, 1.0);
+      const sT = f / Math.max(actualTweeterFx, 1.0);
 
       const fRatio = f / Math.max(cabinetCalculations.fc, 1.0);
       const sCab = Math.pow(fRatio, 2);
@@ -1094,12 +1110,12 @@ export default function App() {
 
       let hLPR = 1.0, hLPI = 0.0;
       if (wooferOrder === 'firstOrder') {
-        const d = 1.0 + s * s;
+        const d = 1.0 + sW * sW;
         hLPR = 1.0 / d;
-        hLPI = -s / d;
+        hLPI = -sW / d;
       } else {
-        const dR = 1.0 - s * s;
-        const dI = Math.SQRT2 * s;
+        const dR = 1.0 - sW * sW;
+        const dI = Math.SQRT2 * sW;
         const dM2 = dR * dR + dI * dI;
         hLPR = dR / dM2;
         hLPI = -dI / dM2;
@@ -1108,7 +1124,7 @@ export default function App() {
       // All-pass delay compensation on woofer branch
       let hAPR = 1.0, hAPI = 0.0;
       if (enableAllpass && acousticDelayMM > 0) {
-        const f0 = apfOptimization.f0 || fx;
+        const f0 = apfOptimization.f0 || Math.round(Math.sqrt(actualWooferFx * actualTweeterFx));
         const qAP = apfOptimization.q || 0.707;
         const sAP = f / f0;
         const dR = 1.0 - sAP * sAP;
@@ -1125,13 +1141,13 @@ export default function App() {
 
       let hHPR = 1.0, hHPI = 0.0;
       if (tweeterOrder === 'firstOrder') {
-        const d = 1.0 + s * s;
-        hHPR = (s * s) / d;
-        hHPI = s / d;
+        const d = 1.0 + sT * sT;
+        hHPR = (sT * sT) / d;
+        hHPI = sT / d;
       } else {
-        const num = -s * s;
-        const dR = 1.0 - s * s;
-        const dI = Math.SQRT2 * s;
+        const num = -sT * sT;
+        const dR = 1.0 - sT * sT;
+        const dI = Math.SQRT2 * sT;
         const dM2 = dR * dR + dI * dI;
         hHPR = (num * dR) / dM2;
         hHPI = (-num * dI) / dM2;
@@ -1243,7 +1259,7 @@ export default function App() {
     }
 
     return points;
-  }, [cabinetCalculations, fx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
+  }, [cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
 
   // --- Render Step Response Plot ---
   useEffect(() => {
@@ -1881,6 +1897,13 @@ export default function App() {
             <button onClick={() => setActiveTab('crossover')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'crossover' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Crossover Designer</button>
             <button onClick={() => setActiveTab('bom')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'bom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Schematic & BOM</button>
           </div>
+          <button
+            onClick={() => setShowAboutDialog(true)}
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-md transition cursor-pointer"
+          >
+            <Info className="w-3.5 h-3.5" />
+            <span>About</span>
+          </button>
         </header>
 
         {/* View Workspace Content */}
@@ -2270,9 +2293,46 @@ export default function App() {
             <div className="max-w-3xl space-y-6">
               <h2 className="text-xl font-bold text-white flex items-center space-x-2"><Sliders className="text-blue-400" /><span>Coaxial Crossover Designer</span></h2>
               <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-5">
-                <div>
-                  <label className="text-xs font-semibold text-slate-400">Crossover Frequency (fx): {fx} Hz</label>
-                  <input type="range" min="800" max="5000" step="25" value={fx} onChange={(e) => setFx(+e.target.value)} className="w-full mt-2" />
+                <div className="space-y-4">
+                  <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={enableIndependentFx}
+                      onChange={(e) => setEnableIndependentFx(e.target.checked)}
+                      className="rounded bg-slate-800 border-slate-700 text-blue-600"
+                    />
+                    <span className="font-medium">Specify Independent Cut-off Frequencies for Woofer & Tweeter</span>
+                  </label>
+
+                  {!enableIndependentFx ? (
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-slate-400">Crossover Frequency (fx): {fx} Hz</label>
+                      </div>
+                      <input type="range" min="800" max="6000" step="25" value={fx} onChange={(e) => setFx(+e.target.value)} className="w-full mt-2" />
+                    </div>
+                  ) : (
+                    <div className="space-y-3 p-3 bg-slate-800/50 border border-slate-700/60 rounded-lg">
+                      <div>
+                        <div className="flex items-center justify-between text-xs">
+                          <label className="font-semibold text-blue-400">Woofer Low-Pass Cut-off (fx,woofer): {wooferFx} Hz</label>
+                        </div>
+                        <input type="range" min="800" max="6000" step="25" value={wooferFx} onChange={(e) => setWooferFx(+e.target.value)} className="w-full mt-1.5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between text-xs">
+                          <label className="font-semibold text-red-400">Tweeter High-Pass Cut-off (fx,tweeter): {tweeterFx} Hz</label>
+                        </div>
+                        <input type="range" min="800" max="6000" step="25" value={tweeterFx} onChange={(e) => setTweeterFx(+e.target.value)} className="w-full mt-1.5" />
+                      </div>
+                      <div className="text-[11px] text-slate-400 pt-1 border-t border-slate-700/40 flex items-center justify-between">
+                        <span>Acoustic Handover Center: {Math.round(Math.sqrt(wooferFx * tweeterFx))} Hz</span>
+                        <span className={tweeterFx > wooferFx ? "text-amber-300" : (tweeterFx < wooferFx ? "text-indigo-300" : "text-emerald-300")}>
+                          {tweeterFx > wooferFx ? `+${tweeterFx - wooferFx} Hz Underlap (Gap)` : (tweeterFx < wooferFx ? `${wooferFx - tweeterFx} Hz Overlap` : 'Synchronous (0 Hz Gap)')}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-4 text-xs">
                   <div>
@@ -2371,6 +2431,60 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* About Modal Dialog */}
+      {showAboutDialog && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-lg">
+                  HP
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">Coaxial Speaker Designer</h3>
+                  <p className="text-xs text-blue-400 font-medium">Version 1.3.0 (Build 2026.10)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAboutDialog(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-300 space-y-2.5">
+              <p className="leading-relaxed">
+                Professional engineering system for coaxial loudspeaker crossovers, phase alignment networks, and acoustic enclosures.
+              </p>
+              <div className="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50 space-y-1.5 text-[11px] text-slate-300">
+                <div className="font-semibold text-white mb-1">Key Features:</div>
+                <div>• Independent Woofer & Tweeter Target Cut-Off Frequencies</div>
+                <div>• Nelder-Mead All-Pass Filter Phase Alignment Optimizer</div>
+                <div>• Phase Unwrapping & Acoustic Center Delay Compensation</div>
+                <div>• Acoustic & Electrical Group Delay Analysis</div>
+                <div>• Time-Domain Transient Step Response Engine</div>
+                <div>• Vector 2-Page Schematic & BOM PDF Exporter</div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                © 2026 Coaxial Speaker Designer • All rights reserved.
+              </p>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowAboutDialog(false)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

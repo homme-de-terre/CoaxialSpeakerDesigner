@@ -7,6 +7,20 @@ public struct CrossoverInspectorView: View {
         self.viewModel = viewModel
     }
 
+    private var wooferFrequencyBinding: Binding<Double> {
+        Binding(
+            get: { self.viewModel.crossover.actualWooferFrequency },
+            set: { self.viewModel.crossover.wooferCrossoverFrequency = $0 }
+        )
+    }
+
+    private var tweeterFrequencyBinding: Binding<Double> {
+        Binding(
+            get: { self.viewModel.crossover.actualTweeterFrequency },
+            set: { self.viewModel.crossover.tweeterCrossoverFrequency = $0 }
+        )
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -22,16 +36,64 @@ public struct CrossoverInspectorView: View {
 
             GroupBox(label: Label("Frequency & Topology Settings", systemImage: "slider.horizontal.2.square.on.square")) {
                 VStack(alignment: .leading, spacing: 12) {
-                    // Crossover Frequency Slider
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Crossover Frequency (fx):")
-                            Spacer()
-                            Text("\(Int(viewModel.crossover.crossoverFrequency)) Hz")
-                                .bold()
-                                .foregroundColor(.accentColor)
+                    // Independent Target Cut-Off Frequencies Toggle
+                    Toggle("Specify Independent Cut-off Frequencies (Woofer & Tweeter)", isOn: $viewModel.crossover.enableIndependentFrequencies)
+                        .font(.subheadline)
+                        .padding(.bottom, 2)
+
+                    if !viewModel.crossover.enableIndependentFrequencies {
+                        // Single Crossover Frequency Slider
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Crossover Frequency (fx):")
+                                Spacer()
+                                Text("\(Int(viewModel.crossover.crossoverFrequency)) Hz")
+                                    .bold()
+                                    .foregroundColor(.accentColor)
+                            }
+                            Slider(value: $viewModel.crossover.crossoverFrequency, in: 800.0...6000.0, step: 25.0)
                         }
-                        Slider(value: $viewModel.crossover.crossoverFrequency, in: 800.0...6000.0, step: 25.0)
+                    } else {
+                        // Two Split Frequency Sliders
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Woofer Low-Pass Cut-off
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Woofer Low-Pass Cut-off (fx,woofer):")
+                                        .foregroundColor(.blue)
+                                    Spacer()
+                                    Text("\(Int(viewModel.crossover.actualWooferFrequency)) Hz")
+                                        .bold()
+                                        .foregroundColor(.blue)
+                                }
+                                Slider(value: wooferFrequencyBinding, in: 800.0...6000.0, step: 25.0)
+                            }
+
+                            // Tweeter High-Pass Cut-off
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Tweeter High-Pass Cut-off (fx,tweeter):")
+                                        .foregroundColor(.red)
+                                    Spacer()
+                                    Text("\(Int(viewModel.crossover.actualTweeterFrequency)) Hz")
+                                        .bold()
+                                        .foregroundColor(.red)
+                                }
+                                Slider(value: tweeterFrequencyBinding, in: 800.0...6000.0, step: 25.0)
+                            }
+
+                            // Handover Band Info
+                            let fW = viewModel.crossover.actualWooferFrequency
+                            let fT = viewModel.crossover.actualTweeterFrequency
+                            let centerFx = Int(round(viewModel.crossover.acousticCenterFrequency))
+                            let gap = Int(round(fT - fW))
+                            let gapText = gap > 0 ? "+\(gap) Hz Underlap (Gap)" : (gap < 0 ? "\(abs(gap)) Hz Overlap" : "Synchronous (0 Hz Gap)")
+                            HStack {
+                                Text("Acoustic Handover Center: \(centerFx) Hz • Handover: \(gapText)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
 
                     HStack(spacing: 20) {

@@ -193,7 +193,11 @@ public struct SchematicView: View {
     private func generateBOMText() -> String {
         var text = "COAXIAL SPEAKER CROSSOVER BILL OF MATERIALS (BOM)\n"
         text += "Driver: \(viewModel.driver.name)\n"
-        text += "Crossover Frequency: \(Int(viewModel.crossover.crossoverFrequency)) Hz\n\n"
+        if viewModel.crossover.enableIndependentFrequencies {
+            text += "Crossover Frequencies: Woofer LP = \(Int(viewModel.crossover.actualWooferFrequency)) Hz, Tweeter HP = \(Int(viewModel.crossover.actualTweeterFrequency)) Hz (Center = \(Int(round(viewModel.crossover.acousticCenterFrequency))) Hz)\n\n"
+        } else {
+            text += "Crossover Frequency: \(Int(viewModel.crossover.crossoverFrequency)) Hz\n\n"
+        }
         text += "Designator\tType\tValue\tSpecification\n"
         for row in generateBOMRows() {
             text += "\(row.designator)\t\(row.type)\t\(row.value)\t\(row.spec)\n"
