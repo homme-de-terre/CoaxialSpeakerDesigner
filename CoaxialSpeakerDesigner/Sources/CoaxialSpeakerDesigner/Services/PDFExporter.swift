@@ -48,20 +48,28 @@ public enum PDFExporter {
 
         // ================= PAGE 1: Circuit Schematic Diagram =================
         cgContext.beginPDFPage(nil)
+        cgContext.saveGState()
+        cgContext.translateBy(x: 0, y: pageRect.height)
+        cgContext.scaleBy(x: 1.0, y: -1.0)
         let nsContext1 = NSGraphicsContext(cgContext: cgContext, flipped: true)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = nsContext1
         drawer.drawPage1(bounds: pageRect)
         NSGraphicsContext.restoreGraphicsState()
+        cgContext.restoreGState()
         cgContext.endPDFPage()
 
         // ================= PAGE 2: BOM Table & Technical Summary =============
         cgContext.beginPDFPage(nil)
+        cgContext.saveGState()
+        cgContext.translateBy(x: 0, y: pageRect.height)
+        cgContext.scaleBy(x: 1.0, y: -1.0)
         let nsContext2 = NSGraphicsContext(cgContext: cgContext, flipped: true)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = nsContext2
         drawer.drawPage2(bounds: pageRect)
         NSGraphicsContext.restoreGraphicsState()
+        cgContext.restoreGState()
         cgContext.endPDFPage()
 
         cgContext.closePDF()
