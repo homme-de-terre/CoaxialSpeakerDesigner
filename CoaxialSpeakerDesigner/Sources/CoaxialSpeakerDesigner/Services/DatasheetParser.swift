@@ -53,7 +53,9 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         recommendedCrossover: Double,
         missingParams: [String],
         warnings: [String],
-        rawText: String
+        rawText: String,
+        wooferCurve: [ResponseDataPoint],
+        tweeterCurve: [ResponseDataPoint]
     ) {
         let data = try Data(contentsOf: fileURL)
         return parseDatasheetData(data, sourceURL: fileURL)
@@ -67,7 +69,9 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         recommendedCrossover: Double,
         missingParams: [String],
         warnings: [String],
-        rawText: String
+        rawText: String,
+        wooferCurve: [ResponseDataPoint],
+        tweeterCurve: [ResponseDataPoint]
     ) {
         var rawText = ""
         
@@ -97,10 +101,21 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         let recommendedCrossover = parseRecommendedCrossover(from: normText) ?? 0.0
         let ts = parseTSFromText(normText)
         let tweeter = parseTweeterFromText(normText, recommendedCrossover: recommendedCrossover, wooferRe: ts.re)
-        
+
         // Plausibility & Missing Parameter Analysis
         var missingParams: [String] = []
         var warnings: [String] = []
+
+        var wooferCurve: [ResponseDataPoint] = []
+        var tweeterCurve: [ResponseDataPoint] = []
+
+        #if canImport(PDFKit) && canImport(AppKit)
+        if isPDF, let pdfDoc = PDFDocument(data: data) {
+            let digitized = digitizePDFCurves(pdfDoc: pdfDoc)
+            wooferCurve = digitized.woofer
+            tweeterCurve = digitized.tweeter
+        }
+        #endif
 
         if ts.fs == 0 { missingParams.append("Fs") }
         else if ts.fs < 15.0 || ts.fs > 250.0 { warnings.append("Fs (\(ts.fs) Hz) is outside typical range (15–200 Hz).") }
@@ -131,7 +146,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
             warnings.append("Recommended Crossover (\(Int(recommendedCrossover)) Hz) seems outside typical coaxial range.")
         }
 
-        return (ts, tweeter, driverName, recommendedCrossover, missingParams, warnings, rawText)
+        return (ts, tweeter, driverName, recommendedCrossover, missingParams, warnings, rawText, wooferCurve, tweeterCurve)
     }
 
     /// Asynchronously fetch datasheet content from URL and extract TS parameters & text.
@@ -142,7 +157,9 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         recommendedCrossover: Double,
         missingParams: [String],
         warnings: [String],
-        rawText: String
+        rawText: String,
+        wooferCurve: [ResponseDataPoint],
+        tweeterCurve: [ResponseDataPoint]
     ) {
         var request = URLRequest(url: url)
         request.timeoutInterval = 15.0
@@ -178,7 +195,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         if let val = findValue(pattern: #"\b(?:Fs|Resonant\s+Frequency)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Hz)?"#, text: normText) {
             if val >= 15.0 && val <= 250.0 { ts.fs = val }
         }
-        if let val = findValue(pattern: #"\b(?:Re|DC\s+Resistance|Voice\s+coil\s+resistance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)?"#, text: normText) {
+        if let val = findValue(pattern: #"\b(?:DC\s+Resistance(?:\s+Re)?|Voice\s+coil\s+resistance|\bRe\b(?!\s*:\s*\d+\s*uPa))[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)?"#, text: normText) {
             if val >= 1.0 && val <= 30.0 { ts.re = val }
         }
         if let val = findValue(pattern: #"\b(?:Qes|Electrical\s+Quality\s+Factor)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
@@ -193,10 +210,10 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         if let val = findValue(pattern: #"\b(?:Vas|Equivalent\s+(?:Air\s+)?Volume(?:\s+to\s+Cms)?)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.vas = val
         }
-        if let val = findValue(pattern: #"\b(?:Le|Inductance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: normText) {
+        if let val = findValue(pattern: #"\b(?:Le|Inductance|Inductivity)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: normText) {
             ts.le = val
         }
-        if let val = findValue(pattern: #"\b(?:Sd|Surface\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
+        if let val = findValue(pattern: #"\b(?:Sd|Surface\s+Area|Cone\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.sd = val
         }
         if let val = findValue(pattern: #"\bX-?max\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mm)?"#, text: normText) {
@@ -207,6 +224,11 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         let allDb = findAllNumbersWithUnit(normText, unit: "dB").filter { $0 >= 80.0 && $0 <= 120.0 }
         if let firstSPL = allDb.first {
             ts.spl = firstSPL
+        }
+
+        // Recalculate Qts if Qes and Qms are both known
+        if ts.qes > 0 && ts.qms > 0 {
+            ts.qts = (ts.qes * ts.qms) / (ts.qes + ts.qms)
         }
 
         // 3. Dimensionless sequence for Qes, Qms, Qts and Table Context
@@ -379,6 +401,23 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         if let minMh = allMh.min(), minMh < 0.5 {
             tw.le = minMh
         }
+
+        // 5. Dedicated Tweeter / HF Section override if present
+        if let twRange = norm.range(of: #"\b(?:Tweeter|HIGH\s+FREQUENCY|HF\s+SECTION)\b"#, options: [.regularExpression, .caseInsensitive]) {
+            let twText = String(norm[twRange.lowerBound...])
+            if let val = findValue(pattern: #"(?:Tweeter\s+)?Fs\s*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Hz)?"#, text: twText) {
+                if val >= 400.0 && val <= 4000.0 { tw.fs = val }
+            }
+            if let val = findValue(pattern: #"\b(?:DC\s+resistance(?:\s+Re)?|Re)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: twText) {
+                if val >= 3.0 && val <= 25.0 { tw.re = val }
+            }
+            if let val = findValue(pattern: #"\b(?:Inductivity|Inductance|Le)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: twText) {
+                tw.le = val
+            }
+            if let val = findValue(pattern: #"\bSensitivity\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:dB)?"#, text: twText) {
+                if val >= 90.0 && val <= 125.0 { tw.spl = val }
+            }
+        }
         
         return tw
     }
@@ -458,7 +497,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
     
     public func parseRecommendedCrossover(from text: String) -> Double? {
         let norm = normalizeCommas(in: text)
-        let pattern = #"(?:Recom(?:\.|mended)?\s*(?:HF)?\s*Crossover|Crossover\s+Frequency|Suggested\s+Crossover)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?"#
+        let pattern = #"(?:Recom(?:\.|mended)?\s*(?:HF)?\s*Crossover|Crossover\s+Frequency|Suggested\s+Crossover|Centered\s+at)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?"#
         if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
             let ns = norm as NSString
             let matches = regex.matches(in: norm, range: NSRange(location: 0, length: ns.length))
@@ -489,19 +528,40 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
 
     private func extractDriverName(_ text: String, url: URL) -> String {
         let exclude = ["COAXIALS", "SPECIFICATIONS", "DESCRIPTION", "PARAMETERS", "SERVICE", "FEATURES", "THIELE", "TECHNICAL", "MOUNTING", "DIMENSION", "DRAWINGS", "FREE", "IMPEDANCE", "FILTERED", "FREQUENCY", "RESPONSE", "CURVE", "NOTES", "TRANSDUCER", "LOUDSPEAKER"]
-        
-        let pattern = #"\b(\d{1,2}[A-Za-z]{1,4}\d{1,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?)\b"#
-        if let regex = try? NSRegularExpression(pattern: pattern) {
-            let nsText = text as NSString
-            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsText.length))
-            for match in matches where match.numberOfRanges >= 2 {
-                let candidate = nsText.substring(with: match.range(at: 1))
-                if !candidate.lowercased().hasPrefix("www") && !candidate.lowercased().hasSuffix(".com") && !exclude.contains(candidate.uppercased()) {
-                    return candidate
+
+        // 1. Dynamic check for recognized loudspeaker brands and model identifiers
+        let brandPattern = #"\b(Altec(?:\s+Lansing)?|B&C(?:\s+Speakers)?|Beyma|JBL|Tannoy|Eminence|Faital(?:PRO)?|RCF|Radian|Eighteen\s+Sound|18\s+Sound)\b"#
+        let modelPattern = #"\b(\d{1,4}[A-Za-z]{1,4}\d{0,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?|\d{3,4}-[0-9A-Za-z]+)\b"#
+
+        var detectedBrand: String? = nil
+        if let bRegex = try? NSRegularExpression(pattern: brandPattern, options: [.caseInsensitive]) {
+            let ns = text as NSString
+            if let m = bRegex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length)).first {
+                detectedBrand = ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            }
+        }
+
+        var detectedModel: String? = nil
+        if let mRegex = try? NSRegularExpression(pattern: modelPattern) {
+            let ns = text as NSString
+            let matches = mRegex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+            for m in matches where m.numberOfRanges >= 2 {
+                let cand = ns.substring(with: m.range(at: 1))
+                let upper = cand.uppercased()
+                if !exclude.contains(upper) && !upper.hasSuffix("HZ") && !upper.hasSuffix("KHZ") && !upper.hasSuffix("UPA") {
+                    detectedModel = cand
+                    break
                 }
             }
         }
-        
+
+        if let b = detectedBrand, let m = detectedModel {
+            return "\(b) \(m)"
+        }
+        if let m = detectedModel {
+            return m
+        }
+
         let filename = url.lastPathComponent
             .replacingOccurrences(of: ".pdf", with: "", options: .caseInsensitive)
             .replacingOccurrences(of: ".html", with: "", options: .caseInsensitive)
@@ -514,7 +574,214 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         }
         return "Coaxial Loudspeaker Driver"
     }
-    
+
+    #if canImport(PDFKit) && canImport(AppKit)
+    /// Dynamically detects frequency response plots and digitizes acoustic curves from PDF pages.
+    public func digitizePDFCurves(pdfDoc: PDFDocument) -> (woofer: [ResponseDataPoint], tweeter: [ResponseDataPoint]) {
+        var wooferCurve: [ResponseDataPoint] = []
+        var tweeterCurve: [ResponseDataPoint] = []
+
+        for i in 0..<pdfDoc.pageCount {
+            guard let page = pdfDoc.page(at: i) else { continue }
+            let pageText = (page.string ?? "").lowercased()
+
+            if pageText.contains("frequency response") || pageText.contains("spl") || pageText.contains("curve") {
+                let bounds = page.bounds(for: .mediaBox)
+                let w = 1024
+                let h = 768
+                let colorSpace = CGColorSpaceCreateDeviceRGB()
+                guard let ctx = CGContext(
+                    data: nil,
+                    width: w,
+                    height: h,
+                    bitsPerComponent: 8,
+                    bytesPerRow: w * 4,
+                    space: colorSpace,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                ) else { continue }
+
+                ctx.setFillColor(NSColor.white.cgColor)
+                ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+                ctx.saveGState()
+                ctx.scaleBy(x: CGFloat(w) / bounds.width, y: CGFloat(h) / bounds.height)
+                page.draw(with: .mediaBox, to: ctx)
+                ctx.restoreGState()
+
+                if let pixelData = ctx.data {
+                    let ptr = pixelData.bindMemory(to: UInt8.self, capacity: w * h * 4)
+                    let pts = digitizeBitmapPixels(width: w, height: h, pixelBytes: ptr)
+                    if !pts.isEmpty {
+                        if pageText.contains("woofer") || pageText.contains("lf") || pageText.contains("low") {
+                            wooferCurve = pts
+                        } else if pageText.contains("tweeter") || pageText.contains("hf") || pageText.contains("high") {
+                            tweeterCurve = pts
+                        }
+                    }
+                }
+            }
+        }
+        return (wooferCurve, tweeterCurve)
+    }
+
+    /// Dynamically analyzes raster bitmap to locate grid boundaries, scale, and trace frequency curve pixels.
+    private func digitizeBitmapPixels(width: Int, height: Int, pixelBytes: UnsafePointer<UInt8>) -> [ResponseDataPoint] {
+        func isDark(x: Int, y: Int) -> Bool {
+            let idx = (y * width + x) * 4
+            let r = Int(pixelBytes[idx])
+            let g = Int(pixelBytes[idx + 1])
+            let b = Int(pixelBytes[idx + 2])
+            return (r + g + b) / 3 < 128
+        }
+
+        // 1. Detect horizontal grid lines
+        var hLines: [Int] = []
+        for y in 0..<height {
+            var c = 0
+            for x in 0..<width {
+                if isDark(x: x, y: y) { c += 1 }
+            }
+            if c > width / 2 {
+                if hLines.isEmpty || y > hLines.last! + 5 {
+                    hLines.append(y)
+                }
+            }
+        }
+
+        // 2. Detect vertical grid lines
+        var vLines: [Int] = []
+        for x in 0..<width {
+            var c = 0
+            for y in 0..<height {
+                if isDark(x: x, y: y) { c += 1 }
+            }
+            if c > height / 2 {
+                if vLines.isEmpty || x > vLines.last! + 5 {
+                    vLines.append(x)
+                }
+            }
+        }
+
+        guard hLines.count >= 2, vLines.count >= 2 else { return [] }
+
+        let yMin = hLines.first!
+        let yMax = hLines.last!
+        let xMin = vLines.first!
+        let xMax = vLines.last!
+        guard xMax > xMin, yMax > yMin else { return [] }
+
+        let numDivs = Double(hLines.count - 1)
+        let dbSpan = numDivs * 10.0
+        let splMax = 120.0
+        let splMin = splMax - dbSpan
+        let gridYSet = Set(hLines)
+
+        // Find initial curve Y near xMin
+        var curY = Double(yMin + yMax) / 2.0
+        for x in xMin...min(xMax, xMin + 5) {
+            var cands: [Int] = []
+            for y in (yMin + 5)...(yMax - 5) {
+                let onGrid = gridYSet.contains(where: { abs($0 - y) <= 2 })
+                if isDark(x: x, y: y) && !onGrid {
+                    cands.append(y)
+                }
+            }
+            if !cands.isEmpty {
+                curY = Double(cands.reduce(0, +)) / Double(cands.count)
+                break
+            }
+        }
+
+        var velY = 0.0
+        var trace: [Int: Double] = [:]
+
+        for x in xMin...xMax {
+            var darkYs: [Int] = []
+            for y in yMin...yMax {
+                if isDark(x: x, y: y) { darkYs.append(y) }
+            }
+            if darkYs.isEmpty {
+                trace[x] = curY
+                continue
+            }
+
+            var segments: [[Int]] = []
+            var seg = [darkYs[0]]
+            for i in 1..<darkYs.count {
+                if darkYs[i] == seg.last! + 1 {
+                    seg.append(darkYs[i])
+                } else {
+                    segments.append(seg)
+                    seg = [darkYs[i]]
+                }
+            }
+            segments.append(seg)
+
+            let predY = curY + velY
+
+            if darkYs.count > 50 {
+                var bestY = curY
+                var minD = 1e9
+                for y in darkYs {
+                    let d = abs(Double(y) - predY)
+                    if d < minD { minD = d; bestY = Double(y) }
+                }
+                curY = 0.7 * curY + 0.3 * bestY
+                trace[x] = curY
+                continue
+            }
+
+            let strong = segments.filter { s in !(s.count <= 2 && s.contains(where: { gridYSet.contains($0) })) }
+            let cands = strong.isEmpty ? segments : strong
+
+            var bestSeg = cands[0]
+            var minD = 1e9
+            for s in cands {
+                let center = Double(s.reduce(0, +)) / Double(s.count)
+                let d = abs(center - predY)
+                if d < minD { minD = d; bestSeg = s }
+            }
+            let segCenter = Double(bestSeg.reduce(0, +)) / Double(bestSeg.count)
+
+            if abs(segCenter - curY) < 25.0 {
+                velY = 0.6 * velY + 0.4 * (segCenter - curY)
+                curY = segCenter
+            } else {
+                curY = curY + 0.5 * velY
+            }
+            trace[x] = curY
+        }
+
+        let logMin = log10(20.0)
+        let logMax = log10(20000.0)
+        let numPoints = 100
+        var points: [ResponseDataPoint] = []
+        points.reserveCapacity(numPoints)
+
+        for i in 0..<numPoints {
+            let logF = logMin + (Double(i) / Double(numPoints - 1)) * (logMax - logMin)
+            let f = pow(10.0, logF)
+            let xFloat = Double(xMin) + ((logF - logMin) / (logMax - logMin)) * Double(xMax - xMin)
+            let x0 = Int(floor(xFloat))
+            let x1 = Int(ceil(xFloat))
+            let t = xFloat - Double(x0)
+            let y0 = trace[x0] ?? curY
+            let y1 = trace[x1] ?? curY
+            let y = y0 * (1.0 - t) + y1 * t
+
+            let spl = splMax - ((y - Double(yMin)) / Double(yMax - yMin)) * (splMax - splMin)
+            points.append(
+                ResponseDataPoint(
+                    frequency: (f * 10.0).rounded() / 10.0,
+                    magnitude: (spl * 100.0).rounded() / 100.0,
+                    phase: 0.0
+                )
+            )
+        }
+
+        return points
+    }
+    #endif
+
     private func findString(pattern: String, text: String) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
         let nsText = text as NSString

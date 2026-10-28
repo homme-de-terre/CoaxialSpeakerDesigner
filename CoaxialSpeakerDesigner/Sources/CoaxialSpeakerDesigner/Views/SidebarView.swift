@@ -25,6 +25,17 @@ public struct SidebarView: View {
                 .buttonStyle(.bordered)
                 .disabled(viewModel.isLoadingDatasheet)
 
+                Button(action: {
+                    viewModel.loadAltec604Preset()
+                }) {
+                    HStack {
+                        Image(systemName: "speaker.wave.3")
+                        Text("Load Altec 604-8K Preset (CLIO)")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
                 HStack {
                     VStack { Divider() }
                     Text("or from web URL")

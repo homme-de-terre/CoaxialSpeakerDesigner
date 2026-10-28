@@ -140,6 +140,11 @@ public struct CoaxialDriver: Codable, Sendable {
         driver.tweeterImpedanceCurve = generateSyntheticTweeterImpedance(tw: driver.tweeter)
         return driver
     }
+
+    /// Factory preset for classic Altec Lansing 604-8K with digitized CLIO curves.
+    public static var altec604Driver: CoaxialDriver {
+        return Altec604Data.createDriver()
+    }
     
     public static func generateSyntheticWooferCurve(ts: WooferTSParameters = WooferTSParameters()) -> [ResponseDataPoint] {
         var points: [ResponseDataPoint] = []

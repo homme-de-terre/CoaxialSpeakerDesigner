@@ -232,7 +232,7 @@ public class MainDesignerViewModel: ObservableObject {
 #endif
 
     /// Applies extracted datasheet parameters and synthesizes driver response curves.
-    private func applyParsedDatasheet(result: (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, recommendedCrossover: Double, missingParams: [String], warnings: [String], rawText: String), sourceName: String) {
+    private func applyParsedDatasheet(result: (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, recommendedCrossover: Double, missingParams: [String], warnings: [String], rawText: String, wooferCurve: [ResponseDataPoint], tweeterCurve: [ResponseDataPoint]), sourceName: String) {
         self.driver.name = result.name
         self.driver.datasheetURL = sourceName
         self.driver.wooferTS = result.ts
@@ -245,10 +245,15 @@ public class MainDesignerViewModel: ObservableObject {
         self.missingParameters = result.missingParams
         self.plausibilityWarnings = result.warnings
 
-        if self.wooferFRDText.isEmpty {
+        if !result.wooferCurve.isEmpty {
+            self.driver.wooferAcousticCurve = result.wooferCurve
+        } else if self.wooferFRDText.isEmpty {
             self.driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: result.ts)
         }
-        if self.tweeterFRDText.isEmpty {
+
+        if !result.tweeterCurve.isEmpty {
+            self.driver.tweeterAcousticCurve = result.tweeterCurve
+        } else if self.tweeterFRDText.isEmpty {
             self.driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: result.tweeter)
         }
         self.driver.wooferImpedanceCurve = CoaxialDriver.generateSyntheticWooferImpedance(ts: result.ts)
@@ -263,6 +268,14 @@ public class MainDesignerViewModel: ObservableObject {
             let xoStr = result.recommendedCrossover > 0 ? " (fx: \(Int(result.recommendedCrossover)) Hz)" : ""
             self.statusMessage = "Successfully parsed driver parameters from \(sourceName)\(xoStr)."
         }
+        self.recalculateSimulation()
+    }
+
+    /// Loads factory preset specifications and digitized CLIO response curves for Altec Lansing 604-8K.
+    public func loadAltec604Preset() {
+        self.driver = Altec604Data.createDriver()
+        self.crossover.crossoverFrequency = Altec604Data.recommendedCrossover
+        self.statusMessage = "Loaded Altec Lansing 604-8K factory specs & digitized CLIO frequency response curves."
         self.recalculateSimulation()
     }
 

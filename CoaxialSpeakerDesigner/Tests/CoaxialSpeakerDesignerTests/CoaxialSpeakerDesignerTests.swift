@@ -532,4 +532,125 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertGreaterThan(result.q, 0.1)
         XCTAssertLessThan(result.q, 10.0)
     }
+
+    func testAltec604DatasheetParserAndDigitizedCurves() {
+        // 1. Verify Altec 604-8K factory specs and digitized CLIO MLS curves
+        let driver = Altec604Data.createDriver()
+        XCTAssertEqual(driver.name, "Altec Lansing 604-8K")
+        XCTAssertEqual(driver.manufacturer, "Altec Lansing")
+        XCTAssertEqual(driver.wooferTS.fs, 24.0, accuracy: 0.1)
+        XCTAssertEqual(driver.wooferTS.qes, 0.299, accuracy: 0.005)
+        XCTAssertEqual(driver.wooferTS.qms, 7.07, accuracy: 0.01)
+        XCTAssertEqual(driver.wooferTS.qts, 0.287, accuracy: 0.01)
+        XCTAssertEqual(driver.wooferTS.vas, 510.0, accuracy: 0.1)
+        XCTAssertEqual(driver.wooferTS.re, 6.4, accuracy: 0.1)
+        XCTAssertEqual(driver.wooferTS.le, 1.0, accuracy: 0.05)
+        XCTAssertEqual(driver.wooferTS.sd, 890.0, accuracy: 1.0)
+        XCTAssertEqual(driver.wooferTS.xmax, 3.81, accuracy: 0.05)
+        XCTAssertEqual(driver.wooferTS.spl, 98.0, accuracy: 0.5)
+
+        XCTAssertEqual(driver.tweeter.fs, 1200.0, accuracy: 1.0)
+        XCTAssertEqual(driver.tweeter.re, 6.5, accuracy: 0.1)
+        XCTAssertEqual(driver.tweeter.le, 0.12, accuracy: 0.02)
+        XCTAssertEqual(driver.tweeter.spl, 105.0, accuracy: 0.5)
+
+        // 2. Digitized CLIO curve points verification
+        XCTAssertEqual(driver.wooferAcousticCurve.count, 100)
+        XCTAssertEqual(driver.tweeterAcousticCurve.count, 100)
+
+        // Woofer passband peak around 200 Hz (~98.5 dB)
+        let wf200 = driver.wooferAcousticCurve.first(where: { abs($0.frequency - 200.0) < 15.0 })
+        XCTAssertNotNil(wf200)
+        XCTAssertGreaterThan(wf200!.magnitude, 95.0)
+
+        // Tweeter horn boost peak around 2.5-3 kHz (~104 dB)
+        let tw3k = driver.tweeterAcousticCurve.first(where: { abs($0.frequency - 2800.0) < 200.0 })
+        XCTAssertNotNil(tw3k)
+        XCTAssertGreaterThan(tw3k!.magnitude, 100.0)
+
+        // 3. Full acoustic simulation with Altec 604-8K
+        let cabinet = SealedCabinet(alignment: .butterworth)
+        let crossover = CrossoverNetwork(
+            crossoverFrequency: 1500.0,
+            wooferOrder: .secondOrderLR,
+            tweeterOrder: .secondOrderLR,
+            enableZobelNetwork: true,
+            enableLPadAttenuator: true,
+            userTargetAttenuationdB: 7.0,
+            acousticCenterOffsetMM: 35.0,
+            enableAllpassFilter: true
+        )
+
+        let points = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: crossover)
+        XCTAssertEqual(points.count, 201)
+
+        for p in points {
+            XCTAssertTrue(p.totalSystemSPL.isFinite)
+            XCTAssertTrue(p.wooferUnwrappedPhaseDeg.isFinite)
+            XCTAssertTrue(p.tweeterUnwrappedPhaseDeg.isFinite)
+            XCTAssertTrue(p.wooferGroupDelayMs.isFinite)
+            XCTAssertTrue(p.tweeterGroupDelayMs.isFinite)
+            XCTAssertTrue(p.totalSystemGroupDelayMs.isFinite)
+        }
+
+        // Passband SPL should be realistic (85-100 dB)
+        let midSPL = points[points.count / 2].totalSystemSPL
+        XCTAssertGreaterThan(midSPL, 85.0)
+        XCTAssertLessThan(midSPL, 105.0)
+
+        // 4. Test DatasheetParser on Altec text
+        let parser = DatasheetParser()
+        let altecSample = """
+        Altec Lansing 604-8K
+        604-8K - THIELE-SMALL PARAMETERS Woofer
+        Free Air Resonance Fs: 24 Hz
+        Equivalent Volume Compliance, Vas: 510 L
+        Total Q Qts = 0.9287
+        Mechanical Q, Qms = 7.07
+        Electrical Q Qes = 0.299
+        DC Resistance Re = 6.4 Ω
+        Xmax = 3.81 mm
+        Inductivity at 1kHz = 1mH
+        Sensitivity = 98 dB
+        Cone Area Sd = 890 cm²
+        Tweeter
+        Tweeter Fs = 1200Hz
+        DC resistance Re = 6.5 Ω
+        Inductivity at 1kHz = 0.12 mH
+        Sensitivity = 105 dB
+        Centered at 1500 Hz
+        """
+        guard let sampleData = altecSample.data(using: .utf8) else {
+            XCTFail("Failed to encode altec sample")
+            return
+        }
+        let dummyURL = URL(fileURLWithPath: "/work/Altec 604-8K.pdf")
+        let parsed = parser.parseDatasheetData(sampleData, sourceURL: dummyURL)
+        XCTAssertEqual(parsed.name, "Altec Lansing 604-8K")
+        XCTAssertEqual(parsed.ts.fs, 24.0, accuracy: 0.1)
+        XCTAssertEqual(parsed.ts.re, 6.4, accuracy: 0.1)
+        XCTAssertEqual(parsed.ts.qes, 0.299, accuracy: 0.005)
+        XCTAssertEqual(parsed.ts.qms, 7.07, accuracy: 0.01)
+        XCTAssertEqual(parsed.ts.qts, 0.287, accuracy: 0.01)
+        XCTAssertEqual(parsed.ts.le, 1.0, accuracy: 0.05)
+        XCTAssertEqual(parsed.tweeter.fs, 1200.0, accuracy: 1.0)
+        XCTAssertEqual(parsed.tweeter.re, 6.5, accuracy: 0.1)
+        XCTAssertEqual(parsed.tweeter.le, 0.12, accuracy: 0.02)
+        XCTAssertEqual(parsed.tweeter.spl, 105.0, accuracy: 0.5)
+        XCTAssertEqual(parsed.recommendedCrossover, 1500.0, accuracy: 1.0)
+
+        // 5. Test dynamic PDF digitization if PDF file is present on disk
+        let pdfURL = URL(fileURLWithPath: "/work/Altec 604-8K.pdf")
+        if let pdfData = try? Data(contentsOf: pdfURL) {
+            let parsedPDF = parser.parseDatasheetData(pdfData, sourceURL: pdfURL)
+            XCTAssertEqual(parsedPDF.name, "Altec Lansing 604-8K")
+            XCTAssertEqual(parsedPDF.ts.fs, 24.0, accuracy: 0.1)
+            XCTAssertEqual(parsedPDF.ts.re, 6.4, accuracy: 0.1)
+            XCTAssertEqual(parsedPDF.ts.qts, 0.287, accuracy: 0.01)
+            #if canImport(PDFKit) && canImport(AppKit)
+            XCTAssertFalse(parsedPDF.wooferCurve.isEmpty, "Should dynamically digitize woofer curve from PDF")
+            XCTAssertFalse(parsedPDF.tweeterCurve.isEmpty, "Should dynamically digitize tweeter curve from PDF")
+            #endif
+        }
+    }
 }

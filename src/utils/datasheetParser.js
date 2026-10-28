@@ -39,36 +39,42 @@ export function parseDatasheetText(text, url = '') {
   let recommendedCrossover = 0;
   let driverName = '';
 
-  // 1. Extract Driver Name
+  // 1. Extract Driver Name (Dynamic Brand + Model detection)
   const excludeWords = [
     'COAXIALS', 'SPECIFICATIONS', 'DESCRIPTION', 'PARAMETERS', 'SERVICE', 'FEATURES',
     'THIELE', 'TECHNICAL', 'MOUNTING', 'DIMENSION', 'DRAWINGS', 'FREE', 'IMPEDANCE',
-    'FILTERED', 'FREQUENCY', 'RESPONSE', 'CURVE', 'NOTES', 'TRANSDUCER', 'LOUDSPEAKER'
+    'FILTERED', 'FREQUENCY', 'RESPONSE', 'CURVE', 'NOTES', 'TRANSDUCER', 'LOUDSPEAKER',
+    'PRIMARY', 'KEY', 'SYSTEM', 'PRESSURE', 'POWER', 'HANDLING', 'MAXIMUM'
   ];
-  const namePatterns = [
-    /\b(\d{1,2}[A-Za-z]{1,4}\d{1,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?)\b/g,
-    /\b([A-Z0-9]{4,12}(?:\s+[A-Z0-9]+)?)\b/g
-  ];
-  for (const regex of namePatterns) {
-    let m;
-    while ((m = regex.exec(text)) !== null) {
-      const cand = m[1].trim();
-      const upper = cand.toUpperCase();
-      if (!cand.toLowerCase().startsWith('www') && !cand.toLowerCase().endsWith('.com') && !excludeWords.includes(upper)) {
-        driverName = cand;
-        break;
-      }
+
+  const brandPattern = /\b(Altec(?:\s+Lansing)?|B&C(?:\s+Speakers)?|Beyma|JBL|Tannoy|Eminence|Faital(?:PRO)?|RCF|Radian|Eighteen\s+Sound|18\s+Sound)\b/i;
+  const brandMatch = text.match(brandPattern);
+  const detectedBrand = brandMatch ? brandMatch[1].replace(/\s+/g, ' ') : '';
+
+  const modelPattern = /\b(\d{1,4}[A-Za-z]{1,4}\d{0,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?|\d{3,4}-[0-9A-Za-z]+)\b/g;
+  let detectedModel = '';
+  let mm;
+  while ((mm = modelPattern.exec(text)) !== null) {
+    const cand = mm[1];
+    const upper = cand.toUpperCase();
+    if (!excludeWords.includes(upper) && !upper.endsWith('HZ') && !upper.endsWith('KHZ') && !upper.endsWith('UPA') && !upper.endsWith('W')) {
+      detectedModel = cand;
+      break;
     }
-    if (driverName) break;
   }
-  if (!driverName && url) {
+
+  if (detectedBrand && detectedModel) {
+    driverName = `${detectedBrand} ${detectedModel}`;
+  } else if (detectedModel) {
+    driverName = detectedModel;
+  } else if (url) {
     const filename = url.split('/').pop()?.replace(/\.pdf$/i, '')?.replace(/[-_+]/g, ' ');
     if (filename) driverName = filename;
   }
   if (!driverName) driverName = 'Parsed Coaxial Driver';
 
   // 2. Extract Recommended Crossover Frequency
-  const xoRegex = /(?:Recom(?:\.|mended)?\s*(?:HF)?\s*Crossover|Crossover\s+Frequency|Suggested\s+Crossover)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?/i;
+  const xoRegex = /(?:Recom(?:\.|mended)?\s*(?:HF)?\s*Crossover|Crossover\s+Frequency|Suggested\s+Crossover|Centered\s+at)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?/i;
   const xoMatch = normText.match(xoRegex);
   if (xoMatch) {
     let val = parseFloat(xoMatch[1]);
@@ -129,7 +135,7 @@ export function parseDatasheetText(text, url = '') {
     const v = parseFloat(inlineFs[1]);
     if (v >= 15 && v <= 200) ts.fs = v;
   }
-  const inlineRe = normText.match(/\b(?:Re|DC\s+Resistance|Voice\s+coil\s+resistance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)?/i);
+  const inlineRe = normText.match(/\b(?:DC\s+Resistance(?:\s+Re)?|Voice\s+coil\s+resistance|\bRe\b(?!\s*:\s*\d+\s*uPa))[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Ω|Ohm)?/i);
   if (inlineRe) {
     const v = parseFloat(inlineRe[1]);
     if (v >= 1.0 && v <= 30.0) ts.re = v;
@@ -146,9 +152,9 @@ export function parseDatasheetText(text, url = '') {
     if (inlineVas[2] && (inlineVas[2].toLowerCase().includes('ft') || inlineVas[2].toLowerCase().includes('cu'))) v *= 28.3168;
     ts.vas = parseFloat(v.toFixed(1));
   }
-  const inlineLe = normText.match(/\b(?:Le|Inductance)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
+  const inlineLe = normText.match(/\b(?:Le|Inductance|Inductivity)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
   if (inlineLe) ts.le = parseFloat(inlineLe[1]);
-  const inlineSd = normText.match(/\b(?:Sd|Surface\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(cm[2²]|m[2²])?/i);
+  const inlineSd = normText.match(/\b(?:Sd|Surface\s+Area|Cone\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(cm[2²]|m[2²])?/i);
   if (inlineSd) {
     let v = parseFloat(inlineSd[1]);
     if (inlineSd[2] && inlineSd[2].toLowerCase().startsWith('m')) v *= 10000;
@@ -263,17 +269,33 @@ export function parseDatasheetText(text, url = '') {
     if (fsCand) ts.fs = fsCand;
   }
 
-  // Tweeter Fs & Re
-  if (recommendedCrossover > 0) {
-    tweeter.fs = Math.round(recommendedCrossover * 0.75);
-  } else if (!tweeter.fs) {
-    const twFsM = normText.match(/(?:Tweeter|HF)\s*(?:Fs|Resonance)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?/i);
-    if (twFsM) {
-      let v = parseFloat(twFsM[1]);
-      if ((twFsM[2] && twFsM[2].toLowerCase().startsWith('k')) || v < 20) v *= 1000;
-      tweeter.fs = v;
+  // Dedicated Tweeter / HF Section override if present
+  const twSectionMatch = normText.match(/\b(?:Tweeter|HIGH\s+FREQUENCY|HF\s+SECTION)\b([\s\S]*)$/i);
+  if (twSectionMatch) {
+    const twSub = twSectionMatch[1];
+    const twFsM = twSub.match(/(?:Tweeter\s+)?Fs\s*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:Hz)?/i);
+    if (twFsM) tweeter.fs = parseFloat(twFsM[1]);
+    const twReM = twSub.match(/\b(?:DC\s+resistance(?:\s+Re)?|Re)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)/i);
+    if (twReM) tweeter.re = parseFloat(twReM[1]);
+    const twLeM = twSub.match(/\b(?:Inductivity|Inductance|Le)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
+    if (twLeM) tweeter.le = parseFloat(twLeM[1]);
+    const twSplM = twSub.match(/\bSensitivity\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:dB)?/i);
+    if (twSplM) tweeter.spl = parseFloat(twSplM[1]);
+  }
+
+  // Tweeter Fs & Re fallbacks
+  if (!tweeter.fs) {
+    if (recommendedCrossover > 0) {
+      tweeter.fs = Math.round(recommendedCrossover * 0.75);
     } else {
-      tweeter.fs = 1200;
+      const twFsM = normText.match(/(?:Tweeter|HF)\s*(?:Fs|Resonance)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?/i);
+      if (twFsM) {
+        let v = parseFloat(twFsM[1]);
+        if ((twFsM[2] && twFsM[2].toLowerCase().startsWith('k')) || v < 20) v *= 1000;
+        tweeter.fs = v;
+      } else {
+        tweeter.fs = 1200;
+      }
     }
   }
 
@@ -281,6 +303,11 @@ export function parseDatasheetText(text, url = '') {
     const twOhmCand = ohmValues.filter(o => o >= 4.0 && Math.abs(o - ts.re) > 0.5);
     if (twOhmCand.length > 0) tweeter.re = twOhmCand[0];
     else tweeter.re = 6.0;
+  }
+
+  // Recalculate Qts if Qes and Qms are both known
+  if (ts.qes > 0 && ts.qms > 0) {
+    ts.qts = parseFloat(((ts.qes * ts.qms) / (ts.qes + ts.qms)).toFixed(3));
   }
 
   // 8. Plausibility Validation & Missing Parameter Detection
@@ -316,25 +343,241 @@ export function parseDatasheetText(text, url = '') {
     warnings.push(`Recommended Crossover (${recommendedCrossover} Hz) seems outside typical coaxial range.`);
   }
 
-  return { driverName, ts, tweeter, recommendedCrossover, missingParams, warnings, rawText: text };
+  return { driverName, ts, tweeter, recommendedCrossover, missingParams, warnings, rawText: text, wooferCurve: [], tweeterCurve: [] };
 }
 
 /**
- * Extracts raw textual content across all pages of a PDF given an ArrayBuffer or Uint8Array.
+ * Dynamically analyzes raster image pixels from a PDF page to locate grid boundaries, scale, and trace frequency curve pixels.
  */
-export async function extractTextFromPDF(data) {
+export function digitizeImagePixels(width, height, rgbaData) {
+  const isDark = (x, y) => {
+    const idx = (y * width + x) * 4;
+    return (rgbaData[idx] + rgbaData[idx + 1] + rgbaData[idx + 2]) / 3 < 128;
+  };
+
+  // 1. Detect horizontal grid lines
+  const rowCounts = new Int32Array(height);
+  for (let y = 0; y < height; y++) {
+    let c = 0;
+    for (let x = 0; x < width; x++) {
+      if (isDark(x, y)) c++;
+    }
+    rowCounts[y] = c;
+  }
+
+  const hLines = [];
+  for (let y = 0; y < height; y++) {
+    if (rowCounts[y] > width * 0.5) {
+      if (hLines.length === 0 || y > hLines[hLines.length - 1] + 5) {
+        hLines.push(y);
+      }
+    }
+  }
+
+  // 2. Detect vertical grid lines
+  const colCounts = new Int32Array(width);
+  for (let x = 0; x < width; x++) {
+    let c = 0;
+    for (let y = 0; y < height; y++) {
+      if (isDark(x, y)) c++;
+    }
+    colCounts[x] = c;
+  }
+
+  const vLines = [];
+  for (let x = 0; x < width; x++) {
+    if (colCounts[x] > height * 0.5) {
+      if (vLines.length === 0 || x > vLines[vLines.length - 1] + 5) {
+        vLines.push(x);
+      }
+    }
+  }
+
+  if (hLines.length < 2 || vLines.length < 2) return null;
+
+  const yMin = hLines[0];
+  const yMax = hLines[hLines.length - 1];
+  const xMin = vLines[0];
+  const xMax = vLines[vLines.length - 1];
+
+  const numDivs = hLines.length - 1;
+  const dbSpan = numDivs * 10.0;
+  const splMax = 120.0;
+  const splMin = splMax - dbSpan;
+  const gridYSet = new Set(hLines);
+
+  // Initial curve tracking Y near xMin
+  let curY = (yMin + yMax) / 2;
+  for (let x = xMin; x <= Math.min(xMax, xMin + 5); x++) {
+    const cands = [];
+    for (let y = yMin + 5; y <= yMax - 5; y++) {
+      let onGrid = false;
+      for (const gy of gridYSet) {
+        if (Math.abs(y - gy) <= 2) { onGrid = true; break; }
+      }
+      if (isDark(x, y) && !onGrid) cands.push(y);
+    }
+    if (cands.length > 0) {
+      curY = cands.reduce((a, b) => a + b, 0) / cands.length;
+      break;
+    }
+  }
+
+  let velY = 0.0;
+  const trace = {};
+
+  for (let x = xMin; x <= xMax; x++) {
+    const darkYs = [];
+    for (let y = yMin; y <= yMax; y++) {
+      if (isDark(x, y)) darkYs.push(y);
+    }
+    if (darkYs.length === 0) {
+      trace[x] = curY;
+      continue;
+    }
+
+    const segments = [];
+    let seg = [darkYs[0]];
+    for (let i = 1; i < darkYs.length; i++) {
+      if (darkYs[i] === seg[seg.length - 1] + 1) {
+        seg.push(darkYs[i]);
+      } else {
+        segments.push(seg);
+        seg = [darkYs[i]];
+      }
+    }
+    segments.push(seg);
+
+    const predY = curY + velY;
+
+    if (darkYs.length > 50) {
+      let bestY = curY;
+      let minD = 1e9;
+      for (const y of darkYs) {
+        const d = Math.abs(y - predY);
+        if (d < minD) { minD = d; bestY = y; }
+      }
+      curY = 0.7 * curY + 0.3 * bestY;
+      trace[x] = curY;
+      continue;
+    }
+
+    const strong = segments.filter(s => !(s.length <= 2 && s.some(y => gridYSet.has(y))));
+    const cands = strong.length > 0 ? strong : segments;
+
+    let bestSeg = cands[0];
+    let minD = 1e9;
+    for (const s of cands) {
+      const center = s.reduce((a, b) => a + b, 0) / s.length;
+      const d = Math.abs(center - predY);
+      if (d < minD) { minD = d; bestSeg = s; }
+    }
+    const segCenter = bestSeg.reduce((a, b) => a + b, 0) / bestSeg.length;
+
+    if (Math.abs(segCenter - curY) < 25) {
+      velY = 0.6 * velY + 0.4 * (segCenter - curY);
+      curY = segCenter;
+    } else {
+      curY = curY + 0.5 * velY;
+    }
+    trace[x] = curY;
+  }
+
+  const logMin = Math.log10(20.0);
+  const logMax = Math.log10(20000.0);
+  const numPoints = 100;
+  const points = [];
+
+  for (let i = 0; i < numPoints; i++) {
+    const logF = logMin + (i / (numPoints - 1)) * (logMax - logMin);
+    const f = Math.pow(10, logF);
+    const xFloat = xMin + ((logF - logMin) / (logMax - logMin)) * (xMax - xMin);
+    const x0 = Math.floor(xFloat);
+    const x1 = Math.ceil(xFloat);
+    const t = xFloat - x0;
+    const y0 = trace[x0] || curY;
+    const y1 = trace[x1] || curY;
+    const y = y0 * (1 - t) + y1 * t;
+
+    const spl = splMax - ((y - yMin) / (yMax - yMin)) * (splMax - splMin);
+    points.push({
+      frequency: parseFloat(f.toFixed(1)),
+      magnitude: parseFloat(spl.toFixed(2)),
+      phase: 0.0
+    });
+  }
+
+  return points;
+}
+
+/**
+ * Extracts raw textual content and dynamically digitizes frequency response curves across all pages of a PDF.
+ */
+export async function extractPDFTextAndCurves(data) {
   const bytes = data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice ? data.slice(0) : data);
   const loadingTask = pdfjs.getDocument({ data: bytes });
   const pdf = await loadingTask.promise;
 
   let extractedText = '';
+  let wooferCurve = [];
+  let tweeterCurve = [];
+
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const pageText = content.items.map((item) => item.str).join('\n');
     extractedText += pageText + '\n';
+
+    const pageLower = pageText.toLowerCase();
+
+    // Check for raster plot images on this page
+    try {
+      const ops = await page.getOperatorList();
+      for (let opIdx = 0; opIdx < ops.fnArray.length; opIdx++) {
+        if (ops.fnArray[opIdx] === pdfjs.OPS.paintImageXObject) {
+          const imgName = ops.argsArray[opIdx][0];
+          const img = await new Promise((resolve) => page.objs.get(imgName, resolve));
+          if (img && img.width > 200 && img.height > 150) {
+            let rgba = null;
+            if (img.data.length === img.width * img.height * 4) {
+              rgba = img.data;
+            } else if (img.data.length === img.width * img.height * 3) {
+              rgba = new Uint8Array(img.width * img.height * 4);
+              for (let j = 0; j < img.width * img.height; j++) {
+                rgba[j * 4] = img.data[j * 3];
+                rgba[j * 4 + 1] = img.data[j * 3 + 1];
+                rgba[j * 4 + 2] = img.data[j * 3 + 2];
+                rgba[j * 4 + 3] = 255;
+              }
+            } else if (img.data.length === img.width * img.height) {
+              rgba = new Uint8Array(img.width * img.height * 4);
+              for (let j = 0; j < img.width * img.height; j++) {
+                const val = img.data[j];
+                rgba[j * 4] = val;
+                rgba[j * 4 + 1] = val;
+                rgba[j * 4 + 2] = val;
+                rgba[j * 4 + 3] = 255;
+              }
+            }
+            if (rgba) {
+              const pts = digitizeImagePixels(img.width, img.height, rgba);
+              if (pts && pts.length > 0) {
+                if (pageLower.includes('woofer') || pageLower.includes('lf') || pageLower.includes('low')) {
+                  wooferCurve = pts;
+                } else if (pageLower.includes('tweeter') || pageLower.includes('hf') || pageLower.includes('high')) {
+                  tweeterCurve = pts;
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (_err) {
+      // Ignore image extraction errors on non-plot pages
+    }
   }
-  return extractedText;
+
+  return { extractedText, wooferCurve, tweeterCurve };
 }
 
 /**
@@ -343,37 +586,31 @@ export async function extractTextFromPDF(data) {
 export async function parseDatasheetFromArrayBuffer(arrayBuffer, filename = '') {
   const isPDF = filename.toLowerCase().endsWith('.pdf') ||
     (arrayBuffer.byteLength >= 4 && new Uint8Array(arrayBuffer.slice(0, 4)).every((b, i) => b === [0x25, 0x50, 0x44, 0x46][i]));
-  let extractedText = '';
+
   if (isPDF) {
-    extractedText = await extractTextFromPDF(arrayBuffer);
+    const { extractedText, wooferCurve, tweeterCurve } = await extractPDFTextAndCurves(arrayBuffer);
+    const result = parseDatasheetText(extractedText, filename);
+    if (wooferCurve.length > 0) result.wooferCurve = wooferCurve;
+    if (tweeterCurve.length > 0) result.tweeterCurve = tweeterCurve;
+    return result;
   } else {
-    extractedText = new TextDecoder().decode(arrayBuffer);
+    const extractedText = new TextDecoder().decode(arrayBuffer);
+    return parseDatasheetText(extractedText, filename);
   }
-  return parseDatasheetText(extractedText, filename);
 }
 
 /**
  * Parses datasheet from a local File or Blob object (e.g. from an <input type="file"> or drag-and-drop).
  */
 export async function parseDatasheetFromFile(file) {
-  const isPDF = file.type === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf');
-  let extractedText = '';
-
-  if (isPDF) {
-    const arrayBuffer = await file.arrayBuffer();
-    extractedText = await extractTextFromPDF(arrayBuffer);
-  } else {
-    extractedText = await file.text();
-  }
-
-  return parseDatasheetText(extractedText, file.name || 'Local Datasheet');
+  const arrayBuffer = await file.arrayBuffer();
+  return parseDatasheetFromArrayBuffer(arrayBuffer, file.name || 'Local Datasheet');
 }
 
 /**
  * Downloads and parses datasheet from a URL (handles PDF or text/HTML responses).
  */
 export async function parseDatasheetFromURL(url) {
-  // CORS proxies if direct fetch fails due to CORS
   const fetchWithProxy = async (targetUrl) => {
     const proxies = [
       (u) => u,
@@ -394,17 +631,6 @@ export async function parseDatasheetFromURL(url) {
   };
 
   const response = await fetchWithProxy(url);
-  const contentType = response.headers.get('content-type') || '';
-  const isPDF = contentType.includes('application/pdf') || url.toLowerCase().endsWith('.pdf');
-
-  let extractedText = '';
-
-  if (isPDF) {
-    const arrayBuffer = await response.arrayBuffer();
-    extractedText = await extractTextFromPDF(arrayBuffer);
-  } else {
-    extractedText = await response.text();
-  }
-
-  return parseDatasheetText(extractedText, url);
+  const arrayBuffer = await response.arrayBuffer();
+  return parseDatasheetFromArrayBuffer(arrayBuffer, url);
 }

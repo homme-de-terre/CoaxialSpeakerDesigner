@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { parseDatasheetFromURL, parseDatasheetFromFile } from './utils/datasheetParser';
+import { altec604WooferTS, altec604Tweeter, altec604RecommendedCrossover, altec604WooferCurve, altec604TweeterCurve } from './utils/altec604Data';
 import { 
   Speaker, Volume2, Shield, Settings, Sliders, Cpu, FileText, Download, 
   Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap, Upload, Info
@@ -168,7 +169,9 @@ export default function App() {
   const [unwrapPhase, setUnwrapPhase] = useState(true);
   const [compensateTweeterDelay, setCompensateTweeterDelay] = useState(false);
 
-  // FRD Custom Data Strings
+  // FRD Custom Data Strings & Digitized Acoustic Curves
+  const [wooferCurve, setWooferCurve] = useState([]);
+  const [tweeterCurve, setTweeterCurve] = useState([]);
   const [wooferFRDText, setWooferFRDText] = useState("");
   const [tweeterFRDText, setTweeterFRDText] = useState("");
 
@@ -250,6 +253,25 @@ export default function App() {
     return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, qbVal, minFeasibleF3, warningMsg };
   }, [ts, alignment, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
 
+  // --- Interpolate Raw Acoustic SPL from Digitized Curve Points ---
+  function interpolateCurveSPL(freq, curve) {
+    if (!curve || curve.length === 0) return null;
+    if (freq <= curve[0].frequency) return curve[0].magnitude;
+    if (freq >= curve[curve.length - 1].frequency) return curve[curve.length - 1].magnitude;
+    for (let j = 0; j < curve.length - 1; j++) {
+      const p1 = curve[j];
+      const p2 = curve[j + 1];
+      if (freq >= p1.frequency && freq <= p2.frequency) {
+        const logF = Math.log10(freq);
+        const logF1 = Math.log10(p1.frequency);
+        const logF2 = Math.log10(p2.frequency);
+        const t = (logF - logF1) / (logF2 - logF1);
+        return p1.magnitude + t * (p2.magnitude - p1.magnitude);
+      }
+    }
+    return curve[0].magnitude;
+  }
+
   // --- Nelder-Mead All-Pass Filter Phase Alignment Optimizer ---
   const apfOptimization = useMemo(() => {
     const actualWooferFx = enableIndependentFx ? wooferFx : fx;
@@ -285,8 +307,11 @@ export default function App() {
 
     freqs.forEach(f => {
       const w = 2.0 * Math.PI * f;
-      let pTweeterRawSPL = tweeter.spl;
-      if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
+      let pTweeterRawSPL = interpolateCurveSPL(f, tweeterCurve);
+      if (pTweeterRawSPL === null) {
+        pTweeterRawSPL = tweeter.spl;
+        if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
+      }
       const pTweeterRawComp = new Complex(Math.pow(10, pTweeterRawSPL / 20.0), 0);
 
       const xT = f / actualTweeterFx;
@@ -304,8 +329,11 @@ export default function App() {
       const hDelay = Complex.polar(polarityMult, -w * delaySec);
       pTweeterFixed.push(pTweeterRawComp.mul(hHP).mul(gLpad).mul(hDelay));
 
-      let pWooferRawSPL = ts.spl;
-      if (f < ts.fs) pWooferRawSPL -= 12 * Math.log2(ts.fs / Math.max(f, 10));
+      let pWooferRawSPL = interpolateCurveSPL(f, wooferCurve);
+      if (pWooferRawSPL === null) {
+        pWooferRawSPL = ts.spl;
+        if (f < ts.fs) pWooferRawSPL -= 12 * Math.log2(ts.fs / Math.max(f, 10));
+      }
       const pWooferRawComp = new Complex(Math.pow(10, pWooferRawSPL / 20.0), 0);
 
       const s = new Complex(0, w);
@@ -426,7 +454,7 @@ export default function App() {
       isGoalAchieved,
       warnings
     };
-  }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel]);
+  }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel, wooferCurve, tweeterCurve]);
 
   // --- Passive Crossover Component Calculations ---
   const crossoverComponents = useMemo(() => {
@@ -538,8 +566,11 @@ export default function App() {
       const w = 2.0 * Math.PI * f;
 
       // 1. Raw Woofer Passband SPL & Sealed Cabinet Transfer Function H_cab(s)
-      let pWooferRawSPL = ts.spl;
-      if (f > 2200) pWooferRawSPL -= 0.003 * (f - 2200);
+      let pWooferRawSPL = interpolateCurveSPL(f, wooferCurve);
+      if (pWooferRawSPL === null) {
+        pWooferRawSPL = ts.spl;
+        if (f > 2200) pWooferRawSPL -= 0.003 * (f - 2200);
+      }
 
       const pWooferRawLinear = Math.pow(10, pWooferRawSPL / 20.0);
       const pWooferRawComp = new Complex(pWooferRawLinear, 0);
@@ -579,8 +610,11 @@ export default function App() {
       const pWooferFinal = (pWooferCab.mul(hLP)).mul(hAP);
 
       // 2. Raw Tweeter SPL & High-Pass Electrical Filter
-      let pTweeterRawSPL = tweeter.spl;
-      if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
+      let pTweeterRawSPL = interpolateCurveSPL(f, tweeterCurve);
+      if (pTweeterRawSPL === null) {
+        pTweeterRawSPL = tweeter.spl;
+        if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
+      }
       const pTweeterRawComp = new Complex(Math.pow(10, pTweeterRawSPL / 20.0), 0);
 
       const xT = f / actualTweeterFx;
@@ -753,7 +787,7 @@ export default function App() {
     }
 
     return points;
-  }, [ts, tweeter, cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
+  }, [ts, tweeter, cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, wooferCurve, tweeterCurve]);
 
   // --- Render Bode Amplitude Plot ---
   useEffect(() => {
@@ -1385,6 +1419,13 @@ export default function App() {
         setFx(parsed.recommendedCrossover);
       }
 
+      if (parsed.wooferCurve && parsed.wooferCurve.length > 0) {
+        setWooferCurve(parsed.wooferCurve);
+      }
+      if (parsed.tweeterCurve && parsed.tweeterCurve.length > 0) {
+        setTweeterCurve(parsed.tweeterCurve);
+      }
+
       setMissingParams(parsed.missingParams || []);
       setPlausibilityWarnings(parsed.warnings || []);
 
@@ -1399,6 +1440,18 @@ export default function App() {
     } else {
       setStatusMsg(`Could not parse parameters from ${sourceName || 'datasheet'}.`);
     }
+  };
+
+  const loadAltec604Preset = () => {
+    setDriverName('Altec Lansing 604-8K');
+    setTs({ ...altec604WooferTS });
+    setTweeter({ ...altec604Tweeter });
+    setFx(altec604RecommendedCrossover);
+    setWooferCurve(altec604WooferCurve);
+    setTweeterCurve(altec604TweeterCurve);
+    setMissingParams([]);
+    setPlausibilityWarnings([]);
+    setStatusMsg('Loaded Altec Lansing 604-8K factory specs & digitized CLIO frequency response curves.');
   };
 
   const validateManualField = (paramName, value) => {
@@ -1524,6 +1577,16 @@ export default function App() {
               <Upload className="w-3.5 h-3.5 text-blue-400" />
             )}
             <span>{isLoadingFile ? 'Parsing Local PDF...' : 'Choose Local PDF File / Drop Here'}</span>
+          </button>
+
+          {/* Quick Preset for Altec 604-8K */}
+          <button
+            type="button"
+            onClick={loadAltec604Preset}
+            className="w-full bg-slate-800/80 hover:bg-slate-700 border border-slate-700 hover:border-slate-500 text-slate-200 font-medium text-xs py-1.5 px-3 rounded transition flex items-center justify-center space-x-2 cursor-pointer"
+          >
+            <Speaker className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Load Altec 604-8K Preset (CLIO)</span>
           </button>
 
           <div className="flex items-center space-x-2 text-[10px] text-slate-500">
