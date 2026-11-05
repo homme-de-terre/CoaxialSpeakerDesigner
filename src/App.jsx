@@ -292,11 +292,21 @@ export default function App() {
     if (manualVbOverride) {
       baseAlpha = ts.vas / Math.max(manualVbLiters, 0.1);
     } else if (alignment === 'targetF3') {
-      const r = Math.pow(targetF3 / Math.max(ts.fs, 1.0), 2);
+      const minF3 = ts.fs * (0.70710678 / Math.max(effectiveQts, 0.01));
+      const effectiveF3 = Math.max(targetF3, minF3);
+      const r = Math.pow(effectiveF3 / Math.max(ts.fs, 1.0), 2);
       const q2 = Math.pow(effectiveQts, 2);
-      const term = 2.0 * r * r + (r / Math.max(q2, 1e-4));
-      const x = Math.sqrt(term) - r;
-      baseAlpha = Math.max(x - 1.0, 0.05);
+      const disc = 2.0 * r * r - (r / Math.max(q2, 1e-4));
+      if (disc <= 0 || targetF3 < minF3) {
+        const ratio = 0.70710678 / Math.max(effectiveQts, 0.01);
+        baseAlpha = Math.max(Math.pow(ratio, 2) - 1.0, 0.05);
+        if (targetF3 < minF3) {
+          warningMsg = `Target f3 (${targetF3} Hz) is below the physical sealed-box limit (${minF3.toFixed(1)} Hz) for Qts = ${effectiveQts.toFixed(3)}. Enclosure aligned to Butterworth B2 (f3 = ${minF3.toFixed(1)} Hz). Switch to Vented (Bass-Reflex) mode to extend bass down to 35–45 Hz.`;
+        }
+      } else {
+        const y = r + Math.sqrt(disc);
+        baseAlpha = Math.max(y - 1.0, 0.05);
+      }
     } else {
       let activeQtc = 0.7071;
       if (alignment === 'bessel') activeQtc = 0.5774;
@@ -322,17 +332,8 @@ export default function App() {
     // System resonance Fc inside box
     const fc = ts.fs * Math.sqrt(1 + alpha);
 
-    // Target Qtc
-    let actualQtc = 0.7071;
-    if (manualVbOverride || alignment === 'targetF3') {
-      actualQtc = effectiveQts * Math.sqrt(1 + alpha);
-    } else if (alignment === 'bessel') {
-      actualQtc = 0.5774;
-    } else if (alignment === 'critical') {
-      actualQtc = 0.5000;
-    } else if (alignment === 'custom') {
-      actualQtc = customQtc;
-    }
+    // Target Qtc directly follows effectiveQts * sqrt(1 + alpha)
+    const actualQtc = effectiveQts * Math.sqrt(1 + alpha);
 
     // Exact f3 formula for 2nd order closed box
     const B = (1.0 / Math.pow(actualQtc, 2)) - 2.0;
@@ -970,7 +971,9 @@ export default function App() {
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
-      ctx.fillText(f >= 1000 ? `${f/1000}k` : `${f}`, x + 4, height - 8);
+      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+      const textX = f === 20000 ? x - 26 : x + 4;
+      ctx.fillText(label, textX, height - 8);
     });
 
     for (let spl = minSPL; spl <= maxSPL; spl += 10) {
@@ -979,7 +982,10 @@ export default function App() {
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
       ctx.stroke();
-      ctx.fillText(`${spl} dB`, 8, y - 4);
+      if (spl > minSPL) {
+        const textY = y <= 2 ? 12 : y - 4;
+        ctx.fillText(`${spl} dB`, 8, textY);
+      }
     }
 
     function toCanvas(f, spl) {
@@ -1094,7 +1100,9 @@ export default function App() {
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
-      ctx.fillText(f >= 1000 ? `${f/1000}k` : `${f}`, x + 4, height - 8);
+      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+      const textX = f === 20000 ? x - 26 : x + 4;
+      ctx.fillText(label, textX, height - 8);
     });
 
     const stepDeg = spanDeg > 540 ? 180 : (spanDeg > 360 ? 90 : 45);
@@ -1106,7 +1114,10 @@ export default function App() {
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
       ctx.stroke();
-      ctx.fillText(`${Math.round(d)}°`, 8, y - 4);
+      if (d > minDeg + 0.01) {
+        const textY = y <= 2 ? 12 : y - 4;
+        ctx.fillText(`${Math.round(d)}°`, 8, textY);
+      }
     }
 
     function toCanvas(f, deg) {
@@ -1216,7 +1227,9 @@ export default function App() {
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
-      ctx.fillText(f >= 1000 ? `${f/1000}k` : `${f}`, x + 4, height - 8);
+      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+      const textX = f === 20000 ? x - 26 : x + 4;
+      ctx.fillText(label, textX, height - 8);
     });
 
     const stepMs = spanMs > 10 ? 2 : 1;
@@ -1228,7 +1241,10 @@ export default function App() {
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
       ctx.stroke();
-      ctx.fillText(`${ms} ms`, 8, y - 4);
+      if (ms > minMs + 0.01) {
+        const textY = y <= 2 ? 12 : y - 4;
+        ctx.fillText(`${ms} ms`, 8, textY);
+      }
     }
 
     function toCanvas(f, ms) {
@@ -1301,7 +1317,9 @@ export default function App() {
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
       ctx.stroke();
-      ctx.fillText(f >= 1000 ? `${f / 1000}k` : `${f}`, x + 4, height - 8);
+      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+      const textX = f === 20000 ? x - 26 : x + 4;
+      ctx.fillText(label, textX, height - 8);
     });
 
     // Horizontal Impedance Gridlines (0 to 100 Ohms, step 10)
@@ -1313,7 +1331,10 @@ export default function App() {
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
       ctx.stroke();
-      ctx.fillText(`${z} Ω`, 8, y - 4);
+      if (z > 0.01) {
+        const textY = y <= 2 ? 12 : y - 4;
+        ctx.fillText(`${z} Ω`, 8, textY);
+      }
     }
 
     function toCanvas(f, zVal) {
@@ -1597,7 +1618,8 @@ export default function App() {
       if (isMajor) {
         ctx.fillStyle = '#94a3b8';
         ctx.font = '10px monospace';
-        ctx.fillText(`${t} ms`, x + 4, height - 8);
+        const textX = t >= maxTimeMs - 0.01 ? x - 32 : x + 4;
+        ctx.fillText(`${t} ms`, textX, height - 8);
       }
     }
 
@@ -1611,9 +1633,12 @@ export default function App() {
       ctx.lineTo(width, y);
       ctx.stroke();
 
-      ctx.fillStyle = isZero ? '#f1f5f9' : '#64748b';
-      ctx.font = '10px monospace';
-      ctx.fillText(a.toFixed(2), 6, y - 4);
+      if (a > minAmp + 0.01) {
+        ctx.fillStyle = isZero ? '#f1f5f9' : '#64748b';
+        ctx.font = '10px monospace';
+        const textY = y <= 2 ? 12 : y - 4;
+        ctx.fillText(a.toFixed(2), 6, textY);
+      }
     }
 
     // Woofer (Blue)
@@ -2565,8 +2590,17 @@ export default function App() {
 
                     {alignment === 'targetF3' && (
                       <div>
-                        <label className="text-xs font-semibold text-slate-400">Target Lower -3 dB Cut-off Frequency (f3): {targetF3} Hz</label>
-                        <input type="range" min="30" max="200" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
+                        <div className="flex items-center justify-between text-xs">
+                          <label className="font-semibold text-slate-400">
+                            Target Lower -3 dB Cut-off Frequency (f3): {targetF3} Hz
+                          </label>
+                          {targetF3 < cabinetCalculations.minFeasibleF3 && (
+                            <span className="text-amber-400 font-semibold text-[11px]">
+                              (Sealed Min: {cabinetCalculations.minFeasibleF3.toFixed(1)} Hz)
+                            </span>
+                          )}
+                        </div>
+                        <input type="range" min="25" max="250" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
                       </div>
                     )}
 

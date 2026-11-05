@@ -103,7 +103,8 @@ public struct AmplitudeBodeChartView: View {
 
             // Text Label
             let labelText = f >= 1000 ? "\(f/1000)k" : "\(f)"
-            context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: x + 10, y: size.height - 12))
+            let textX = f == 20000 ? x - 14 : x + 10
+            context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: textX, y: size.height - 12))
         }
 
         // Horizontal SPL Gridlines (every 10 dB)
@@ -114,7 +115,10 @@ public struct AmplitudeBodeChartView: View {
             path.addLine(to: CGPoint(x: size.width, y: y))
             context.stroke(path, with: .color(Color.gray.opacity(0.2)), lineWidth: 1)
 
-            context.draw(Text("\(Int(spl)) dB").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: y - 8))
+            if spl > minSPL {
+                let textY = (spl == maxSPL) ? y + 8 : y - 8
+                context.draw(Text("\(Int(spl)) dB").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: textY))
+            }
         }
     }
 

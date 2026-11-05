@@ -103,9 +103,10 @@ public struct StepResponseChartView: View {
 
             if isMajor {
                 let label = t == 0 ? "0 ms" : "\(Int(t)) ms"
+                let textX = t >= maxTimeMs - 0.01 ? x - 18 : x + 14
                 context.draw(
                     Text(label).font(.caption2).foregroundColor(.secondary),
-                    at: CGPoint(x: x + 14, y: size.height - 12)
+                    at: CGPoint(x: textX, y: size.height - 12)
                 )
             }
         }
@@ -124,10 +125,13 @@ public struct StepResponseChartView: View {
                 lineWidth: isZero ? 1.5 : 0.8
             )
 
-            context.draw(
-                Text(String(format: "%.2f", amp)).font(.caption2).foregroundColor(isZero ? .primary : .secondary),
-                at: CGPoint(x: 22, y: y - 8)
-            )
+            if amp > minAmp + 0.01 {
+                let textY = y <= 2.0 ? y + 8 : y - 8
+                context.draw(
+                    Text(String(format: "%.2f", amp)).font(.caption2).foregroundColor(isZero ? .primary : .secondary),
+                    at: CGPoint(x: 22, y: textY)
+                )
+            }
         }
     }
 

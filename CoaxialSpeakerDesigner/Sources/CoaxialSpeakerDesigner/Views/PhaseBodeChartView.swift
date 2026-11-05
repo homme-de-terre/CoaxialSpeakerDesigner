@@ -161,7 +161,8 @@ public struct PhaseBodeChartView: View {
             context.stroke(path, with: .color(Color.gray.opacity(0.25)), lineWidth: 1)
 
             let labelText = f >= 1000 ? "\(f/1000)k" : "\(f)"
-            context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: x + 10, y: size.height - 12))
+            let textX = f == 20000 ? x - 14 : x + 10
+            context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: textX, y: size.height - 12))
         }
 
         // Horizontal Phase Gridlines
@@ -175,7 +176,10 @@ public struct PhaseBodeChartView: View {
             path.addLine(to: CGPoint(x: size.width, y: y))
             context.stroke(path, with: .color(abs(deg) < 0.01 ? Color.gray.opacity(0.6) : Color.gray.opacity(0.2)), lineWidth: abs(deg) < 0.01 ? 1.5 : 1)
 
-            context.draw(Text("\(Int(deg))°").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: y - 8))
+            if deg > minDeg + 0.01 {
+                let textY = y <= 2.0 ? y + 8 : y - 8
+                context.draw(Text("\(Int(deg))°").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: textY))
+            }
             deg += step
         }
     }

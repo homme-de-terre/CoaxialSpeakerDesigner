@@ -134,7 +134,8 @@ public struct GroupDelayChartView: View {
             context.stroke(path, with: .color(Color.gray.opacity(0.25)), lineWidth: 1)
 
             let labelText = f >= 1000 ? "\(f/1000)k" : "\(f)"
-            context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: x + 10, y: size.height - 12))
+            let textX = f == 20000 ? x - 14 : x + 10
+            context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: textX, y: size.height - 12))
         }
 
         // Horizontal Group Delay Gridlines (ms)
@@ -153,8 +154,11 @@ public struct GroupDelayChartView: View {
                 lineWidth: isZero ? 1.5 : 0.8
             )
 
-            let label = String(format: "%.0f ms", ms)
-            context.draw(Text(label).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 22, y: y - 8))
+            if ms > minMs + 0.01 {
+                let textY = y <= 2.0 ? y + 8 : y - 8
+                let label = String(format: "%.0f ms", ms)
+                context.draw(Text(label).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 22, y: textY))
+            }
             ms += step
         }
     }

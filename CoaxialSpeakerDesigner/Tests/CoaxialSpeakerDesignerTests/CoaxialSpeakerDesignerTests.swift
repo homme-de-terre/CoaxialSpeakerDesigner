@@ -40,6 +40,33 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         // Transfer function at resonance frequency Fc should have magnitude ~ Qtc = 0.707
         let hFc = cabinet.transferFunction(frequency: fc, ts: ts)
         XCTAssertEqual(hFc.magnitude, cabinet.actualQtc(for: ts), accuracy: 0.1)
+
+        // Test Target F3 mode:
+        // 1. Feasible target F3 = 140 Hz for 150CX (Fs=71, Qts=0.37, minF3=135.7 Hz)
+        var ts150 = WooferTSParameters()
+        ts150.fs = 71.0
+        ts150.qts = 0.37
+        ts150.vas = 11.2
+
+        var cabTargetF3 = SealedCabinet(alignment: .targetF3, targetF3: 140.0)
+        let actF3_140 = cabTargetF3.actualF3(for: ts150)
+        XCTAssertEqual(actF3_140, 140.0, accuracy: 0.2, "Feasible target f3 must match exact target 140 Hz")
+        let h140 = cabTargetF3.transferFunction(frequency: 140.0, ts: ts150)
+        XCTAssertEqual(h140.magnitude, 1.0 / sqrt(2.0), accuracy: 0.02, "Magnitude at f3 must be -3 dB (0.7071)")
+
+        // 2. Unattainable target F3 = 45 Hz (below physical closed box limit of 135.7 Hz)
+        cabTargetF3.targetF3 = 45.0
+        let actF3_45 = cabTargetF3.actualF3(for: ts150)
+        let fc_45 = cabTargetF3.computedResonanceFc(for: ts150)
+        let qtc_45 = cabTargetF3.actualQtc(for: ts150)
+        let vb_45 = cabTargetF3.computedVolumeLiters(for: ts150)
+
+        // Must align to Butterworth B2 limit (Fc = 135.7 Hz, f3 = 135.7 Hz, Qtc = 0.7071, Vb = 4.22 L)
+        // NOT the unphysical Fc = 84.1 Hz and f3 = 157.2 Hz!
+        XCTAssertEqual(actF3_45, 135.7, accuracy: 0.5, "Unattainable target f3 must align to minimum physical limit (Butterworth 135.7 Hz)")
+        XCTAssertEqual(fc_45, 135.7, accuracy: 0.5, "Fc must equal minimum physical limit (135.7 Hz)")
+        XCTAssertEqual(qtc_45, 0.7071, accuracy: 0.02, "Qtc must align to Butterworth 0.7071")
+        XCTAssertEqual(vb_45, 4.22, accuracy: 0.2, "Box volume must equal Butterworth 4.22 L")
     }
 
     func testCrossoverComponents() {

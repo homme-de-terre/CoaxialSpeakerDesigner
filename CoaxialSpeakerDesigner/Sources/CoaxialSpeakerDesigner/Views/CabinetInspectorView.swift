@@ -40,9 +40,21 @@ public struct CabinetInspectorView: View {
             .padding(.bottom, 4)
 
             let effQts = viewModel.driver.wooferTS.qts > 0 ? viewModel.driver.wooferTS.qts : (viewModel.driver.wooferTS.qes > 0 && viewModel.driver.wooferTS.qms > 0 ? (viewModel.driver.wooferTS.qes * viewModel.driver.wooferTS.qms) / (viewModel.driver.wooferTS.qes + viewModel.driver.wooferTS.qms) : 0.35)
+            let minF3 = viewModel.driver.wooferTS.fs * (0.70710678 / max(effQts, 0.01))
 
             if viewModel.cabinet.enclosureType == .sealed {
-                if viewModel.cabinet.alignment == .customQtc && viewModel.cabinet.targetQtc <= effQts {
+                if viewModel.cabinet.alignment == .targetF3 && viewModel.cabinet.targetF3 < minF3 {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text("Target f3 (\(Int(viewModel.cabinet.targetF3)) Hz) is below the physical sealed-box limit (\(String(format: "%.1f", minF3)) Hz) for Qts = \(String(format: "%.3f", effQts)). Enclosure is aligned to Butterworth B2 (minimum achievable sealed cutoff f3 = \(String(format: "%.1f", minF3)) Hz). Switch to Vented (Bass-Reflex) mode to extend bass down to 35–45 Hz.")
+                            .font(.caption)
+                            .foregroundColor(.primary)
+                    }
+                    .padding(10)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(8)
+                } else if viewModel.cabinet.alignment == .customQtc && viewModel.cabinet.targetQtc <= effQts {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
@@ -83,11 +95,17 @@ public struct CabinetInspectorView: View {
                                 HStack {
                                     Text("Target Lower -3 dB Cutoff (f3):")
                                     Spacer()
-                                    Text("\(Int(viewModel.cabinet.targetF3)) Hz")
-                                        .bold()
-                                        .foregroundColor(.accentColor)
+                                    if viewModel.cabinet.targetF3 < minF3 {
+                                        Text("\(Int(viewModel.cabinet.targetF3)) Hz (Sealed Min: \(String(format: "%.1f", minF3)) Hz)")
+                                            .bold()
+                                            .foregroundColor(.orange)
+                                    } else {
+                                        Text("\(Int(viewModel.cabinet.targetF3)) Hz")
+                                            .bold()
+                                            .foregroundColor(.accentColor)
+                                    }
                                 }
-                                Slider(value: $viewModel.cabinet.targetF3, in: 30.0...200.0, step: 1.0)
+                                Slider(value: $viewModel.cabinet.targetF3, in: 25.0...250.0, step: 1.0)
                             }
                         }
 

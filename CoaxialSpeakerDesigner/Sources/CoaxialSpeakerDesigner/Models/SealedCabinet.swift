@@ -121,13 +121,19 @@ public struct SealedCabinet: Equatable, Codable, Sendable {
 
         switch alignment {
         case .targetF3:
-            let r = pow(targetF3 / max(ts.fs, 1.0), 2)
-            let q2 = pow(effectiveQts, 2)
-            guard q2 > 0 else { return 1.0 }
-            let term = 2.0 * r * r + (r / q2)
-            let x = sqrt(term) - r
-            let alpha = x - 1.0
-            return max(alpha, 0.05)
+            let effQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
+            let minF3 = ts.fs * (0.70710678 / max(effQts, 0.01))
+            let effectiveF3 = max(targetF3, minF3)
+            let r = pow(effectiveF3 / max(ts.fs, 1.0), 2)
+            let q2 = pow(effQts, 2)
+            let disc = 2.0 * r * r - (r / max(q2, 1e-4))
+            if disc <= 0 || targetF3 < minF3 {
+                let ratio = 0.70710678 / max(effQts, 0.01)
+                return max(pow(ratio, 2) - 1.0, 0.05)
+            }
+            let y = r + sqrt(disc)
+            let alpha = max(y - 1.0, 0.05)
+            return alpha
 
         case .butterworth, .bessel, .criticallyDamped:
             if let targetQ = alignment.targetQtc {
@@ -283,26 +289,9 @@ public struct SealedCabinet: Equatable, Codable, Sendable {
 
     /// Effective Total System Q (Qtc) inside enclosure
     public func actualQtc(for ts: WooferTSParameters) -> Double {
-        if isManualVolumeOverride {
-            let alpha = computedComplianceAlpha(for: ts)
-            let effectiveQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
-            return effectiveQts * sqrt(1.0 + alpha)
-        }
-
-        switch alignment {
-        case .butterworth:
-            return 0.7071
-        case .bessel:
-            return 0.5774
-        case .criticallyDamped:
-            return 0.5000
-        case .customQtc:
-            return targetQtc
-        case .targetF3:
-            let alpha = computedComplianceAlpha(for: ts)
-            let effectiveQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
-            return effectiveQts * sqrt(1.0 + alpha)
-        }
+        let alpha = computedComplianceAlpha(for: ts)
+        let effectiveQts = ts.qts > 0 ? ts.qts : (ts.qes > 0 && ts.qms > 0 ? (ts.qes * ts.qms) / (ts.qes + ts.qms) : 0.35)
+        return effectiveQts * sqrt(1.0 + alpha)
     }
 
     /// Actual lower -3dB cutoff frequency f3 (Hz) based on current configuration
