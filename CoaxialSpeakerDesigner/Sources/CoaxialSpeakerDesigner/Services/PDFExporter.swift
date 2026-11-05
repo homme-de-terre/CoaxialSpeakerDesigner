@@ -216,6 +216,7 @@ public class SchematicReportRenderer {
         let fc = cabinet.computedResonanceFc(for: driver.wooferTS)
         let f3 = cabinet.actualF3(for: driver.wooferTS)
         let qtc = cabinet.actualQtc(for: driver.wooferTS)
+        let fb = cabinet.actualTuningFb(for: driver.wooferTS)
 
         let f0Display = Int(crossover.allpassOptimizedF0 ?? crossover.acousticCenterFrequency)
         let apfStatus = crossover.enableAllpassFilter
@@ -226,7 +227,12 @@ public class SchematicReportRenderer {
             ? "Crossover: Woofer \(Int(crossover.actualWooferFrequency)) Hz (\(crossover.wooferOrder.rawValue)) / Tweeter \(Int(crossover.actualTweeterFrequency)) Hz (\(crossover.tweeterOrder.rawValue))"
             : "Crossover: \(Int(crossover.crossoverFrequency)) Hz (\(crossover.wooferOrder.rawValue) / \(crossover.tweeterOrder.rawValue))"
         let line1 = "Driver: \(driver.name) (\(driver.manufacturer))  |  \(xoInfo)\(apfStatus)"
-        let line2 = "Sealed Enclosure: Vb = \(String(format: "%.2f", vb)) L  |  Fc = \(String(format: "%.1f", fc)) Hz  |  f3 = \(String(format: "%.1f", f3)) Hz  |  Qtc = \(String(format: "%.3f", qtc))  |  \(subtitle)"
+        let line2: String
+        if cabinet.enclosureType == .vented {
+            line2 = "Vented Enclosure (4th-Order): Vb = \(String(format: "%.1f", vb)) L  |  Fb = \(String(format: "%.1f", fb)) Hz  |  f3 = \(String(format: "%.1f", f3)) Hz  |  Port: \(cabinet.numberOfPorts)x Ø\(String(format: "%.1f", cabinet.portDiameterCm))cm  |  \(subtitle)"
+        } else {
+            line2 = "Sealed Enclosure: Vb = \(String(format: "%.2f", vb)) L  |  Fc = \(String(format: "%.1f", fc)) Hz  |  f3 = \(String(format: "%.1f", f3)) Hz  |  Qtc = \(String(format: "%.3f", qtc))  |  \(subtitle)"
+        }
 
         line1.draw(at: CGPoint(x: margin + 14, y: bannerY + 24), withAttributes: subAttrs)
         line2.draw(at: CGPoint(x: margin + 14, y: bannerY + 36), withAttributes: subAttrs)
@@ -638,6 +644,13 @@ public class SchematicReportRenderer {
         if let r1 = components.R1_lpad_ohms { rows.append(("R1 (L-Pad)", "Tweeter L-Pad Attenuator (Series Element)", "\(String(format: "%.2f", r1)) Ω", "10W Power Metal Oxide / Wirewound Resistor")) }
         if let r2 = components.R2_lpad_ohms { rows.append(("R2 (L-Pad)", "Tweeter L-Pad Attenuator (Shunt Element)", "\(String(format: "%.2f", r2)) Ω", "10W Power Metal Oxide / Wirewound Resistor")) }
 
+        if cabinet.enclosureType == .vented {
+            let lv = cabinet.computedPortLengthCm(for: driver.wooferTS)
+            let np = cabinet.numberOfPorts
+            let dia = cabinet.portDiameterCm
+            rows.append(("Port Duct", "Bass-Reflex Helmholtz Port Duct", "\(np)x Ø\(String(format: "%.1f", dia)) cm × \(String(format: "%.1f", lv)) cm", "Rigid Cylindrical Port Tube, Anti-Turbulence Flared Ends"))
+        }
+
         var curRowY = tableY + rowHeight
 
         for (idx, row) in rows.enumerated() {
@@ -689,11 +702,27 @@ public class SchematicReportRenderer {
         let alpha = cabinet.computedComplianceAlpha(for: driver.wooferTS)
 
         // Card 1: Enclosure Alignment
-        drawSpecCard(
-            rect: CGRect(x: margin, y: startY, width: cardW, height: cardH),
-            title: "SEALED ENCLOSURE ALIGNMENT",
-            headerColor: NSColor(calibratedRed: 0.1, green: 0.35, blue: 0.65, alpha: 1.0),
-            items: [
+        let card1Title = cabinet.enclosureType == .vented ? "4TH-ORDER VENTED ENCLOSURE" : "SEALED ENCLOSURE ALIGNMENT"
+        let card1HeaderColor = cabinet.enclosureType == .vented
+            ? NSColor(calibratedRed: 0.1, green: 0.45, blue: 0.50, alpha: 1.0)
+            : NSColor(calibratedRed: 0.1, green: 0.35, blue: 0.65, alpha: 1.0)
+
+        let card1Items: [(String, String)]
+        if cabinet.enclosureType == .vented {
+            let fb = cabinet.actualTuningFb(for: driver.wooferTS)
+            let lv = cabinet.computedPortLengthCm(for: driver.wooferTS)
+            let minDia = cabinet.minRecommendedPortDiameterCm(for: driver.wooferTS)
+            card1Items = [
+                ("Architecture", "Vented (Bass-Reflex, 4th-Order)"),
+                ("Alignment Preset", cabinet.ventedAlignment.rawValue),
+                ("Net Volume (Vb)", "\(String(format: "%.1f", vb)) L (\(String(format: "%.2f", vb / 28.3168)) cu ft)"),
+                ("Tuning Freq (Fb)", "\(String(format: "%.1f", fb)) Hz"),
+                ("Cutoff Freq (f3)", "\(String(format: "%.1f", f3)) Hz"),
+                ("Port Spec", "\(cabinet.numberOfPorts)x Ø\(String(format: "%.1f", cabinet.portDiameterCm)) cm × \(String(format: "%.1f", lv)) cm"),
+                ("Port Chuffing Limit", "Min Dia ≥ \(String(format: "%.1f", minDia)) cm")
+            ]
+        } else {
+            card1Items = [
                 ("Target Alignment", cabinet.alignment.rawValue),
                 ("Net Volume (Vb)", "\(String(format: "%.2f", vb)) L (\(String(format: "%.2f", vb / 28.3168)) cu ft)"),
                 ("Resonance Freq (Fc)", "\(String(format: "%.1f", fc)) Hz"),
@@ -702,6 +731,13 @@ public class SchematicReportRenderer {
                 ("Mechanical Q (Qmc)", String(format: "%.2f", qmc)),
                 ("Compliance Ratio (α)", String(format: "%.2f", alpha))
             ]
+        }
+
+        drawSpecCard(
+            rect: CGRect(x: margin, y: startY, width: cardW, height: cardH),
+            title: card1Title,
+            headerColor: card1HeaderColor,
+            items: card1Items
         )
 
         // Card 2: Driver Voice Coil Specs

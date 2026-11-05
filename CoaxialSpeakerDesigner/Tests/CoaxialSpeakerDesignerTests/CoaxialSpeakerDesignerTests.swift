@@ -653,4 +653,171 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
             #endif
         }
     }
+
+    func testClosedCabinetParameterChangesReflectedInAllPlots() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let crossover = CrossoverNetwork(crossoverFrequency: 1800.0)
+
+        // 1. Compare small enclosure (Vb = 6 L) vs large enclosure (Vb = 80 L)
+        var smallCab = SealedCabinet()
+        smallCab.isManualVolumeOverride = true
+        smallCab.manualNetVolumeLiters = 6.0
+
+        var largeCab = SealedCabinet()
+        largeCab.isManualVolumeOverride = true
+        largeCab.manualNetVolumeLiters = 80.0
+
+        let fcSmall = smallCab.computedResonanceFc(for: driver.wooferTS)
+        let fcLarge = largeCab.computedResonanceFc(for: driver.wooferTS)
+        let qtcSmall = smallCab.actualQtc(for: driver.wooferTS)
+        let qtcLarge = largeCab.actualQtc(for: driver.wooferTS)
+
+        XCTAssertGreaterThan(fcSmall, fcLarge, "Smaller cabinet must have higher system resonance Fc")
+        XCTAssertGreaterThan(qtcSmall, qtcLarge, "Smaller cabinet must have higher system Q (Qtc)")
+
+        let simSmall = SimulationEngine.simulate(driver: driver, cabinet: smallCab, crossover: crossover)
+        let simLarge = SimulationEngine.simulate(driver: driver, cabinet: largeCab, crossover: crossover)
+
+        XCTAssertEqual(simSmall.count, 201)
+        XCTAssertEqual(simLarge.count, 201)
+
+        // 1a. Amplitude Plot Reflection:
+        // At low frequencies (e.g. around 30 Hz), larger cabinet should have significantly higher bass SPL
+        let idx30Hz = simSmall.firstIndex(where: { abs($0.frequency - 30.0) < 5.0 })!
+        XCTAssertGreaterThan(simLarge[idx30Hz].wooferFinalSPL, simSmall[idx30Hz].wooferFinalSPL + 5.0, "Larger cabinet must deliver higher bass SPL at 30 Hz")
+        XCTAssertGreaterThan(simLarge[idx30Hz].totalSystemSPL, simSmall[idx30Hz].totalSystemSPL + 5.0, "Total system SPL must reflect cabinet bass extension")
+
+        // 1b. Phase Plot Reflection:
+        // At low frequencies, cabinet acoustic transfer function phase shifts with Fc
+        let phaseDiffSmallVsLarge = abs(simSmall[idx30Hz].wooferPhaseDeg - simLarge[idx30Hz].wooferPhaseDeg)
+        XCTAssertGreaterThan(phaseDiffSmallVsLarge, 10.0, "Woofer acoustic phase at 30 Hz must shift with cabinet volume")
+
+        // 1c. Group Delay Plot Reflection:
+        // Group delay peak shifts with Fc
+        let gdSmall = simSmall[idx30Hz].wooferGroupDelayMs
+        let gdLarge = simLarge[idx30Hz].wooferGroupDelayMs
+        XCTAssertNotEqual(gdSmall, gdLarge, "Woofer group delay at low frequency must reflect cabinet volume")
+        XCTAssertGreaterThan(gdLarge, gdSmall + 0.5, "Large cabinet (lower Fc) produces higher group delay at 30 Hz")
+
+        // 1d. Impedance Plot Reflection:
+        // Woofer voice coil impedance resonance peak must be at fcSmall for smallCab and fcLarge for largeCab
+        let zPeakSmall = simSmall.max(by: { $0.wooferImpedanceMag < $1.wooferImpedanceMag })!
+        let zPeakLarge = simLarge.max(by: { $0.wooferImpedanceMag < $1.wooferImpedanceMag })!
+        XCTAssertGreaterThan(zPeakSmall.frequency, zPeakLarge.frequency, "Impedance resonance peak frequency must be higher for smaller cabinet")
+        XCTAssertEqual(zPeakSmall.frequency, fcSmall, accuracy: 10.0, "Small cabinet impedance peak must occur near Fc")
+        XCTAssertEqual(zPeakLarge.frequency, fcLarge, accuracy: 10.0, "Large cabinet impedance peak must occur near Fc")
+
+        // 1e. Step Response Plot Reflection:
+        // Step response transient decay and settling reflect cabinet Qtc and Fc
+        let stepSmall = SimulationEngine.computeStepResponse(driver: driver, cabinet: smallCab, crossover: crossover)
+        let stepLarge = SimulationEngine.computeStepResponse(driver: driver, cabinet: largeCab, crossover: crossover)
+
+        XCTAssertEqual(stepSmall.count, 201)
+        XCTAssertEqual(stepLarge.count, 201)
+
+        // Compare woofer step values around 2.0 - 4.0 ms
+        let wooferStepDiff = zip(stepSmall, stepLarge).map { abs($0.0.woofer - $0.1.woofer) }.reduce(0.0, +)
+        XCTAssertGreaterThan(wooferStepDiff, 0.5, "Step response woofer transient must reflect cabinet parameters")
+
+        // 2. Stuffing Absorption Reflection:
+        // Comparing no stuffing vs heavy stuffing on same volume
+        var cabUnfilled = smallCab
+        cabUnfilled.stuffing = .none
+
+        var cabStuffed = smallCab
+        cabStuffed.stuffing = .heavy
+
+        let fcUnfilled = cabUnfilled.computedResonanceFc(for: driver.wooferTS)
+        let fcStuffed = cabStuffed.computedResonanceFc(for: driver.wooferTS)
+        XCTAssertGreaterThan(fcUnfilled, fcStuffed, "Stuffing volume gain must lower effective resonance Fc")
+
+        let simUnfilled = SimulationEngine.simulate(driver: driver, cabinet: cabUnfilled, crossover: crossover)
+        let simStuffed = SimulationEngine.simulate(driver: driver, cabinet: cabStuffed, crossover: crossover)
+
+        // Heavy stuffing adds absorption loss Qb, reducing the motional impedance peak height
+        let maxZUnfilled = simUnfilled.map { $0.wooferImpedanceMag }.max()!
+        let maxZStuffed = simStuffed.map { $0.wooferImpedanceMag }.max()!
+        XCTAssertGreaterThan(maxZUnfilled, maxZStuffed + 2.0, "Stuffing absorption loss Qb must reduce impedance peak height at resonance")
+    }
+
+    func testVentedBoxFourthOrderAcousticsAndImpedance() {
+        let driver = Altec604Data.createDriver()
+        var cabinet = SealedCabinet()
+        cabinet.enclosureType = .vented
+        cabinet.ventedAlignment = .qb3
+        cabinet.portDiameterCm = 10.2
+        cabinet.numberOfPorts = 1
+
+        let ts = driver.wooferTS
+
+        // 1. Check QB3 alignment volume and tuning calculations
+        let vb = cabinet.computedPhysicalVolumeLiters(for: ts)
+        let fb = cabinet.actualTuningFb(for: ts)
+        let f3 = cabinet.actualF3(for: ts)
+
+        // For Altec 604-8K: Fs=24, Qts=0.287, Vas=510:
+        // QB3 gives Vb ~ 126 L, Fb ~ 31 Hz, f3 ~ 39 Hz
+        XCTAssertGreaterThan(vb, 100.0)
+        XCTAssertLessThan(vb, 160.0)
+        XCTAssertEqual(fb, 31.0, accuracy: 4.0)
+        XCTAssertEqual(f3, 39.0, accuracy: 4.0)
+
+        // Compare f3 with sealed cabinet:
+        var sealedCab = cabinet
+        sealedCab.enclosureType = .sealed
+        sealedCab.alignment = .butterworth
+        let sealedF3 = sealedCab.actualF3(for: ts)
+        XCTAssertGreaterThan(sealedF3, f3 + 40.0, "Vented box must provide ~50-60 Hz deeper bass extension than sealed box for low Qts driver")
+
+        // 2. Check Port Dimensions
+        let lv = cabinet.computedPortLengthCm(for: ts)
+        let minDia = cabinet.minRecommendedPortDiameterCm(for: ts)
+        XCTAssertGreaterThan(lv, 2.0)
+        XCTAssertLessThan(lv, 30.0)
+        XCTAssertGreaterThan(minDia, 4.0)
+
+        // 3. Acoustic Transfer Function Magnitude and 4th-Order Rolloff
+        let h100 = cabinet.transferFunction(frequency: 100.0, ts: ts)
+        let h40 = cabinet.transferFunction(frequency: 40.0, ts: ts)
+        let h20 = cabinet.transferFunction(frequency: 20.0, ts: ts)
+
+        // Above Fb (passband): magnitude should be flat near 0 dB (1.0)
+        XCTAssertEqual(h100.magnitude, 1.0, accuracy: 0.15)
+
+        // Near f3 (~39 Hz): magnitude should be near -3 dB (~0.707)
+        XCTAssertEqual(h40.magnitude, 0.707, accuracy: 0.15)
+
+        // Below Fb (20 Hz): 4th-order roll-off (should be ~ -20 dB or lower, magnitude < 0.15)
+        XCTAssertLessThan(h20.magnitude, 0.15)
+
+        // 4. Twin-Peak Electrical Motional Impedance Curve
+        // Between FL and FH, impedance must have a local minimum near Helmholtz resonance Fb
+        let zAtFb = cabinet.ventedRawImpedance(frequency: fb, ts: ts).magnitude
+        let zBelowFb = cabinet.ventedRawImpedance(frequency: fb * 0.5, ts: ts).magnitude
+        let zAboveFb = cabinet.ventedRawImpedance(frequency: fb * 1.8, ts: ts).magnitude
+
+        XCTAssertGreaterThan(zBelowFb, zAtFb + 5.0, "Lower impedance peak FL must be higher than the Helmholtz minimum at Fb")
+        XCTAssertGreaterThan(zAboveFb, zAtFb + 10.0, "Upper impedance peak FH must be higher than the Helmholtz minimum at Fb")
+        XCTAssertLessThan(zAtFb, ts.re + 5.0, "Impedance at Fb must dip close to voice coil DC resistance Re")
+
+        // 5. Full Simulation with Vented Cabinet
+        let crossover = CrossoverNetwork(crossoverFrequency: 1500.0)
+        let points = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: crossover)
+        XCTAssertEqual(points.count, 201)
+
+        for p in points {
+            XCTAssertTrue(p.totalSystemSPL.isFinite)
+            XCTAssertTrue(p.wooferUnwrappedPhaseDeg.isFinite)
+            XCTAssertTrue(p.wooferGroupDelayMs.isFinite)
+            XCTAssertTrue(p.wooferImpedanceMag.isFinite)
+            XCTAssertTrue(p.totalSystemImpedanceMag.isFinite)
+        }
+
+        let stepPoints = SimulationEngine.computeStepResponse(driver: driver, cabinet: cabinet, crossover: crossover)
+        XCTAssertEqual(stepPoints.count, 201)
+        for sp in stepPoints {
+            XCTAssertTrue(sp.total.isFinite)
+            XCTAssertTrue(sp.woofer.isFinite)
+        }
+    }
 }

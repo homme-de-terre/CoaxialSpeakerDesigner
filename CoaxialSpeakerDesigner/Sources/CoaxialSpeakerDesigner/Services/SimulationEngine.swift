@@ -217,12 +217,15 @@ public enum SimulationEngine {
         return ComplexNumber(real: magLinear, imag: 0)
     }
     
-    /// Compute Woofer raw voice coil and sealed cabinet motional impedance Z_woofer,raw(f)
+    /// Compute Woofer raw voice coil and sealed/vented cabinet motional impedance Z_woofer,raw(f)
     private static func computeWooferRawImpedance(
         freq: Double,
         ts: WooferTSParameters,
         cabinet: SealedCabinet
     ) -> ComplexNumber {
+        if cabinet.enclosureType == .vented {
+            return cabinet.ventedRawImpedance(frequency: freq, ts: ts)
+        }
         let fc = cabinet.computedResonanceFc(for: ts)
         let qmc = cabinet.actualQmc(for: ts)
         let alpha = cabinet.computedComplianceAlpha(for: ts)

@@ -187,6 +187,13 @@ public struct SchematicView: View {
             rows.append(BOMRow(designator: "R2 (L-Pad)", type: "Wirewound / Metal Oxide Resistor", value: "\(String(format: "%.2f", r2)) Ω", spec: "10W Non-Inductive"))
         }
 
+        if viewModel.cabinet.enclosureType == .vented {
+            let lv = viewModel.cabinet.computedPortLengthCm(for: viewModel.driver.wooferTS)
+            let np = viewModel.cabinet.numberOfPorts
+            let dia = viewModel.cabinet.portDiameterCm
+            rows.append(BOMRow(designator: "Port Duct", type: "Bass-Reflex Helmholtz Port", value: "\(np)x Ø\(String(format: "%.1f", dia)) cm × \(String(format: "%.1f", lv)) cm", spec: "Rigid Port Duct, Flared Ends"))
+        }
+
         return rows
     }
 

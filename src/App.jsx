@@ -137,8 +137,13 @@ export default function App() {
     spl: 94.0
   });
 
-  // Sealed Cabinet State
+  // Enclosure Architecture & Cabinet State
+  const [enclosureType, setEnclosureType] = useState('sealed'); // 'sealed' | 'vented'
   const [alignment, setAlignment] = useState('butterworth'); // 'butterworth' | 'bessel' | 'critical' | 'custom' | 'targetF3'
+  const [ventedAlignment, setVentedAlignment] = useState('qb3'); // 'qb3' | 'b4' | 'sc4' | 'custom'
+  const [tuningFb, setTuningFb] = useState(35.0);
+  const [portDiameterCm, setPortDiameterCm] = useState(10.2);
+  const [portCount, setPortCount] = useState(1);
   const [targetF3, setTargetF3] = useState(58.0);
   const [customQtc, setCustomQtc] = useState(0.707);
   const [stuffingGain, setStuffingGain] = useState(1.00); // 1.00 (Unfilled / Standard Vb), 1.10 (Light), 1.18 (Medium), 1.25 (Heavy)
@@ -182,7 +187,7 @@ export default function App() {
   const stepCanvasRef = useRef(null);
   const groupDelayCanvasRef = useRef(null);
 
-  // --- Sealed Cabinet Computations ---
+  // --- Enclosure & Cabinet Computations (Sealed 2nd-Order & Vented 4th-Order) ---
   const cabinetCalculations = useMemo(() => {
     // Determine effective Qts
     const effectiveQts = (ts.qts && ts.qts > 0)
@@ -200,6 +205,90 @@ export default function App() {
 
     const minFeasibleF3 = ts.fs * (0.7071 / Math.max(effectiveQts, 0.01));
 
+    if (enclosureType === 'vented') {
+      // Vented 4th-Order (Bass-Reflex) Enclosure Calculations
+      let ventedAcousticVb = 25.0;
+      let fb = tuningFb;
+
+      if (manualVbOverride || ventedAlignment === 'custom') {
+        ventedAcousticVb = manualVbLiters * stuffingGain;
+        fb = tuningFb;
+      } else {
+        const vas = Math.max(ts.vas, 10.0);
+        const fs = Math.max(ts.fs, 15.0);
+        if (ventedAlignment === 'qb3') {
+          ventedAcousticVb = Math.max(3.0 * Math.pow(effectiveQts, 2.0) * vas, 5.0);
+          fb = Math.min(Math.max(0.42 * Math.pow(Math.max(effectiveQts, 0.1), -0.9) * fs, 18.0), 120.0);
+        } else if (ventedAlignment === 'b4') {
+          ventedAcousticVb = Math.max(11.0 * Math.pow(effectiveQts, 3.3) * vas, 5.0);
+          fb = Math.min(Math.max(0.42 * Math.pow(Math.max(effectiveQts, 0.1), -0.9) * fs, 18.0), 120.0);
+        } else if (ventedAlignment === 'sc4') {
+          ventedAcousticVb = Math.max(2.0 * Math.pow(effectiveQts, 1.5) * vas, 5.0);
+          fb = Math.min(Math.max(0.85 * fs, 18.0), 120.0);
+        }
+      }
+
+      const physicalVb = manualVbOverride ? manualVbLiters : (ventedAcousticVb / stuffingGain);
+      const physicalCuFt = physicalVb / 28.3168;
+      const alpha = ts.vas / Math.max(ventedAcousticVb, 0.1);
+      const fc = ts.fs * Math.sqrt(1 + alpha);
+      const actualQtc = effectiveQts * Math.sqrt(1 + alpha);
+
+      // Port duct length calculation: Lv = (23562.5 * Dv^2 * Np) / (Fb^2 * Vb) - 0.732 * Dv
+      const dv = Math.max(portDiameterCm, 2.0);
+      const np = Math.max(portCount, 1);
+      const numPort = 23562.5 * Math.pow(dv, 2.0) * np;
+      const denPort = Math.pow(fb, 2.0) * Math.max(physicalVb, 1.0);
+      const portLengthCm = Math.max((numPort / denPort) - (0.732 * dv), 0.5);
+
+      // Minimum port diameter to prevent chuffing:
+      const dMin = (0.15 * Math.sqrt(fb * Math.max(ts.sd, 50.0) * Math.max(ts.xmax, 1.0))) / Math.sqrt(np);
+
+      // Vented 4th-order cutoff f3 calculation (root finding where |H(f)| = 1/sqrt(2))
+      const fs = Math.max(ts.fs, 1.0);
+      const h = fb / fs;
+      const ql = 15.0;
+      const c0 = h * h;
+      const c1 = (h * h) / effectiveQts + h / ql;
+      const c2 = 1.0 + h * h + alpha + h / (effectiveQts * ql);
+      const c3 = 1.0 / effectiveQts + h / ql;
+
+      const evalVentedMag = (fVal) => {
+        const fn = fVal / fs;
+        const reD = Math.pow(fn, 4) - c2 * Math.pow(fn, 2) + c0;
+        const imD = -c3 * Math.pow(fn, 3) + c1 * fn;
+        return Math.pow(fn, 4) / Math.hypot(reD, imD);
+      };
+
+      let lowF = 0.25 * fs, highF = 3.5 * fs;
+      const targetMag = 1.0 / Math.SQRT2;
+      for (let iter = 0; iter < 25; iter++) {
+        const midF = (lowF + highF) / 2.0;
+        if (evalVentedMag(midF) < targetMag) lowF = midF;
+        else highF = midF;
+      }
+      const actualF3 = (lowF + highF) / 2.0;
+
+      return {
+        enclosureType: 'vented',
+        vb: physicalVb,
+        acousticVb: ventedAcousticVb,
+        physicalCuFt,
+        fc,
+        fb,
+        alpha,
+        actualQtc,
+        actualF3,
+        portLengthCm,
+        minPortDiameterCm: Math.max(parseFloat(dMin.toFixed(1)), 3.0),
+        effectiveQts,
+        qbVal,
+        minFeasibleF3,
+        warningMsg
+      };
+    }
+
+    // Sealed Box 2nd-Order Calculations
     if (manualVbOverride) {
       baseAlpha = ts.vas / Math.max(manualVbLiters, 0.1);
     } else if (alignment === 'targetF3') {
@@ -250,8 +339,24 @@ export default function App() {
     const x = (B + Math.sqrt(B * B + 4.0)) / 2.0;
     const actualF3 = fc * Math.sqrt(x);
 
-    return { vb: physicalVb, acousticVb, physicalCuFt, fc, alpha, actualQtc, actualF3, effectiveQts, qbVal, minFeasibleF3, warningMsg };
-  }, [ts, alignment, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
+    return {
+      enclosureType: 'sealed',
+      vb: physicalVb,
+      acousticVb,
+      physicalCuFt,
+      fc,
+      fb: fc,
+      alpha,
+      actualQtc,
+      actualF3,
+      portLengthCm: 0,
+      minPortDiameterCm: 0,
+      effectiveQts,
+      qbVal,
+      minFeasibleF3,
+      warningMsg
+    };
+  }, [ts, enclosureType, alignment, ventedAlignment, tuningFb, portDiameterCm, portCount, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
 
   // --- Interpolate Raw Acoustic SPL from Digitized Curve Points ---
   function interpolateCurveSPL(freq, curve) {
@@ -575,10 +680,31 @@ export default function App() {
       const pWooferRawLinear = Math.pow(10, pWooferRawSPL / 20.0);
       const pWooferRawComp = new Complex(pWooferRawLinear, 0);
 
-      // Cabinet H_cab(s) = s^2 / (s^2 + (wc/Qtc)s + wc^2)
-      const numCab = new Complex(-w * w, 0);
-      const denCab = new Complex(wc * wc - w * w, (w * wc) / qtc);
-      const hCab = numCab.div(denCab);
+      // Cabinet H_cab(s)
+      let hCab;
+      if (cabinetCalculations.enclosureType === 'vented') {
+        const fs = Math.max(ts.fs, 1.0);
+        const fb = cabinetCalculations.fb;
+        const fn = f / fs;
+        const h = fb / fs;
+        const ql = 15.0;
+        const qts = Math.max(cabinetCalculations.effectiveQts, 0.05);
+        const alpha = Math.max(cabinetCalculations.alpha, 0.01);
+        const c0 = h * h;
+        const c1 = (h * h) / qts + h / ql;
+        const c2 = 1.0 + h * h + alpha + h / (qts * ql);
+        const c3 = 1.0 / qts + h / ql;
+        const reD = Math.pow(fn, 4) - c2 * Math.pow(fn, 2) + c0;
+        const imD = -c3 * Math.pow(fn, 3) + c1 * fn;
+        const denCab = new Complex(reD, imD);
+        const numCab = new Complex(Math.pow(fn, 4), 0);
+        hCab = numCab.div(denCab);
+      } else {
+        // Sealed box H_cab(s) = s^2 / (s^2 + (wc/Qtc)s + wc^2)
+        const numCab = new Complex(-w * w, 0);
+        const denCab = new Complex(wc * wc - w * w, (w * wc) / qtc);
+        hCab = numCab.div(denCab);
+      }
 
       const pWooferCab = pWooferRawComp.mul(hCab);
 
@@ -651,16 +777,41 @@ export default function App() {
       // 4. Electrical Load Impedance
       const reW = ts.re;
       const leW = ts.le / 1000.0;
-      const qb = cabinetCalculations.qbVal;
-      const effectiveQms = ts.qms > 0 ? ts.qms : 4.5;
-      const qmsBox = effectiveQms * Math.sqrt(1 + cabinetCalculations.alpha);
-      const qmc = (qmsBox * qb) / (qmsBox + qb);
-      const resW = reW * (effectiveQms / Math.max(ts.qes, 0.01)) * (qb / (qmsBox + qb));
-      const deltaF = (f / fc) - (fc / f);
-      const denomMotional = 1.0 + Math.pow(qmc * deltaF, 2);
-      const rMotional = resW / denomMotional;
-      const xMotional = -resW * (qmc * deltaF) / denomMotional;
-      const zWooferRaw = new Complex(reW + rMotional, w * leW + xMotional);
+      let zWooferRaw;
+
+      if (cabinetCalculations.enclosureType === 'vented') {
+        const fs = Math.max(ts.fs, 1.0);
+        const qms = Math.max(ts.qms, 0.5);
+        const qes = Math.max(ts.qes, 0.05);
+        const fb = cabinetCalculations.fb;
+        const h = fb / fs;
+        const ql = 15.0;
+        const alpha = Math.max(cabinetCalculations.alpha, 0.01);
+        const res = reW * (qms / qes);
+        const fn = Math.max(f / fs, 1e-4);
+
+        const sn = new Complex(0, fn);
+        const denPort = sn.add(new Complex(h / ql, 0));
+        const zPort = new Complex(h * h, 0).div(denPort);
+        const denCab = sn.add(zPort);
+        const zCab = new Complex(alpha, 0).div(denCab);
+
+        const invSn = new Complex(1, 0).div(sn);
+        const zMech = new Complex(1 / qms, 0).add(sn).add(invSn).add(zCab);
+        const zMotional = new Complex(res / qms, 0).div(zMech);
+        zWooferRaw = new Complex(reW, w * leW).add(zMotional);
+      } else {
+        const qb = cabinetCalculations.qbVal;
+        const effectiveQms = ts.qms > 0 ? ts.qms : 4.5;
+        const qmsBox = effectiveQms * Math.sqrt(1 + cabinetCalculations.alpha);
+        const qmc = (qmsBox * qb) / (qmsBox + qb);
+        const resW = reW * (effectiveQms / Math.max(ts.qes, 0.01)) * (qb / (qmsBox + qb));
+        const deltaF = (f / fc) - (fc / f);
+        const denomMotional = 1.0 + Math.pow(qmc * deltaF, 2);
+        const rMotional = resW / denomMotional;
+        const xMotional = -resW * (qmc * deltaF) / denomMotional;
+        zWooferRaw = new Complex(reW + rMotional, w * leW + xMotional);
+      }
 
       let zWooferVoiceCoil = zWooferRaw;
       if (enableZobel) {
@@ -1111,6 +1262,91 @@ export default function App() {
     if (showTotalSystem) drawGDCurve('totalGD', '#22c55e', 2.5);
   }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem, fx]);
 
+  // --- Render System Electrical Load Impedance Plot ---
+  useEffect(() => {
+    const canvas = impedanceCanvasRef.current;
+    if (!canvas || activeTab !== 'impedance' || simulationData.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const minF = 20.0;
+    const maxF = 20000.0;
+    const logMin = Math.log10(minF);
+    const logMax = Math.log10(maxF);
+    const maxZ = 100.0; // 0 to 100 Ohms
+
+    // Crossover handover band highlight
+    const actualWooferFx = enableIndependentFx ? wooferFx : fx;
+    const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
+    const f1 = Math.max(minF, Math.min(actualWooferFx, actualTweeterFx) / 2.0);
+    const f2 = Math.min(maxF, Math.max(actualWooferFx, actualTweeterFx) * 2.0);
+    const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
+    const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
+    ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
+    ctx.fillRect(x1, 0, x2 - x1, height);
+
+    // Vertical Frequency Gridlines
+    const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px sans-serif';
+
+    freqs.forEach(f => {
+      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+      ctx.fillText(f >= 1000 ? `${f / 1000}k` : `${f}`, x + 4, height - 8);
+    });
+
+    // Horizontal Impedance Gridlines (0 to 100 Ohms, step 10)
+    for (let z = 0; z <= maxZ; z += 10) {
+      const y = height * (1 - z / maxZ);
+      ctx.strokeStyle = z === 0 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = z === 0 ? 1.5 : 1;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+      ctx.fillText(`${z} Ω`, 8, y - 4);
+    }
+
+    function toCanvas(f, zVal) {
+      const clamped = Math.max(Math.min(zVal, maxZ), 0.0);
+      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+      const y = height * (1 - clamped / maxZ);
+      return [x, y];
+    }
+
+    function drawZCurve(dataKey, color, lineWidth = 2) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.beginPath();
+      let started = false;
+      simulationData.forEach(p => {
+        const val = p[dataKey];
+        if (val === undefined || !Number.isFinite(val)) return;
+        const [x, y] = toCanvas(p.frequency, val);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+    }
+
+    if (showWoofer) drawZCurve('zWooferMag', '#3b82f6', 1.8);
+    if (showTweeter) drawZCurve('zTweeterMag', '#ef4444', 1.8);
+    if (showTotalSystem) drawZCurve('zTotalMag', '#a855f7', 2.5);
+  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem, enableIndependentFx, wooferFx, tweeterFx, fx]);
+
   // --- Step Response Transient Simulation Engine ---
   const stepResponseData = useMemo(() => {
     const N = 1024;
@@ -1126,6 +1362,7 @@ export default function App() {
 
     const delaySec = (acousticDelayMM / 1000.0) / 343.0;
     const polaritySign = invertTweeterPolarity ? -1.0 : 1.0;
+    const lpadGain = (enableLPad && lpadAttenDB > 0) ? Math.pow(10, -lpadAttenDB / 20.0) : 1.0;
     const actualWooferFx = enableIndependentFx ? wooferFx : fx;
     const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
 
@@ -1134,13 +1371,34 @@ export default function App() {
       const sW = f / Math.max(actualWooferFx, 1.0);
       const sT = f / Math.max(actualTweeterFx, 1.0);
 
-      const fRatio = f / Math.max(cabinetCalculations.fc, 1.0);
-      const sCab = Math.pow(fRatio, 2);
-      const denomCabR = 1.0 - sCab;
-      const denomCabI = fRatio / Math.max(cabinetCalculations.actualQtc, 0.1);
-      const dCabMag2 = denomCabR * denomCabR + denomCabI * denomCabI;
-      const hCabR = (sCab * denomCabR) / dCabMag2;
-      const hCabI = (-sCab * denomCabI) / dCabMag2;
+      let hCabR, hCabI;
+      if (cabinetCalculations.enclosureType === 'vented') {
+        const fs = Math.max(ts.fs, 1.0);
+        const fb = cabinetCalculations.fb;
+        const fn = f / fs;
+        const h = fb / fs;
+        const ql = 15.0;
+        const qts = Math.max(cabinetCalculations.effectiveQts, 0.05);
+        const alpha = Math.max(cabinetCalculations.alpha, 0.01);
+        const c0 = h * h;
+        const c1 = (h * h) / qts + h / ql;
+        const c2 = 1.0 + h * h + alpha + h / (qts * ql);
+        const c3 = 1.0 / qts + h / ql;
+        const reD = Math.pow(fn, 4) - c2 * Math.pow(fn, 2) + c0;
+        const imD = -c3 * Math.pow(fn, 3) + c1 * fn;
+        const denM2 = reD * reD + imD * imD;
+        const num = Math.pow(fn, 4);
+        hCabR = (num * reD) / denM2;
+        hCabI = (-num * imD) / denM2;
+      } else {
+        const fRatio = f / Math.max(cabinetCalculations.fc, 1.0);
+        const sCab = Math.pow(fRatio, 2);
+        const denomCabR = 1.0 - sCab;
+        const denomCabI = fRatio / Math.max(cabinetCalculations.actualQtc, 0.1);
+        const dCabMag2 = denomCabR * denomCabR + denomCabI * denomCabI;
+        hCabR = (-sCab * denomCabR) / dCabMag2;
+        hCabI = (sCab * denomCabI) / dCabMag2;
+      }
 
       let hLPR = 1.0, hLPI = 0.0;
       if (wooferOrder === 'firstOrder') {
@@ -1168,8 +1426,19 @@ export default function App() {
         hAPI = (-2.0 * dR * dI) / dM2;
       }
 
-      const pW_raw_R = hCabR * hLPR - hCabI * hLPI;
-      const pW_raw_I = hCabR * hLPI + hCabI * hLPR;
+      let pWooferLinear = 1.0;
+      if (wooferCurve && wooferCurve.length > 0) {
+        const spl = interpolateCurveSPL(f, wooferCurve);
+        if (spl !== null) pWooferLinear = Math.pow(10, (spl - 90.0) / 20.0);
+      }
+      let pTweeterLinear = 1.0;
+      if (tweeterCurve && tweeterCurve.length > 0) {
+        const spl = interpolateCurveSPL(f, tweeterCurve);
+        if (spl !== null) pTweeterLinear = Math.pow(10, (spl - 90.0) / 20.0);
+      }
+
+      const pW_raw_R = (hCabR * hLPR - hCabI * hLPI) * pWooferLinear;
+      const pW_raw_I = (hCabR * hLPI + hCabI * hLPR) * pWooferLinear;
       const pWR = pW_raw_R * hAPR - pW_raw_I * hAPI;
       const pWI = pW_raw_R * hAPI + pW_raw_I * hAPR;
 
@@ -1191,8 +1460,8 @@ export default function App() {
       const cosD = Math.cos(phaseDelay) * polaritySign;
       const sinD = Math.sin(phaseDelay) * polaritySign;
 
-      const pTR = hHPR * cosD - hHPI * sinD;
-      const pTI = hHPR * sinD + hHPI * cosD;
+      const pTR = (hHPR * cosD - hHPI * sinD) * lpadGain * pTweeterLinear;
+      const pTI = (hHPR * sinD + hHPI * cosD) * lpadGain * pTweeterLinear;
 
       const rollOff = Math.exp(-Math.pow(f / 21000.0, 4.0));
 
@@ -1293,7 +1562,7 @@ export default function App() {
     }
 
     return points;
-  }, [cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization]);
+  }, [cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, enableLPad, lpadAttenDB, wooferCurve, tweeterCurve, ts.fs]);
 
   // --- Render Step Response Plot ---
   useEffect(() => {
@@ -1956,6 +2225,7 @@ export default function App() {
             <button onClick={() => setActiveTab('phase')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'phase' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Phase & Delay</button>
             <button onClick={() => setActiveTab('delay')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'delay' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Group Delay</button>
             <button onClick={() => setActiveTab('step')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'step' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Step Response</button>
+            <button onClick={() => setActiveTab('impedance')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'impedance' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>System Impedance</button>
             <button onClick={() => setActiveTab('cabinet')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'cabinet' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Sealed Cabinet</button>
             <button onClick={() => setActiveTab('crossover')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'crossover' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Crossover Designer</button>
             <button onClick={() => setActiveTab('bom')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'bom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Schematic & BOM</button>
@@ -2171,25 +2441,103 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === 'impedance' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-white">System Electrical Load Impedance (|Z| in Ohms vs Log Hz)</h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Sealed Box Resonance Fc: {cabinetCalculations.fc.toFixed(1)} Hz • Box Alpha: {cabinetCalculations.alpha.toFixed(2)} • Enclosure Qb: {cabinetCalculations.qbVal.toFixed(1)} • Min System Load: {Math.min(...simulationData.map(p => p.zTotalMag || 100)).toFixed(1)} Ω
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowWoofer(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showWoofer ? 'bg-blue-950/60 border-blue-500 text-blue-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showWoofer ? 'bg-blue-500' : 'bg-slate-600'}`}></span>
+                    <span>Woofer |Z|</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTweeter(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTweeter ? 'bg-red-950/60 border-red-500 text-red-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTweeter ? 'bg-red-500' : 'bg-slate-600'}`}></span>
+                    <span>Tweeter |Z|</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTotalSystem(prev => !prev)}
+                    className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md border transition cursor-pointer ${showTotalSystem ? 'bg-purple-950/60 border-purple-500 text-purple-300' : 'bg-slate-800/40 border-slate-700 text-slate-500'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-purple-500' : 'bg-slate-600'}`}></span>
+                    <span>System Load |Z|</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
+                <canvas ref={impedanceCanvasRef} width={800} height={400} className="w-full h-[400px]" />
+              </div>
+            </div>
+          )}
+
           {activeTab === 'cabinet' && (
             <div className="max-w-3xl space-y-6">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-white flex items-center space-x-2"><Box className="text-blue-400" /><span>Closed (Sealed) Cabinet Designer</span></h2>
+                <h2 className="text-xl font-bold text-white flex items-center space-x-2">
+                  <Box className="text-blue-400" />
+                  <span>{enclosureType === 'sealed' ? 'Closed (Sealed) Cabinet Designer' : '4th-Order Vented (Bass-Reflex) Designer'}</span>
+                </h2>
                 <button
-                  onClick={() => setTargetF3(prev => prev)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs px-3 py-2 rounded-lg flex items-center space-x-2 transition"
+                  type="button"
+                  onClick={() => {
+                    const typeStr = enclosureType === 'vented' ? `Vented (Fb = ${cabinetCalculations.fb.toFixed(1)} Hz)` : `Sealed (Qtc = ${cabinetCalculations.actualQtc.toFixed(3)})`;
+                    setStatusMsg(`Simulation updated: ${typeStr}, Vb = ${cabinetCalculations.vb.toFixed(1)} L, f3 = ${cabinetCalculations.actualF3.toFixed(1)} Hz.`);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs px-3 py-2 rounded-lg flex items-center space-x-2 transition cursor-pointer"
                 >
                   <RefreshCw className="w-4 h-4" />
                   <span>Restart Simulation</span>
                 </button>
               </div>
 
-              {cabinetCalculations.effectiveQts < 0.40 && (
+              {/* Architecture Selector */}
+              <div className="flex items-center space-x-3 p-1.5 bg-slate-900 border border-slate-800 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setEnclosureType('sealed')}
+                  className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${enclosureType === 'sealed' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Sealed Enclosure (2nd-Order, 12 dB/oct)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEnclosureType('vented')}
+                  className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${enclosureType === 'vented' ? 'bg-teal-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Vented Bass-Reflex (4th-Order, 24 dB/oct)
+                </button>
+              </div>
+
+              {enclosureType === 'sealed' && cabinetCalculations.effectiveQts < 0.40 && (
                 <div className="bg-blue-500/10 border border-blue-500/30 text-blue-300 p-4 rounded-xl text-xs flex items-start space-x-2.5">
                   <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-semibold text-white mb-0.5">Pro-Audio Coaxial Driver Acoustic Note (Qts = {cabinetCalculations.effectiveQts.toFixed(3)})</p>
-                    <p className="text-slate-300 text-[11px] leading-relaxed">High-efficiency pro-audio coaxial woofers naturally have low Qts (0.25–0.35) and produce f3 ≈ 100–113 Hz in a sealed cabinet. For full-range bass extension down to 40–50 Hz, a Bass-Reflex (Vented) cabinet alignment or active EQ is standard.</p>
+                    <p className="font-semibold text-white mb-0.5">Pro-Audio Coaxial Driver Note (Qts = {cabinetCalculations.effectiveQts.toFixed(3)})</p>
+                    <p className="text-slate-300 text-[11px] leading-relaxed">High-efficiency coaxial woofers naturally have low Qts (0.25–0.35) and produce f3 ≈ 90–115 Hz in a sealed cabinet. Switch to <strong>Vented Bass-Reflex</strong> above to extend low-bass extension down to 35–45 Hz.</p>
+                  </div>
+                </div>
+              )}
+
+              {enclosureType === 'vented' && (
+                <div className="bg-teal-500/10 border border-teal-500/30 text-teal-300 p-4 rounded-xl text-xs flex items-start space-x-2.5">
+                  <Box className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-white mb-0.5">4th-Order Helmholtz Acoustic Loading Active</p>
+                    <p className="text-slate-300 text-[11px] leading-relaxed">Bass-reflex loading controls driver cone excursion at port resonance Fb ({cabinetCalculations.fb.toFixed(1)} Hz) and extends -3 dB cutoff to {cabinetCalculations.actualF3.toFixed(1)} Hz with a 24 dB/oct steep high-pass acoustic slope.</p>
                   </div>
                 </div>
               )}
@@ -2202,29 +2550,80 @@ export default function App() {
               )}
 
               <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-4">
-                <div>
-                  <label className="text-slate-400 text-xs">Alignment Design Mode</label>
-                  <select value={alignment} onChange={(e) => setAlignment(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-2 text-white mt-1 text-xs">
-                    <option value="targetF3">Target Cut-off Frequency (f3)</option>
-                    <option value="butterworth">Butterworth B2 (Qtc = 0.707 - Maximally Flat)</option>
-                    <option value="bessel">Bessel (Qtc = 0.577 - Best Transient Response)</option>
-                    <option value="critical">Critically Damped (Qtc = 0.500 - No Overshoot)</option>
-                    <option value="custom">Custom Qtc Alignment</option>
-                  </select>
-                </div>
+                {enclosureType === 'sealed' ? (
+                  <>
+                    <div>
+                      <label className="text-slate-400 text-xs">Sealed Alignment Design Mode</label>
+                      <select value={alignment} onChange={(e) => setAlignment(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-2 text-white mt-1 text-xs">
+                        <option value="targetF3">Target Cut-off Frequency (f3)</option>
+                        <option value="butterworth">Butterworth B2 (Qtc = 0.707 - Maximally Flat)</option>
+                        <option value="bessel">Bessel (Qtc = 0.577 - Best Transient Response)</option>
+                        <option value="critical">Critically Damped (Qtc = 0.500 - No Overshoot)</option>
+                        <option value="custom">Custom Qtc Alignment</option>
+                      </select>
+                    </div>
 
-                {alignment === 'targetF3' && (
-                  <div>
-                    <label className="text-xs font-semibold text-slate-400">Target Lower -3 dB Cut-off Frequency (f3): {targetF3} Hz</label>
-                    <input type="range" min="30" max="200" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
-                  </div>
-                )}
+                    {alignment === 'targetF3' && (
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400">Target Lower -3 dB Cut-off Frequency (f3): {targetF3} Hz</label>
+                        <input type="range" min="30" max="200" value={targetF3} onChange={(e) => setTargetF3(+e.target.value)} className="w-full mt-2" />
+                      </div>
+                    )}
 
-                {alignment === 'custom' && (
-                  <div>
-                    <label className="text-xs font-semibold text-slate-400">Target Total System Q (Qtc): {customQtc.toFixed(3)}</label>
-                    <input type="range" min="0.35" max="1.20" step="0.01" value={customQtc} onChange={(e) => setCustomQtc(+e.target.value)} className="w-full mt-2" />
-                  </div>
+                    {alignment === 'custom' && (
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400">Target Total System Q (Qtc): {customQtc.toFixed(3)}</label>
+                        <input type="range" min="0.35" max="1.20" step="0.01" value={customQtc} onChange={(e) => setCustomQtc(+e.target.value)} className="w-full mt-2" />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="text-slate-400 text-xs">Vented Alignment Preset</label>
+                      <select value={ventedAlignment} onChange={(e) => setVentedAlignment(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-2 text-white mt-1 text-xs">
+                        <option value="qb3">QB3 (Quasi-Butterworth 3 - Best for Low Qts Pro Transducers)</option>
+                        <option value="b4">B4 (Butterworth 4 - Maximally Flat)</option>
+                        <option value="sc4">SC4 (Sub-Chebyshev 4 - Compact Enclosure)</option>
+                        <option value="custom">Custom Tuning (Fb & Vb)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-xs">
+                        <label className="font-semibold text-teal-300">Port Helmholtz Tuning Frequency (Fb): {cabinetCalculations.fb.toFixed(1)} Hz</label>
+                      </div>
+                      <input type="range" min="18" max="80" step="0.5" value={tuningFb} onChange={(e) => setTuningFb(+e.target.value)} className="w-full mt-2" />
+                    </div>
+
+                    <div className="space-y-3 p-3 bg-slate-800/50 border border-slate-700/60 rounded-lg text-xs">
+                      <div className="font-semibold text-slate-200">Port Duct Dimensions & Anti-Chuffing Design</div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-slate-400">Port Duct Diameter (Dv): {portDiameterCm} cm ({(portDiameterCm / 2.54).toFixed(1)} in)</label>
+                          <input type="range" min="5" max="20" step="0.5" value={portDiameterCm} onChange={(e) => setPortDiameterCm(+e.target.value)} className="w-full mt-1.5" />
+                        </div>
+                        <div>
+                          <label className="text-slate-400">Number of Ports</label>
+                          <select value={portCount} onChange={(e) => setPortCount(+e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-white mt-1">
+                            <option value={1}>1 Port Tube</option>
+                            <option value={2}>2 Port Tubes</option>
+                            <option value={3}>3 Port Tubes</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-700/50 text-[11px]">
+                        <div>
+                          <span className="text-slate-400">Calculated Port Duct Length: </span>
+                          <span className="font-bold text-teal-300">{cabinetCalculations.portLengthCm.toFixed(1)} cm ({(cabinetCalculations.portLengthCm / 2.54).toFixed(2)} inches)</span>
+                        </div>
+                        <div className={portDiameterCm < cabinetCalculations.minPortDiameterCm ? "text-amber-300" : "text-slate-400"}>
+                          <span>Min Recommended Port Dia: ≥ {cabinetCalculations.minPortDiameterCm.toFixed(1)} cm</span>
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
 
                 <div>
@@ -2248,16 +2647,29 @@ export default function App() {
                     <span>Manual Enclosure Volume Override (Vb)</span>
                   </label>
                   {manualVbOverride && (
-                    <div className="mt-2 flex items-center space-x-3 text-xs">
-                      <span className="text-slate-400">Net Internal Volume:</span>
+                    <div className="mt-2 space-y-2 text-xs">
+                      <div className="flex items-center space-x-3">
+                        <span className="text-slate-400">Net Internal Volume:</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="5"
+                          max="300"
+                          value={manualVbLiters}
+                          onChange={(e) => setManualVbLiters(+e.target.value)}
+                          className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-white w-24 font-mono"
+                        />
+                        <span className="text-slate-400">Liters ({(manualVbLiters / 28.3168).toFixed(2)} ft³)</span>
+                      </div>
                       <input
-                        type="number"
+                        type="range"
+                        min="5"
+                        max="300"
                         step="0.5"
                         value={manualVbLiters}
                         onChange={(e) => setManualVbLiters(+e.target.value)}
-                        className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-white w-24"
+                        className="w-full"
                       />
-                      <span className="text-slate-400">Liters ({(manualVbLiters / 28.3168).toFixed(2)} ft³)</span>
                     </div>
                   )}
                 </div>
@@ -2273,12 +2685,12 @@ export default function App() {
                     <p className="text-xl font-bold text-teal-400 mt-1">{cabinetCalculations.acousticVb.toFixed(2)} L</p>
                   </div>
                   <div className="bg-slate-800 p-3.5 rounded-lg">
-                    <p className="text-slate-400">System Resonance (Fc)</p>
-                    <p className="text-xl font-bold text-emerald-400 mt-1">{cabinetCalculations.fc.toFixed(1)} Hz</p>
+                    <p className="text-slate-400">{enclosureType === 'vented' ? 'Port Tuning (Fb)' : 'System Resonance (Fc)'}</p>
+                    <p className="text-xl font-bold text-emerald-400 mt-1">{enclosureType === 'vented' ? cabinetCalculations.fb.toFixed(1) : cabinetCalculations.fc.toFixed(1)} Hz</p>
                   </div>
                   <div className="bg-slate-800 p-3.5 rounded-lg">
-                    <p className="text-slate-400">Total System Q (Qtc)</p>
-                    <p className="text-xl font-bold text-purple-400 mt-1">{cabinetCalculations.actualQtc.toFixed(3)}</p>
+                    <p className="text-slate-400">{enclosureType === 'vented' ? 'Required Port Length' : 'Total System Q (Qtc)'}</p>
+                    <p className="text-xl font-bold text-purple-400 mt-1">{enclosureType === 'vented' ? `${cabinetCalculations.portLengthCm.toFixed(1)} cm` : cabinetCalculations.actualQtc.toFixed(3)}</p>
                   </div>
                   <div className="bg-slate-800 p-3.5 rounded-lg">
                     <p className="text-slate-400">Cutoff Frequency (f3)</p>
@@ -2293,58 +2705,80 @@ export default function App() {
 
               {/* Sizing Comparison Matrix Table */}
               <div className="bg-slate-900 p-5 rounded-xl border border-slate-800 space-y-3 text-xs">
-                <h3 className="font-bold text-slate-200">Qtc vs Box Volume Sizing Matrix for {driverName}</h3>
-                <p className="text-slate-400 text-[11px]">Comparison of required physical box volumes and resulting cutoff frequencies across target alignments for driver Qts = {cabinetCalculations.effectiveQts.toFixed(3)}:</p>
+                <h3 className="font-bold text-slate-200">
+                  {enclosureType === 'vented' ? `Vented & Sealed Alignment Comparison for ${driverName}` : `Qtc vs Box Volume Sizing Matrix for ${driverName}`}
+                </h3>
+                <p className="text-slate-400 text-[11px]">
+                  Comparison of required physical box volumes and resulting cutoff frequencies for driver Qts = {cabinetCalculations.effectiveQts.toFixed(3)}:
+                </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-slate-300">
                     <thead className="text-[11px] text-slate-400 uppercase border-b border-slate-800">
                       <tr>
                         <th className="py-2 px-2">Alignment</th>
-                        <th className="py-2 px-2">Target Qtc</th>
+                        <th className="py-2 px-2">Type</th>
                         <th className="py-2 px-2">Physical Vb (L)</th>
                         <th className="py-2 px-2">Physical Vb (cu ft)</th>
-                        <th className="py-2 px-2">Resonance (Fc)</th>
+                        <th className="py-2 px-2">Tuning / Res</th>
                         <th className="py-2 px-2">Cutoff (f3)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
-                      {[
-                        ["Butterworth B2", 0.7071],
-                        ["Bessel Alignment", 0.5774],
-                        ["Critically Damped", 0.5000],
-                        ["Extended Low Q", 0.4500],
-                        ["Large Box Low Q", 0.4000]
-                      ].map(([name, targetQ]) => {
-                        const effQ = cabinetCalculations.effectiveQts;
-                        if (targetQ <= effQ) {
+                      {enclosureType === 'vented' ? (
+                        [
+                          { name: "QB3 (Quasi-Butterworth)", type: "Vented", vb: 3.0 * Math.pow(cabinetCalculations.effectiveQts, 2.0) * ts.vas / stuffingGain, fb: 0.42 * Math.pow(Math.max(cabinetCalculations.effectiveQts, 0.1), -0.9) * ts.fs, f3: 0.26 * Math.pow(Math.max(cabinetCalculations.effectiveQts, 0.1), -1.4) * ts.fs },
+                          { name: "B4 (Butterworth 4)", type: "Vented", vb: 11.0 * Math.pow(cabinetCalculations.effectiveQts, 3.3) * ts.vas / stuffingGain, fb: 0.42 * Math.pow(Math.max(cabinetCalculations.effectiveQts, 0.1), -0.9) * ts.fs, f3: ts.fs },
+                          { name: "SC4 (Sub-Chebyshev)", type: "Vented", vb: 2.0 * Math.pow(cabinetCalculations.effectiveQts, 1.5) * ts.vas / stuffingGain, fb: 0.85 * ts.fs, f3: 0.35 * Math.pow(Math.max(cabinetCalculations.effectiveQts, 0.1), -1.1) * ts.fs },
+                          { name: "Butterworth B2", type: "Sealed", vb: (ts.vas / (Math.pow(0.7071 / Math.max(cabinetCalculations.effectiveQts, 0.01), 2) - 1.0)) / stuffingGain, fb: ts.fs * (0.7071 / Math.max(cabinetCalculations.effectiveQts, 0.01)), f3: ts.fs * (0.7071 / Math.max(cabinetCalculations.effectiveQts, 0.01)) }
+                        ].map((row) => (
+                          <tr key={row.name}>
+                            <td className="py-2 px-2 font-medium text-teal-400">{row.name}</td>
+                            <td className="py-2 px-2 text-slate-400">{row.type}</td>
+                            <td className="py-2 px-2 font-semibold text-white">{Math.max(row.vb, 5.0).toFixed(1)} L</td>
+                            <td className="py-2 px-2">{(Math.max(row.vb, 5.0) / 28.3168).toFixed(2)} ft³</td>
+                            <td className="py-2 px-2">{row.fb.toFixed(1)} Hz</td>
+                            <td className="py-2 px-2 font-bold text-green-400">{row.f3.toFixed(1)} Hz</td>
+                          </tr>
+                        ))
+                      ) : (
+                        [
+                          ["Butterworth B2", 0.7071],
+                          ["Bessel Alignment", 0.5774],
+                          ["Critically Damped", 0.5000],
+                          ["Extended Low Q", 0.4500],
+                          ["Large Box Low Q", 0.4000]
+                        ].map(([name, targetQ]) => {
+                          const effQ = cabinetCalculations.effectiveQts;
+                          if (targetQ <= effQ) {
+                            return (
+                              <tr key={name} className="text-slate-500">
+                                <td className="py-2 px-2 font-medium">{name}</td>
+                                <td className="py-2 px-2">{targetQ.toFixed(4)}</td>
+                                <td className="py-2 px-2 italic" colSpan="4">N/A (Target Qtc ≤ Driver Qts {effQ.toFixed(3)})</td>
+                              </tr>
+                            );
+                          }
+                          const ratio = targetQ / effQ;
+                          const a = Math.pow(ratio, 2) - 1.0;
+                          const acVb = ts.vas / a;
+                          const physVb = acVb / stuffingGain;
+                          const physFt = physVb / 28.3168;
+                          const f_c = ts.fs * Math.sqrt(1.0 + a);
+                          const b_val = (1.0 / Math.pow(targetQ, 2)) - 2.0;
+                          const x_val = (b_val + Math.sqrt(b_val * b_val + 4.0)) / 2.0;
+                          const f3_val = f_c * Math.sqrt(x_val);
                           return (
-                            <tr key={name} className="text-slate-500">
-                              <td className="py-2 px-2 font-medium">{name}</td>
-                              <td className="py-2 px-2">{targetQ.toFixed(4)}</td>
-                              <td className="py-2 px-2 italic" colSpan="4">N/A (Target Qtc ≤ Driver Qts {effQ.toFixed(3)})</td>
+                            <tr key={name}>
+                              <td className="py-2 px-2 font-medium text-blue-400">{name}</td>
+                              <td className="py-2 px-2">Qtc {targetQ.toFixed(4)}</td>
+                              <td className="py-2 px-2 font-semibold text-white">{physVb.toFixed(2)} L</td>
+                              <td className="py-2 px-2">{physFt.toFixed(2)} ft³</td>
+                              <td className="py-2 px-2">{f_c.toFixed(1)} Hz</td>
+                              <td className="py-2 px-2 font-bold text-green-400">{f3_val.toFixed(1)} Hz</td>
                             </tr>
                           );
-                        }
-                        const ratio = targetQ / effQ;
-                        const a = Math.pow(ratio, 2) - 1.0;
-                        const acVb = ts.vas / a;
-                        const physVb = acVb / stuffingGain;
-                        const physFt = physVb / 28.3168;
-                        const f_c = ts.fs * Math.sqrt(1.0 + a);
-                        const b_val = (1.0 / Math.pow(targetQ, 2)) - 2.0;
-                        const x_val = (b_val + Math.sqrt(b_val * b_val + 4.0)) / 2.0;
-                        const f3_val = f_c * Math.sqrt(x_val);
-                        return (
-                          <tr key={name}>
-                            <td className="py-2 px-2 font-medium text-blue-400">{name}</td>
-                            <td className="py-2 px-2">{targetQ.toFixed(4)}</td>
-                            <td className="py-2 px-2 font-semibold text-white">{physVb.toFixed(2)} L</td>
-                            <td className="py-2 px-2">{physFt.toFixed(2)} ft³</td>
-                            <td className="py-2 px-2">{f_c.toFixed(1)} Hz</td>
-                            <td className="py-2 px-2 font-bold text-green-400">{f3_val.toFixed(1)} Hz</td>
-                          </tr>
-                        );
-                      })}
+                        })
+                      )}
                     </tbody>
                   </table>
                 </div>
