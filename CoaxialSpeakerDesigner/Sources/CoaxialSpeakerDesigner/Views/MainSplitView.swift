@@ -73,6 +73,16 @@ public struct MainSplitView: View {
         )) {
             AboutDialogView(viewModel: viewModel)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CSD_SaveDesign"))) { _ in
+            #if canImport(AppKit)
+            viewModel.saveDesignToFile()
+            #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CSD_LoadDesign"))) { _ in
+            #if canImport(AppKit)
+            viewModel.loadDesignFromFile()
+            #endif
+        }
     }
 }
 

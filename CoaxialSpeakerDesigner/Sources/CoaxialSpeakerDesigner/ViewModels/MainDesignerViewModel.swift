@@ -341,4 +341,91 @@ public class MainDesignerViewModel: ObservableObject {
             }
         }
     }
+
+    // MARK: - Save / Load Complete Design File
+
+    /// Creates a complete SpeakerDesignDocument from current state and returns formatted JSON string.
+    public func exportDesignJSON() throws -> String {
+        let doc = SpeakerDesignDocument(
+            name: driver.name,
+            driver: driver,
+            cabinet: cabinet,
+            crossover: crossover,
+            wooferFRDText: wooferFRDText.isEmpty ? nil : wooferFRDText,
+            tweeterFRDText: tweeterFRDText.isEmpty ? nil : tweeterFRDText
+        )
+        return try doc.toJSON()
+    }
+
+    /// Ingests a JSON design string and restores all parameters and simulations.
+    public func importDesignJSON(_ jsonString: String) throws {
+        let doc = try SpeakerDesignDocument.fromJSON(jsonString)
+        self.driver = doc.driver
+        self.cabinet = doc.cabinet
+        self.crossover = doc.crossover
+        self.wooferFRDText = doc.wooferFRDText ?? ""
+        self.tweeterFRDText = doc.tweeterFRDText ?? ""
+        self.statusMessage = "Successfully loaded design '\(doc.name)'"
+        self.errorMessage = nil
+        self.recalculateSimulation()
+    }
+
+    #if canImport(AppKit)
+    /// Opens native macOS Save Panel to save the entire design as a .json file.
+    public func saveDesignToFile() {
+        do {
+            let jsonString = try exportDesignJSON()
+            let savePanel = NSSavePanel()
+            savePanel.allowedContentTypes = [UTType.json]
+            let sanitizedName = driver.name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_")
+            savePanel.nameFieldStringValue = "\(sanitizedName.isEmpty ? "Speaker" : sanitizedName)_Design.json"
+            savePanel.title = "Save Loudspeaker Design File"
+            savePanel.message = "Save all driver, cabinet, crossover, and curve parameters into a project file"
+
+            savePanel.begin { response in
+                if response == .OK, let url = savePanel.url {
+                    do {
+                        try jsonString.write(to: url, atomically: true, encoding: .utf8)
+                        Task { @MainActor in
+                            self.statusMessage = "Successfully saved design to \(url.lastPathComponent)"
+                            self.errorMessage = nil
+                        }
+                    } catch {
+                        Task { @MainActor in
+                            self.errorMessage = "Failed to save design file: \(error.localizedDescription)"
+                        }
+                    }
+                }
+            }
+        } catch {
+            self.errorMessage = "Failed to encode design JSON: \(error.localizedDescription)"
+        }
+    }
+
+    /// Opens native macOS Open Panel to select and load a .json loudspeaker design file.
+    public func loadDesignFromFile() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Open Loudspeaker Design File"
+        openPanel.message = "Choose a JSON design file to load all project parameters"
+        openPanel.allowedContentTypes = [UTType.json]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+
+        if openPanel.runModal() == .OK, let url = openPanel.url {
+            self.loadDesign(from: url)
+        }
+    }
+
+    /// Loads design from local file URL.
+    public func loadDesign(from fileURL: URL) {
+        do {
+            let jsonString = try String(contentsOf: fileURL, encoding: .utf8)
+            try importDesignJSON(jsonString)
+            self.statusMessage = "Loaded design from \(fileURL.lastPathComponent)"
+        } catch {
+            self.errorMessage = "Failed to load design file: \(error.localizedDescription)"
+        }
+    }
+    #endif
 }

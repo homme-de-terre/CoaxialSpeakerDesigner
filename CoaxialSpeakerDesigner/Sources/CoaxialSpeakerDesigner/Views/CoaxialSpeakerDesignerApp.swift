@@ -20,6 +20,16 @@ public struct CoaxialSpeakerDesignerApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Open Design...") {
+                    NotificationCenter.default.post(name: NSNotification.Name("CSD_LoadDesign"), object: nil)
+                }.keyboardShortcut("o", modifiers: .command)
+
+                Button("Save Design As...") {
+                    NotificationCenter.default.post(name: NSNotification.Name("CSD_SaveDesign"), object: nil)
+                }.keyboardShortcut("s", modifiers: .command)
+            }
+
             CommandGroup(replacing: .appInfo) {
                 Button("About Coaxial Speaker Designer") {
                     NSApplication.shared.orderFrontStandardAboutPanel(

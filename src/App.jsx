@@ -3,7 +3,8 @@ import { parseDatasheetFromURL, parseDatasheetFromFile } from './utils/datasheet
 import { altec604WooferTS, altec604Tweeter, altec604RecommendedCrossover, altec604WooferCurve, altec604TweeterCurve } from './utils/altec604Data';
 import { 
   Speaker, Volume2, Shield, Settings, Sliders, Cpu, FileText, Download, 
-  Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap, Upload, Info
+  Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap, Upload, Info,
+  FolderOpen
 } from 'lucide-react';
 
 // --- Complex Number Physics Math Engine ---
@@ -116,6 +117,7 @@ export default function App() {
   const [isEuropeanDecimal, setIsEuropeanDecimal] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const fileInputRef = useRef(null);
+  const jsonFileInputRef = useRef(null);
 
   const [ts, setTs] = useState({
     fs: 48.0,
@@ -1770,10 +1772,178 @@ export default function App() {
     }
   };
 
+  const handleSaveDesign = () => {
+    const stuffingLevels = {
+      1.0: 'none',
+      1.1: 'light',
+      1.18: 'medium',
+      1.25: 'heavy'
+    };
+    const currentStuffing = stuffingLevels[stuffingGain] || (stuffingGain >= 1.2 ? 'heavy' : (stuffingGain >= 1.15 ? 'medium' : (stuffingGain >= 1.05 ? 'light' : 'none')));
+
+    const doc = {
+      version: 1,
+      timestamp: new Date().toISOString(),
+      name: driverName || "Custom Speaker Design",
+      driver: {
+        name: driverName,
+        manufacturer: manufacturer,
+        datasheetURL: datasheetURL,
+        wooferTS: {
+          fs: ts.fs,
+          qes: ts.qes,
+          qms: ts.qms,
+          qts: ts.qts,
+          vas: ts.vas,
+          re: ts.re,
+          le: ts.le,
+          sd: ts.sd,
+          xmax: ts.xmax,
+          spl: ts.spl,
+          pe: ts.pe || 150.0
+        },
+        tweeter: {
+          fs: tweeter.fs,
+          re: tweeter.re,
+          le: tweeter.le,
+          spl: tweeter.spl,
+          nominalImpedance: tweeter.nominalImpedance || 8.0
+        },
+        wooferAcousticCurve: wooferCurve || [],
+        tweeterAcousticCurve: tweeterCurve || []
+      },
+      cabinet: {
+        enclosureType: enclosureType,
+        alignment: alignment,
+        targetQtc: customQtc,
+        targetF3: targetF3,
+        stuffing: currentStuffing,
+        isManualVolumeOverride: manualVbOverride,
+        manualNetVolumeLiters: manualVbLiters,
+        ventedAlignment: ventedAlignment,
+        tuningFrequencyFb: tuningFb,
+        portDiameterCm: portDiameterCm,
+        numberOfPorts: portCount,
+        portLossQl: 15.0
+      },
+      crossover: {
+        crossoverFrequency: fx,
+        wooferOrder: wooferOrder,
+        tweeterOrder: tweeterOrder,
+        enableIndependentFrequencies: enableIndependentFx,
+        wooferCrossoverFrequency: enableIndependentFx ? wooferFx : null,
+        tweeterCrossoverFrequency: enableIndependentFx ? tweeterFx : null,
+        enableZobelNetwork: enableZobel,
+        enableLPadAttenuator: enableLPad,
+        userTargetAttenuationdB: lpadAttenDB,
+        acousticCenterOffsetMM: acousticDelayMM,
+        invertTweeterPolarity: invertTweeterPolarity,
+        snapToStandardValues: snapToE12,
+        enableAllpassFilter: enableAllpass
+      },
+      wooferFRDText: wooferFRDText || "",
+      tweeterFRDText: tweeterFRDText || ""
+    };
+
+    const jsonString = JSON.stringify(doc, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const sanitizedName = (driverName || "Speaker").trim().replace(/\s+/g, '_');
+    a.href = url;
+    a.download = `${sanitizedName}_Design.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatusMsg(`Saved design '${driverName}' to ${sanitizedName}_Design.json`);
+  };
+
+  const processJSONDesignFile = async (file) => {
+    try {
+      const text = await file.text();
+      const doc = JSON.parse(text);
+
+      if (doc.driver) {
+        if (doc.driver.name) setDriverName(doc.driver.name);
+        if (doc.driver.manufacturer) setManufacturer(doc.driver.manufacturer);
+        if (doc.driver.datasheetURL) setDatasheetURL(doc.driver.datasheetURL);
+        if (doc.driver.wooferTS) {
+          setTs(prev => ({ ...prev, ...doc.driver.wooferTS }));
+        }
+        if (doc.driver.tweeter) {
+          setTweeter(prev => ({ ...prev, ...doc.driver.tweeter }));
+        }
+        if (Array.isArray(doc.driver.wooferAcousticCurve) && doc.driver.wooferAcousticCurve.length > 0) {
+          setWooferCurve(doc.driver.wooferAcousticCurve);
+        }
+        if (Array.isArray(doc.driver.tweeterAcousticCurve) && doc.driver.tweeterAcousticCurve.length > 0) {
+          setTweeterCurve(doc.driver.tweeterAcousticCurve);
+        }
+      }
+
+      if (doc.cabinet) {
+        if (doc.cabinet.enclosureType) setEnclosureType(doc.cabinet.enclosureType);
+        if (doc.cabinet.alignment) setAlignment(doc.cabinet.alignment);
+        if (doc.cabinet.targetQtc !== undefined) setCustomQtc(doc.cabinet.targetQtc);
+        if (doc.cabinet.targetF3 !== undefined) setTargetF3(doc.cabinet.targetF3);
+        if (doc.cabinet.isManualVolumeOverride !== undefined) setManualVbOverride(doc.cabinet.isManualVolumeOverride);
+        if (doc.cabinet.manualNetVolumeLiters !== undefined) setManualVbLiters(doc.cabinet.manualNetVolumeLiters);
+        if (doc.cabinet.ventedAlignment) setVentedAlignment(doc.cabinet.ventedAlignment);
+        if (doc.cabinet.tuningFrequencyFb !== undefined) setTuningFb(doc.cabinet.tuningFrequencyFb);
+        if (doc.cabinet.portDiameterCm !== undefined) setPortDiameterCm(doc.cabinet.portDiameterCm);
+        if (doc.cabinet.numberOfPorts !== undefined) setPortCount(doc.cabinet.numberOfPorts);
+        if (doc.cabinet.stuffing) {
+          const sMap = { 'none': 1.0, 'light': 1.10, 'medium': 1.18, 'heavy': 1.25 };
+          setStuffingGain(sMap[doc.cabinet.stuffing] || 1.0);
+        }
+      }
+
+      if (doc.crossover) {
+        if (doc.crossover.crossoverFrequency !== undefined) setFx(doc.crossover.crossoverFrequency);
+        if (doc.crossover.wooferOrder) setWooferOrder(doc.crossover.wooferOrder);
+        if (doc.crossover.tweeterOrder) setTweeterOrder(doc.crossover.tweeterOrder);
+        if (doc.crossover.enableIndependentFrequencies !== undefined) {
+          setEnableIndependentFx(doc.crossover.enableIndependentFrequencies);
+        }
+        if (doc.crossover.wooferCrossoverFrequency) setWooferFx(doc.crossover.wooferCrossoverFrequency);
+        if (doc.crossover.tweeterCrossoverFrequency) setTweeterFx(doc.crossover.tweeterCrossoverFrequency);
+        if (doc.crossover.enableZobelNetwork !== undefined) setEnableZobel(doc.crossover.enableZobelNetwork);
+        if (doc.crossover.enableLPadAttenuator !== undefined) setEnableLPad(doc.crossover.enableLPadAttenuator);
+        if (doc.crossover.userTargetAttenuationdB !== undefined) setLpadAttenDB(doc.crossover.userTargetAttenuationdB);
+        if (doc.crossover.acousticCenterOffsetMM !== undefined) setAcousticDelayMM(doc.crossover.acousticCenterOffsetMM);
+        if (doc.crossover.invertTweeterPolarity !== undefined) setInvertTweeterPolarity(doc.crossover.invertTweeterPolarity);
+        if (doc.crossover.snapToStandardValues !== undefined) setSnapToE12(doc.crossover.snapToStandardValues);
+        if (doc.crossover.enableAllpassFilter !== undefined) setEnableAllpass(doc.crossover.enableAllpassFilter);
+      }
+
+      if (doc.wooferFRDText) setWooferFRDText(doc.wooferFRDText);
+      if (doc.tweeterFRDText) setTweeterFRDText(doc.tweeterFRDText);
+
+      setMissingParams([]);
+      setPlausibilityWarnings([]);
+      setStatusMsg(`Successfully loaded design '${doc.name || file.name}' with all parameters.`);
+    } catch (err) {
+      console.error(err);
+      setStatusMsg(`Failed to load design JSON file: ${err.message || 'Invalid format'}`);
+    }
+  };
+
+  const handleJSONFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processJSONDesignFile(file);
+    if (jsonFileInputRef.current) jsonFileInputRef.current.value = '';
+  };
+
   const handleLocalFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    await processLocalPDF(file);
+    if (file.name.toLowerCase().endsWith('.json')) {
+      await processJSONDesignFile(file);
+    } else {
+      await processLocalPDF(file);
+    }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -1795,7 +1965,11 @@ export default function App() {
     setIsDraggingFile(false);
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
-    await processLocalPDF(file);
+    if (file.name.toLowerCase().endsWith('.json')) {
+      await processJSONDesignFile(file);
+    } else {
+      await processLocalPDF(file);
+    }
   };
 
   // --- URL Datasheet Parser Handler ---
@@ -1823,6 +1997,48 @@ export default function App() {
           <div>
             <h1 className="font-bold text-lg text-white">Coaxial Designer</h1>
             <p className="text-xs text-slate-400">Native macOS Audio Engine</p>
+          </div>
+        </div>
+
+        {/* Design Project File (Save / Load) */}
+        <div className="p-3.5 rounded-lg border bg-slate-900/60 border-slate-700/80 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-slate-300 flex items-center space-x-2">
+              <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Design Project File</span>
+            </label>
+            <span className="text-[10px] text-slate-400">JSON Format</span>
+          </div>
+
+          {/* Hidden JSON File Input */}
+          <input
+            type="file"
+            ref={jsonFileInputRef}
+            onChange={handleJSONFileUpload}
+            accept=".json,application/json"
+            className="hidden"
+          />
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={handleSaveDesign}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs py-2 px-3 rounded transition flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
+              title="Save complete project parameters to .json"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Save Design</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => jsonFileInputRef.current?.click()}
+              className="bg-slate-800 hover:bg-slate-700 border border-slate-600 hover:border-slate-400 text-slate-200 font-medium text-xs py-2 px-3 rounded transition flex items-center justify-center space-x-1.5 cursor-pointer"
+              title="Load project parameters from .json"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Load Design</span>
+            </button>
           </div>
         </div>
 

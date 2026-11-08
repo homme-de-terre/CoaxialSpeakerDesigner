@@ -915,4 +915,107 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         // With Zobel (R_zobel = 1.25 * 5.5 = 6.88 Ohm), 20 kHz is flattened to ~6.88 Ohm
         XCTAssertEqual(z150_20k_WithZobel, 6.88, accuracy: 0.5, "150CX with Zobel must flatten 20 kHz impedance to ~6.88 Ohm")
     }
+
+    func testSpeakerDesignDocumentSaveAndLoadRoundtrip() throws {
+        // 1. Setup customized driver, cabinet, and crossover
+        var driver = CoaxialDriver()
+        driver.name = "Custom Studio Monitor 8"
+        driver.manufacturer = "AcousticTech"
+        driver.wooferTS.fs = 38.5
+        driver.wooferTS.qes = 0.32
+        driver.wooferTS.qms = 4.2
+        driver.wooferTS.vas = 35.0
+        driver.wooferTS.re = 5.8
+        driver.wooferTS.le = 0.65
+        driver.tweeter.fs = 950.0
+        driver.tweeter.re = 6.2
+        driver.tweeter.le = 0.12
+        driver.tweeter.spl = 98.0
+
+        var cabinet = SealedCabinet()
+        cabinet.enclosureType = .vented
+        cabinet.ventedAlignment = .qb3
+        cabinet.tuningFrequencyFb = 38.0
+        cabinet.portDiameterCm = 7.5
+        cabinet.numberOfPorts = 2
+        cabinet.portLossQl = 12.0
+
+        var crossover = CrossoverNetwork(
+            crossoverFrequency: 1850.0,
+            wooferOrder: .secondOrderLR,
+            tweeterOrder: .thirdOrderBW,
+            enableZobelNetwork: true,
+            enableLPadAttenuator: true,
+            userTargetAttenuationdB: 4.5,
+            acousticCenterOffsetMM: 32.0,
+            invertTweeterPolarity: true,
+            enableAllpassFilter: false,
+            enableIndependentFrequencies: true,
+            wooferCrossoverFrequency: 1750.0,
+            tweeterCrossoverFrequency: 1950.0
+        )
+
+        let originalDoc = SpeakerDesignDocument(
+            version: 1,
+            name: "Custom Studio Monitor 8 Project",
+            driver: driver,
+            cabinet: cabinet,
+            crossover: crossover,
+            wooferFRDText: "20.0 70.0 0.0\n1000.0 92.0 0.0\n20000.0 80.0 0.0",
+            tweeterFRDText: "1000.0 90.0 0.0\n20000.0 98.0 0.0"
+        )
+
+        // 2. Encode to JSON string
+        let jsonStr = try originalDoc.toJSON()
+        XCTAssertFalse(jsonStr.isEmpty)
+        XCTAssertTrue(jsonStr.contains("Custom Studio Monitor 8"))
+        XCTAssertTrue(jsonStr.contains("AcousticTech"))
+        XCTAssertTrue(jsonStr.contains("\"enclosureType\" : \"vented\""))
+        XCTAssertTrue(jsonStr.contains("\"enableZobelNetwork\" : true"))
+
+        // 3. Decode back from JSON string
+        let restoredDoc = try SpeakerDesignDocument.fromJSON(jsonStr)
+        XCTAssertEqual(restoredDoc.version, 1)
+        XCTAssertEqual(restoredDoc.name, "Custom Studio Monitor 8 Project")
+        XCTAssertEqual(restoredDoc.driver.name, "Custom Studio Monitor 8")
+        XCTAssertEqual(restoredDoc.driver.manufacturer, "AcousticTech")
+        XCTAssertEqual(restoredDoc.driver.wooferTS.fs, 38.5, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.driver.wooferTS.qes, 0.32, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.driver.wooferTS.re, 5.8, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.driver.wooferTS.le, 0.65, accuracy: 1e-4)
+
+        XCTAssertEqual(restoredDoc.cabinet.enclosureType, .vented)
+        XCTAssertEqual(restoredDoc.cabinet.tuningFrequencyFb, 38.0, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.cabinet.portDiameterCm, 7.5, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.cabinet.numberOfPorts, 2)
+
+        XCTAssertEqual(restoredDoc.crossover.crossoverFrequency, 1850.0, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.crossover.wooferOrder, .secondOrderLR)
+        XCTAssertEqual(restoredDoc.crossover.tweeterOrder, .thirdOrderBW)
+        XCTAssertEqual(restoredDoc.crossover.enableZobelNetwork, true)
+        XCTAssertEqual(restoredDoc.crossover.enableLPadAttenuator, true)
+        XCTAssertEqual(restoredDoc.crossover.userTargetAttenuationdB, 4.5, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.crossover.acousticCenterOffsetMM, 32.0, accuracy: 1e-4)
+        XCTAssertEqual(restoredDoc.crossover.invertTweeterPolarity, true)
+        XCTAssertEqual(restoredDoc.crossover.enableIndependentFrequencies, true)
+        XCTAssertEqual(restoredDoc.crossover.wooferCrossoverFrequency, 1750.0)
+        XCTAssertEqual(restoredDoc.crossover.tweeterCrossoverFrequency, 1950.0)
+
+        XCTAssertEqual(restoredDoc.wooferFRDText, "20.0 70.0 0.0\n1000.0 92.0 0.0\n20000.0 80.0 0.0")
+
+        // 4. Test ViewModel export and import methods
+        let vm = MainDesignerViewModel(driver: driver, cabinet: cabinet, crossover: crossover)
+        let vmJSON = try vm.exportDesignJSON()
+        XCTAssertTrue(vmJSON.contains("Custom Studio Monitor 8"))
+
+        let newVM = MainDesignerViewModel()
+        try newVM.importDesignJSON(vmJSON)
+        XCTAssertEqual(newVM.driver.name, "Custom Studio Monitor 8")
+        XCTAssertEqual(newVM.cabinet.enclosureType, .vented)
+        XCTAssertEqual(newVM.crossover.crossoverFrequency, 1850.0, accuracy: 1e-4)
+        XCTAssertEqual(newVM.simulationPoints.count, 201)
+
+        // 5. Test error on corrupted JSON
+        XCTAssertThrowsError(try SpeakerDesignDocument.fromJSON("{ invalid json }"))
+    }
 }
