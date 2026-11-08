@@ -79,6 +79,7 @@ public enum SimulationEngine {
             let zWooferRaw = computeWooferRawImpedance(freq: f, ts: driver.wooferTS, cabinet: cabinet)
             let zTweeterRaw = computeTweeterRawImpedance(freq: f, tw: driver.tweeter)
 
+            let zWooferCompensated = computeWooferCompensatedImpedance(freq: f, zVoiceCoilRaw: zWooferRaw, crossover: crossover, ts: driver.wooferTS)
             let zWooferInput = computeWooferCrossoverInputImpedance(freq: f, zVoiceCoilRaw: zWooferRaw, crossover: crossover, ts: driver.wooferTS)
             let zTweeterInput = computeTweeterCrossoverInputImpedance(freq: f, zVoiceCoilRaw: zTweeterRaw, crossover: crossover, tw: driver.tweeter)
 
@@ -98,7 +99,7 @@ public enum SimulationEngine {
                     totalSystemSPL: totalSPL,
                     totalSystemPhaseDeg: totalPhaseDeg,
                     phaseDifferenceDeg: deltaPhase,
-                    wooferImpedanceMag: zWooferRaw.magnitude,
+                    wooferImpedanceMag: zWooferCompensated.magnitude,
                     tweeterImpedanceMag: zTweeterRaw.magnitude,
                     totalSystemImpedanceMag: zTotalSystem.magnitude,
                     totalSystemImpedancePhaseDeg: zTotalSystem.phaseDegrees,
@@ -249,6 +250,23 @@ public enum SimulationEngine {
         return ComplexNumber(real: re, imag: w * leSec) + zMotional
     }
 
+    /// Compute Woofer terminal load impedance, applying parallel Zobel network across terminals if enabled
+    public static func computeWooferCompensatedImpedance(
+        freq: Double,
+        zVoiceCoilRaw: ComplexNumber,
+        crossover: CrossoverNetwork,
+        ts: WooferTSParameters
+    ) -> ComplexNumber {
+        guard crossover.enableZobelNetwork && ts.le > 0 && ts.re > 0 else {
+            return zVoiceCoilRaw
+        }
+        let w = 2.0 * .pi * freq
+        let rz = 1.25 * ts.re
+        let czFarads = (ts.le / 1000.0) / (rz * rz)
+        let zZobel = ComplexNumber(real: rz, imag: -1.0 / (w * czFarads))
+        return (zVoiceCoilRaw * zZobel) / (zVoiceCoilRaw + zZobel)
+    }
+
     /// Compute Low-Pass Crossover Branch Input Impedance seen by Amplifier
     private static func computeWooferCrossoverInputImpedance(
         freq: Double,
@@ -257,15 +275,7 @@ public enum SimulationEngine {
         ts: WooferTSParameters
     ) -> ComplexNumber {
         let w = 2.0 * .pi * freq
-        var zVC = zVoiceCoilRaw
-
-        // Apply Zobel Network in parallel across woofer terminals if enabled
-        if crossover.enableZobelNetwork {
-            let rz = 1.25 * ts.re
-            let czFarads = (ts.le / 1000.0) / (rz * rz)
-            let zZobel = ComplexNumber(real: rz, imag: -1.0 / (w * czFarads))
-            zVC = (zVC * zZobel) / (zVC + zZobel)
-        }
+        let zVC = computeWooferCompensatedImpedance(freq: freq, zVoiceCoilRaw: zVoiceCoilRaw, crossover: crossover, ts: ts)
 
         let comp = crossover.computeComponentValues(wooferRe: ts.re, tweeterRe: 8.0, wooferLe: ts.le)
 

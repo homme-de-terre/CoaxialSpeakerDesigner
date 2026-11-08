@@ -880,7 +880,7 @@ export default function App() {
         totalPhase,
         deltaPhase,
         tweeterDelayCompPhase,
-        zWooferMag: zWooferRaw.mag,
+        zWooferMag: zWooferVoiceCoil.mag,
         zTweeterMag: zTweeterRaw.mag,
         zTotalMag: zTotal.mag
       });

@@ -847,4 +847,72 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
             XCTAssertTrue(sp.woofer.isFinite)
         }
     }
+
+    func testZobelNetworkImpedancePlotReflection() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet(alignment: .butterworth)
+
+        // 1. Simulation without Zobel Network
+        let xoWithoutZobel = CrossoverNetwork(
+            crossoverFrequency: 2200.0,
+            enableZobelNetwork: false
+        )
+        let simNoZobel = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: xoWithoutZobel)
+
+        // 2. Simulation with Zobel Network
+        let xoWithZobel = CrossoverNetwork(
+            crossoverFrequency: 2200.0,
+            enableZobelNetwork: true
+        )
+        let simWithZobel = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: xoWithZobel)
+
+        XCTAssertEqual(simNoZobel.count, 201)
+        XCTAssertEqual(simWithZobel.count, 201)
+
+        // Find 10 kHz and 20 kHz indices
+        let idx10k = simNoZobel.firstIndex(where: { abs($0.frequency - 10000.0) < 500.0 })!
+        let idx20k = simNoZobel.count - 1
+
+        let z10kNoZobel = simNoZobel[idx10k].wooferImpedanceMag
+        let z20kNoZobel = simNoZobel[idx20k].wooferImpedanceMag
+
+        let z10kWithZobel = simWithZobel[idx10k].wooferImpedanceMag
+        let z20kWithZobel = simWithZobel[idx20k].wooferImpedanceMag
+
+        // Without Zobel: Voice coil inductance causes high-frequency impedance rise
+        // Le = 0.85 mH, w*Le at 20 kHz = 106.8 Ohm -> |Z| > 100 Ohm
+        XCTAssertGreaterThan(z10kNoZobel, 50.0, "Without Zobel, 10 kHz woofer impedance must show inductive rise")
+        XCTAssertGreaterThan(z20kNoZobel, 100.0, "Without Zobel, 20 kHz woofer impedance must be > 100 Ohm")
+
+        // With Zobel: Parallel RC network compensates rising inductance, flattening impedance near R_zobel = 1.25 * Re
+        let expectedZobelR = 1.25 * driver.wooferTS.re
+        XCTAssertLessThan(z10kWithZobel, expectedZobelR + 2.0, "With Zobel, 10 kHz woofer impedance must be flattened near R_zobel")
+        XCTAssertLessThan(z20kWithZobel, expectedZobelR + 1.0, "With Zobel, 20 kHz woofer impedance must remain flat near R_zobel")
+        XCTAssertGreaterThan(z20kWithZobel, driver.wooferTS.re - 1.0, "With Zobel, 20 kHz woofer impedance must not drop below Re")
+
+        // Resonance peak at Fc must remain virtually unchanged
+        let zPeakNoZobel = simNoZobel.prefix(simNoZobel.count / 2).max(by: { $0.wooferImpedanceMag < $1.wooferImpedanceMag })!
+        let zPeakWithZobel = simWithZobel.max(by: { $0.wooferImpedanceMag < $1.wooferImpedanceMag })!
+        XCTAssertEqual(zPeakNoZobel.frequency, zPeakWithZobel.frequency, accuracy: 5.0, "Resonance peak frequency Fc must be identical with or without Zobel")
+
+        // 3. Verify with 150CX driver specifications (from user screenshot: Re=5.5, Le=0.42 mH, Fs=71 Hz)
+        var driver150 = CoaxialDriver()
+        driver150.wooferTS.fs = 71.0
+        driver150.wooferTS.qes = 0.4
+        driver150.wooferTS.qms = 5.17
+        driver150.wooferTS.vas = 11.2
+        driver150.wooferTS.re = 5.5
+        driver150.wooferTS.le = 0.42
+
+        let sim150NoZobel = SimulationEngine.simulate(driver: driver150, cabinet: cabinet, crossover: xoWithoutZobel)
+        let sim150WithZobel = SimulationEngine.simulate(driver: driver150, cabinet: cabinet, crossover: xoWithZobel)
+
+        let z150_20k_NoZobel = sim150NoZobel[idx20k].wooferImpedanceMag
+        let z150_20k_WithZobel = sim150WithZobel[idx20k].wooferImpedanceMag
+
+        // Le = 0.42 mH, w*Le at 20 kHz = 52.8 Ohm -> |Z| ≈ 53 Ohm (as seen in screenshot)
+        XCTAssertGreaterThan(z150_20k_NoZobel, 50.0, "150CX without Zobel must show ~53 Ohm at 20 kHz")
+        // With Zobel (R_zobel = 1.25 * 5.5 = 6.88 Ohm), 20 kHz is flattened to ~6.88 Ohm
+        XCTAssertEqual(z150_20k_WithZobel, 6.88, accuracy: 0.5, "150CX with Zobel must flatten 20 kHz impedance to ~6.88 Ohm")
+    }
 }
