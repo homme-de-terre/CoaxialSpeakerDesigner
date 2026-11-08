@@ -210,7 +210,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         if let val = findValue(pattern: #"\b(?:Vas|Equivalent\s+(?:Air\s+)?Volume(?:\s+to\s+Cms)?)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
             ts.vas = val
         }
-        if let val = findValue(pattern: #"\b(?:Le|Inductance|Inductivity)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: normText) {
+        if let val = findValue(pattern: #"\b(?:Le|Inductance|Inductivity)\b(?:\s*\(?[^)\n\d]*\d+(?:\.\d+)?\s*k?Hz\)?)?[^\n\d]*[:=,\s.]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: normText) {
             ts.le = val
         }
         if let val = findValue(pattern: #"\b(?:Sd|Surface\s+Area|Cone\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: normText) {
@@ -366,7 +366,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
             nominalImpedance: 8.0
         )
         
-        // 1. Sensitivity in dB (must be 80...120 dB, second unique value is HF)
+        // 1. Sensitivity in dB (must be 80...125 dB, second unique value is HF)
         let allDb = findAllNumbersWithUnit(norm, unit: "dB").filter { $0 >= 80.0 && $0 <= 125.0 }
         var uniqueDb: [Double] = []
         for v in allDb {
@@ -374,8 +374,8 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
         }
         if uniqueDb.count >= 2 {
             tw.spl = uniqueDb[1] // e.g. 105.0 or 106.0 dB
-        } else if let first = uniqueDb.first {
-            tw.spl = first
+        } else {
+            tw.spl = 100.0 // Default for coaxial horn compression driver (approx. 100 dB)
         }
         
         // 2. Tweeter Fs (kHz or Hz >= 500)
@@ -411,7 +411,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
             if let val = findValue(pattern: #"\b(?:DC\s+resistance(?:\s+Re)?|Re)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)"#, text: twText) {
                 if val >= 3.0 && val <= 25.0 { tw.re = val }
             }
-            if let val = findValue(pattern: #"\b(?:Inductivity|Inductance|Le)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: twText) {
+            if let val = findValue(pattern: #"\b(?:Inductivity|Inductance|Le)\b(?:\s*\(?[^)\n\d]*\d+(?:\.\d+)?\s*k?Hz\)?)?[^\n\d]*[:=,\s.]+(\d+(?:\.\d+)?)\s*(?:mH)?"#, text: twText) {
                 tw.le = val
             }
             if let val = findValue(pattern: #"\bSensitivity\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:dB)?"#, text: twText) {
@@ -497,11 +497,11 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
     
     public func parseRecommendedCrossover(from text: String) -> Double? {
         let norm = normalizeCommas(in: text)
-        let pattern = #"(?:Recom(?:\.|mended)?\s*(?:HF)?\s*Crossover|Crossover\s+Frequency|Suggested\s+Crossover|Centered\s+at)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?"#
+        let pattern = #"(?:Recom[^\n]*?Crossover|Crossover(?:\s+Frequency)?|Suggested\s+Crossover|Min[^\n]*?Cross[^\n]*?Freq|Centered\s+at)[^\n]*?(\d+(?:\.\d+)?)\s*(k?Hz)"#
         if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
             let ns = norm as NSString
             let matches = regex.matches(in: norm, range: NSRange(location: 0, length: ns.length))
-            if let m = matches.first, m.numberOfRanges >= 2 {
+            for m in matches where m.numberOfRanges >= 2 {
                 var val = Double(ns.substring(with: m.range(at: 1))) ?? 0.0
                 if m.numberOfRanges >= 3 && m.range(at: 2).location != NSNotFound {
                     let unitStr = ns.substring(with: m.range(at: 2)).lowercased()
@@ -531,7 +531,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
 
         // 1. Dynamic check for recognized loudspeaker brands and model identifiers
         let brandPattern = #"\b(Altec(?:\s+Lansing)?|B&C(?:\s+Speakers)?|Beyma|JBL|Tannoy|Eminence|Faital(?:PRO)?|RCF|Radian|Eighteen\s+Sound|18\s+Sound)\b"#
-        let modelPattern = #"\b(\d{1,4}[A-Za-z]{1,4}\d{0,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?|\d{3,4}-[0-9A-Za-z]+)\b"#
+        let modelPattern = #"\b([A-Za-z]{1,4}\d{1,4}(?:-[0-9A-Za-z+]+)+|\d{1,4}[A-Za-z]{1,4}\d{0,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?|\d{3,4}-[0-9A-Za-z]+)\b"#
 
         var detectedBrand: String? = nil
         if let bRegex = try? NSRegularExpression(pattern: brandPattern, options: [.caseInsensitive]) {
@@ -548,7 +548,7 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
             for m in matches where m.numberOfRanges >= 2 {
                 let cand = ns.substring(with: m.range(at: 1))
                 let upper = cand.uppercased()
-                if !exclude.contains(upper) && !upper.hasSuffix("HZ") && !upper.hasSuffix("KHZ") && !upper.hasSuffix("UPA") {
+                if !exclude.contains(upper) && !upper.hasSuffix("HZ") && !upper.hasSuffix("KHZ") && !upper.hasSuffix("UPA") && !upper.hasSuffix("DB") && !upper.hasSuffix("MM") && !upper.hasSuffix("IN") && !upper.hasSuffix("W") && !upper.hasSuffix("FS") && !upper.contains("E-") {
                     detectedModel = cand
                     break
                 }

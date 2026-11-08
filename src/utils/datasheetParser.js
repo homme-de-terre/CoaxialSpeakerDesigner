@@ -51,13 +51,13 @@ export function parseDatasheetText(text, url = '') {
   const brandMatch = text.match(brandPattern);
   const detectedBrand = brandMatch ? brandMatch[1].replace(/\s+/g, ' ') : '';
 
-  const modelPattern = /\b(\d{1,4}[A-Za-z]{1,4}\d{0,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?|\d{3,4}-[0-9A-Za-z]+)\b/g;
+  const modelPattern = /\b([A-Za-z]{1,4}\d{1,4}(?:-[0-9A-Za-z+]+)+|\d{1,4}[A-Za-z]{1,4}\d{0,4}[A-Za-z0-9]*(?:-[0-9A-Za-z+]+)?|\d{3,4}-[0-9A-Za-z]+)\b/g;
   let detectedModel = '';
   let mm;
   while ((mm = modelPattern.exec(text)) !== null) {
     const cand = mm[1];
     const upper = cand.toUpperCase();
-    if (!excludeWords.includes(upper) && !upper.endsWith('HZ') && !upper.endsWith('KHZ') && !upper.endsWith('UPA') && !upper.endsWith('W')) {
+    if (!excludeWords.includes(upper) && !upper.endsWith('HZ') && !upper.endsWith('KHZ') && !upper.endsWith('UPA') && !upper.endsWith('DB') && !upper.endsWith('MM') && !upper.endsWith('IN') && !upper.endsWith('W') && !upper.endsWith('FS') && !upper.includes('E-')) {
       detectedModel = cand;
       break;
     }
@@ -74,12 +74,15 @@ export function parseDatasheetText(text, url = '') {
   if (!driverName) driverName = 'Parsed Coaxial Driver';
 
   // 2. Extract Recommended Crossover Frequency
-  const xoRegex = /(?:Recom(?:\.|mended)?\s*(?:HF)?\s*Crossover|Crossover\s+Frequency|Suggested\s+Crossover|Centered\s+at)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(k?Hz)?/i;
-  const xoMatch = normText.match(xoRegex);
-  if (xoMatch) {
+  const xoRegex = /(?:Recom[^\n]*?Crossover|Crossover(?:\s+Frequency)?|Suggested\s+Crossover|Min[^\n]*?Cross[^\n]*?Freq|Centered\s+at)[^\n]*?(\d+(?:\.\d+)?)\s*(k?Hz)/gi;
+  let xoMatch;
+  while ((xoMatch = xoRegex.exec(normText)) !== null) {
     let val = parseFloat(xoMatch[1]);
     if ((xoMatch[2] && xoMatch[2].toLowerCase().startsWith('k')) || val < 20) val *= 1000;
-    if (val >= 400 && val <= 8000) recommendedCrossover = val;
+    if (val >= 400 && val <= 8000) {
+      recommendedCrossover = val;
+      break;
+    }
   }
   if (!recommendedCrossover) {
     const khzHigher = normText.match(/(\d+(?:\.\d+)?)\s*kHz\s*(?:or\s+higher|min(?:\.|\s+slope)?)/i);
@@ -100,7 +103,11 @@ export function parseDatasheetText(text, url = '') {
     }
   }
   if (dbValues.length >= 1) ts.spl = dbValues[0];
-  if (dbValues.length >= 2) tweeter.spl = dbValues[1];
+  if (dbValues.length >= 2) {
+    tweeter.spl = dbValues[1];
+  } else {
+    tweeter.spl = 100.0;
+  }
 
   // Fallback explicit matches for SPL
   const lfSplMatch = normText.match(/(?:LF\s+Sensitivity|(?:Sensitivity|SPL)\s*\(\s*LF)[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*dB/i) ||
@@ -152,7 +159,7 @@ export function parseDatasheetText(text, url = '') {
     if (inlineVas[2] && (inlineVas[2].toLowerCase().includes('ft') || inlineVas[2].toLowerCase().includes('cu'))) v *= 28.3168;
     ts.vas = parseFloat(v.toFixed(1));
   }
-  const inlineLe = normText.match(/\b(?:Le|Inductance|Inductivity)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
+  const inlineLe = normText.match(/\b(?:Le|Inductance|Inductivity)\b(?:\s*\(?[^)\n\d]*\d+(?:\.\d+)?\s*k?Hz\)?)?[^\n\d]*[:=,\s.]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
   if (inlineLe) ts.le = parseFloat(inlineLe[1]);
   const inlineSd = normText.match(/\b(?:Sd|Surface\s+Area|Cone\s+Area)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(cm[2²]|m[2²])?/i);
   if (inlineSd) {
@@ -277,10 +284,13 @@ export function parseDatasheetText(text, url = '') {
     if (twFsM) tweeter.fs = parseFloat(twFsM[1]);
     const twReM = twSub.match(/\b(?:DC\s+resistance(?:\s+Re)?|Re)\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)/i);
     if (twReM) tweeter.re = parseFloat(twReM[1]);
-    const twLeM = twSub.match(/\b(?:Inductivity|Inductance|Le)\b(?:\s*(?:@|at)?\s*\d+\s*k?Hz)?[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
+    const twLeM = twSub.match(/\b(?:Inductivity|Inductance|Le)\b(?:\s*\(?[^)\n\d]*\d+(?:\.\d+)?\s*k?Hz\)?)?[^\n\d]*[:=,\s.]+(\d+(?:\.\d+)?)\s*(?:mH)?/i);
     if (twLeM) tweeter.le = parseFloat(twLeM[1]);
-    const twSplM = twSub.match(/\bSensitivity\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*(?:dB)?/i);
-    if (twSplM) tweeter.spl = parseFloat(twSplM[1]);
+    const twSplM = twSub.match(/\bSensitivity\b[^\n\d]*[:=,\s]+(\d+(?:\.\d+)?)\s*dB\b/i);
+    if (twSplM) {
+      const v = parseFloat(twSplM[1]);
+      if (v >= 85 && v <= 125) tweeter.spl = v;
+    }
   }
 
   // Tweeter Fs & Re fallbacks
@@ -343,7 +353,7 @@ export function parseDatasheetText(text, url = '') {
     warnings.push(`Recommended Crossover (${recommendedCrossover} Hz) seems outside typical coaxial range.`);
   }
 
-  return { driverName, ts, tweeter, recommendedCrossover, missingParams, warnings, rawText: text, wooferCurve: [], tweeterCurve: [] };
+  return { name: driverName, driverName, ts, tweeter, recommendedCrossover, missingParams, warnings, rawText: text, wooferCurve: [], tweeterCurve: [] };
 }
 
 /**
@@ -511,6 +521,33 @@ export function digitizeImagePixels(width, height, rgbaData) {
 }
 
 /**
+ * Spatially reconstructs line layout by grouping text items on shared Y-coordinate baselines.
+ */
+function reconstructSpatialText(items) {
+  if (!items || items.length === 0) return '';
+  const validItems = items.filter(it => it.str && it.str.trim().length > 0);
+  const lines = [];
+  const yTolerance = 3.5;
+  const sortedByY = [...validItems].sort((a, b) => b.transform[5] - a.transform[5]);
+
+  for (const item of sortedByY) {
+    const y = item.transform[5];
+    let foundLine = lines.find(l => Math.abs(l.y - y) <= yTolerance);
+    if (!foundLine) {
+      foundLine = { y, items: [] };
+      lines.push(foundLine);
+    }
+    foundLine.items.push(item);
+  }
+
+  for (const line of lines) {
+    line.items.sort((a, b) => a.transform[4] - b.transform[4]);
+  }
+  lines.sort((a, b) => b.y - a.y);
+  return lines.map(line => line.items.map(it => it.str).join(' ')).join('\n');
+}
+
+/**
  * Extracts raw textual content and dynamically digitizes frequency response curves across all pages of a PDF.
  */
 export async function extractPDFTextAndCurves(data) {
@@ -525,7 +562,7 @@ export async function extractPDFTextAndCurves(data) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const pageText = content.items.map((item) => item.str).join('\n');
+    const pageText = reconstructSpatialText(content.items);
     extractedText += pageText + '\n';
 
     const pageLower = pageText.toLowerCase();
@@ -536,7 +573,15 @@ export async function extractPDFTextAndCurves(data) {
       for (let opIdx = 0; opIdx < ops.fnArray.length; opIdx++) {
         if (ops.fnArray[opIdx] === pdfjs.OPS.paintImageXObject) {
           const imgName = ops.argsArray[opIdx][0];
-          const img = await new Promise((resolve) => page.objs.get(imgName, resolve));
+          const img = await new Promise((resolve) => {
+            let done = false;
+            page.objs.get(imgName, (o) => {
+              if (!done) { done = true; resolve(o); }
+            });
+            setTimeout(() => {
+              if (!done) { done = true; resolve(null); }
+            }, 100);
+          });
           if (img && img.width > 200 && img.height > 150) {
             let rgba = null;
             if (img.data.length === img.width * img.height * 4) {

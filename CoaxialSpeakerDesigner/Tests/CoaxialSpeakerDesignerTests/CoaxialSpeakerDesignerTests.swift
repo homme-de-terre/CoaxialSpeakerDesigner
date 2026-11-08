@@ -1018,4 +1018,52 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         // 5. Test error on corrupted JSON
         XCTAssertThrowsError(try SpeakerDesignDocument.fromJSON("{ invalid json }"))
     }
+
+    func testDatasheetParsingAllThreeDrivers() {
+        let parser = DatasheetParser()
+
+        // 1. Test SN6-150CX Datasheet (P.Audio SN6-150CX)
+        let sn6URL = URL(fileURLWithPath: "/work/SN6-150CX.pdf")
+        if let data = try? Data(contentsOf: sn6URL) {
+            let result = parser.parseDatasheetData(data, sourceURL: sn6URL)
+            XCTAssertEqual(result.name, "SN6-150CX", "Driver name must be SN6-150CX, not 150CX")
+            XCTAssertEqual(result.ts.fs, 71.0, accuracy: 0.5)
+            XCTAssertEqual(result.ts.re, 5.5, accuracy: 0.2)
+            XCTAssertEqual(result.ts.qes, 0.40, accuracy: 0.05)
+            XCTAssertEqual(result.ts.qms, 5.17, accuracy: 0.1)
+            XCTAssertEqual(result.ts.qts, 0.37, accuracy: 0.05)
+            XCTAssertEqual(result.ts.vas, 11.2, accuracy: 0.5)
+            XCTAssertEqual(result.ts.le, 0.42, accuracy: 0.02, "Woofer Le must be 0.42 mH, not 1 mH")
+            XCTAssertEqual(result.ts.sd, 143.0, accuracy: 1.0)
+            XCTAssertEqual(result.ts.xmax, 3.75, accuracy: 0.1)
+            XCTAssertEqual(result.ts.spl, 93.0, accuracy: 0.5)
+            XCTAssertEqual(result.tweeter.spl, 100.0, accuracy: 1.0, "Tweeter sensitivity must be approx 100 dB, not 93 dB")
+        }
+
+        // 2. Test B&C 6HCX51 Datasheet
+        let bcURL = URL(fileURLWithPath: "/work/6HCX51.pdf")
+        if let data = try? Data(contentsOf: bcURL) {
+            let result = parser.parseDatasheetData(data, sourceURL: bcURL)
+            XCTAssertTrue(result.name.contains("6HCX51"))
+            XCTAssertEqual(result.ts.fs, 89.0, accuracy: 1.0)
+            XCTAssertEqual(result.ts.re, 5.2, accuracy: 0.2)
+            XCTAssertEqual(result.ts.le, 0.8, accuracy: 0.05)
+            XCTAssertEqual(result.ts.spl, 92.0, accuracy: 0.5)
+            XCTAssertEqual(result.tweeter.spl, 105.0, accuracy: 1.0)
+            XCTAssertEqual(result.recommendedCrossover, 2200.0, accuracy: 100.0)
+        }
+
+        // 3. Test FaitalPRO 12HX500 Datasheet
+        let faitalURL = URL(fileURLWithPath: "/work/12HX500_datasheet_8.pdf")
+        if let data = try? Data(contentsOf: faitalURL) {
+            let result = parser.parseDatasheetData(data, sourceURL: faitalURL)
+            XCTAssertTrue(result.name.contains("12HX500"))
+            XCTAssertEqual(result.ts.fs, 55.0, accuracy: 1.0)
+            XCTAssertEqual(result.ts.re, 5.6, accuracy: 0.2)
+            XCTAssertEqual(result.ts.le, 0.57, accuracy: 0.05)
+            XCTAssertEqual(result.ts.spl, 95.0, accuracy: 0.5)
+            XCTAssertEqual(result.tweeter.spl, 105.0, accuracy: 1.0)
+            XCTAssertEqual(result.recommendedCrossover, 900.0, accuracy: 50.0)
+        }
+    }
 }
