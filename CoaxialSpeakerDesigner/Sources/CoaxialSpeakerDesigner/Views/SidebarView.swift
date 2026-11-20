@@ -11,35 +11,33 @@ public struct SidebarView: View {
         ScrollView {
             Form {
             Section(header: Label("Design Project File", systemImage: "folder.badge.gearshape")) {
-                HStack(spacing: 8) {
-                    Button(action: {
-                        #if canImport(AppKit)
-                        viewModel.saveDesignToFile()
-                        #endif
-                    }) {
-                        HStack {
-                            Image(systemName: "square.and.arrow.down")
-                            Text("Save Design...")
-                        }
-                        .frame(maxWidth: .infinity)
+                Button(action: {
+                    #if canImport(AppKit)
+                    viewModel.saveDesignToFile()
+                    #endif
+                }) {
+                    HStack {
+                        Image(systemName: "square.and.arrow.down")
+                        Text("Save Design...")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .help("Save entire design to .json file (⌘S)")
-
-                    Button(action: {
-                        #if canImport(AppKit)
-                        viewModel.loadDesignFromFile()
-                        #endif
-                    }) {
-                        HStack {
-                            Image(systemName: "folder")
-                            Text("Load Design...")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Load design from .json file (⌘O)")
+                    .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .help("Save entire design to .json file (⌘S)")
+
+                Button(action: {
+                    #if canImport(AppKit)
+                    viewModel.loadDesignFromFile()
+                    #endif
+                }) {
+                    HStack {
+                        Image(systemName: "folder")
+                        Text("Load Design...")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .help("Load design from .json file (⌘O)")
             }
 
             Section(header: Label("Datasheet Ingestion", systemImage: "doc.text.magnifyingglass")) {

@@ -326,18 +326,13 @@ public class MainDesignerViewModel: ObservableObject {
         savePanel.nameFieldStringValue = "Crossover_Schematic_\(driver.name.replacingOccurrences(of: " ", with: "_")).pdf"
         savePanel.title = "Export Crossover Schematic & BOM to PDF"
 
-        savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                do {
-                    try pdfData.write(to: url)
-                    Task { @MainActor in
-                        self.statusMessage = "Successfully exported PDF schematic to \(url.lastPathComponent)"
-                    }
-                } catch {
-                    Task { @MainActor in
-                        self.errorMessage = "Failed to save PDF file: \(error.localizedDescription)"
-                    }
-                }
+        if savePanel.runModal() == .OK, let url = savePanel.url {
+            do {
+                try pdfData.write(to: url)
+                self.statusMessage = "Successfully exported PDF schematic to \(url.lastPathComponent)"
+                self.errorMessage = nil
+            } catch {
+                self.errorMessage = "Failed to save PDF file: \(error.localizedDescription)"
             }
         }
     }
@@ -382,19 +377,13 @@ public class MainDesignerViewModel: ObservableObject {
             savePanel.title = "Save Loudspeaker Design File"
             savePanel.message = "Save all driver, cabinet, crossover, and curve parameters into a project file"
 
-            savePanel.begin { response in
-                if response == .OK, let url = savePanel.url {
-                    do {
-                        try jsonString.write(to: url, atomically: true, encoding: .utf8)
-                        Task { @MainActor in
-                            self.statusMessage = "Successfully saved design to \(url.lastPathComponent)"
-                            self.errorMessage = nil
-                        }
-                    } catch {
-                        Task { @MainActor in
-                            self.errorMessage = "Failed to save design file: \(error.localizedDescription)"
-                        }
-                    }
+            if savePanel.runModal() == .OK, let url = savePanel.url {
+                do {
+                    try jsonString.write(to: url, atomically: true, encoding: .utf8)
+                    self.statusMessage = "Successfully saved design to \(url.lastPathComponent)"
+                    self.errorMessage = nil
+                } catch {
+                    self.errorMessage = "Failed to save design file: \(error.localizedDescription)"
                 }
             }
         } catch {

@@ -1854,8 +1854,10 @@ export default function App() {
     a.download = `${sanitizedName}_Design.json`;
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
     setStatusMsg(`Saved design '${driverName}' to ${sanitizedName}_Design.json`);
   };
 
@@ -2016,7 +2018,9 @@ export default function App() {
             ref={jsonFileInputRef}
             onChange={handleJSONFileUpload}
             accept=".json,application/json"
-            className="hidden"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
           />
 
           <div className="grid grid-cols-2 gap-2">
@@ -2071,7 +2075,9 @@ export default function App() {
             ref={fileInputRef}
             onChange={handleLocalFileUpload}
             accept=".pdf,application/pdf"
-            className="hidden"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
           />
 
           {/* Local File Ingestion Button & Drop Zone */}
