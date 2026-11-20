@@ -326,6 +326,7 @@ public class MainDesignerViewModel: ObservableObject {
         savePanel.nameFieldStringValue = "Crossover_Schematic_\(driver.name.replacingOccurrences(of: " ", with: "_")).pdf"
         savePanel.title = "Export Crossover Schematic & BOM to PDF"
 
+        NSApp.activate(ignoringOtherApps: true)
         if savePanel.runModal() == .OK, let url = savePanel.url {
             do {
                 try pdfData.write(to: url)
@@ -377,6 +378,7 @@ public class MainDesignerViewModel: ObservableObject {
             savePanel.title = "Save Loudspeaker Design File"
             savePanel.message = "Save all driver, cabinet, crossover, and curve parameters into a project file"
 
+            NSApp.activate(ignoringOtherApps: true)
             if savePanel.runModal() == .OK, let url = savePanel.url {
                 do {
                     try jsonString.write(to: url, atomically: true, encoding: .utf8)
@@ -401,6 +403,7 @@ public class MainDesignerViewModel: ObservableObject {
         openPanel.canChooseDirectories = false
         openPanel.canChooseFiles = true
 
+        NSApp.activate(ignoringOtherApps: true)
         if openPanel.runModal() == .OK, let url = openPanel.url {
             self.loadDesign(from: url)
         }

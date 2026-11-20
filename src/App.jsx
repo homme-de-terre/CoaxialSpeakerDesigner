@@ -1772,7 +1772,7 @@ export default function App() {
     }
   };
 
-  const handleSaveDesign = () => {
+  const handleSaveDesign = async () => {
     const stuffingLevels = {
       1.0: 'none',
       1.1: 'light',
@@ -1846,19 +1846,65 @@ export default function App() {
     };
 
     const jsonString = JSON.stringify(doc, null, 2);
-    const blob = new Blob([jsonString], { type: "application/json" });
+    const sanitizedName = (driverName || "Speaker").trim().replace(/\s+/g, '_');
+    const filename = `${sanitizedName}_Design.json`;
+
+    // Modern File System Access API if available
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{
+            description: 'JSON Design File',
+            accept: { 'application/json': ['.json'] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(jsonString);
+        await writable.close();
+        setStatusMsg(`Saved design '${driverName}' to ${filename}`);
+        return;
+      } catch (pickerErr) {
+        if (pickerErr.name === 'AbortError') return;
+      }
+    }
+
+    // Direct Blob download fallback
+    const blob = new Blob([jsonString], { type: "application/json;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const sanitizedName = (driverName || "Speaker").trim().replace(/\s+/g, '_');
     a.href = url;
-    a.download = `${sanitizedName}_Design.json`;
+    a.download = filename;
+    a.rel = "noopener";
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
-      document.body.removeChild(a);
+      if (a.parentNode) document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    }, 1000);
-    setStatusMsg(`Saved design '${driverName}' to ${sanitizedName}_Design.json`);
+    }, 5000);
+    setStatusMsg(`Saved design '${driverName}' to ${filename}`);
+  };
+
+  const handleLoadDesignClick = async (e) => {
+    if (typeof window !== 'undefined' && 'showOpenFilePicker' in window) {
+      e.preventDefault();
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{
+            description: 'JSON Design File',
+            accept: { 'application/json': ['.json'] }
+          }],
+          multiple: false
+        });
+        const file = await handle.getFile();
+        await processJSONDesignFile(file);
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.error(err);
+      }
+    }
   };
 
   const processJSONDesignFile = async (file) => {
@@ -2012,17 +2058,6 @@ export default function App() {
             <span className="text-[10px] text-slate-400">JSON Format</span>
           </div>
 
-          {/* Hidden JSON File Input */}
-          <input
-            type="file"
-            ref={jsonFileInputRef}
-            onChange={handleJSONFileUpload}
-            accept=".json,application/json"
-            className="sr-only"
-            tabIndex={-1}
-            aria-hidden="true"
-          />
-
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -2034,15 +2069,26 @@ export default function App() {
               <span>Save Design</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => jsonFileInputRef.current?.click()}
+            <label
+              htmlFor="jsonFileInput"
+              onClick={handleLoadDesignClick}
               className="bg-slate-800 hover:bg-slate-700 border border-slate-600 hover:border-slate-400 text-slate-200 font-medium text-xs py-2 px-3 rounded transition flex items-center justify-center space-x-1.5 cursor-pointer"
               title="Load project parameters from .json"
             >
               <Upload className="w-3.5 h-3.5 text-emerald-400" />
               <span>Load Design</span>
-            </button>
+              <input
+                id="jsonFileInput"
+                type="file"
+                ref={jsonFileInputRef}
+                onChange={handleJSONFileUpload}
+                onClick={(e) => { e.target.value = ''; }}
+                accept=".json,application/json"
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+            </label>
           </div>
         </div>
 
