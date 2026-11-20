@@ -26,6 +26,22 @@ public struct MainSplitView: View {
                     }
                     .pickerStyle(.segmented)
 
+                    Button(action: { viewModel.saveDesignToFile() }) {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 15))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Save Design to File (⌘S)")
+
+                    Button(action: { viewModel.loadDesignFromFile() }) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 15))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open Design File (⌘O)")
+
                     Button(action: { viewModel.showAboutDialog = true }) {
                         Image(systemName: "info.circle")
                             .font(.system(size: 15))
