@@ -80,8 +80,13 @@ public struct GroupDelayChartView: View {
 
             // Group Delay Canvas Plot
             Canvas { context, size in
-                let (minMs, maxMs) = determineRange()
-                drawLogGrid(context: context, size: size, minMs: minMs, maxMs: maxMs)
+                let (minMs, maxMs, stepMs) = Self.determineGroupDelayRange(
+                    points: viewModel.simulationPoints,
+                    showWoofer: viewModel.showWoofer,
+                    showTweeter: viewModel.showTweeter,
+                    showTotalSystem: viewModel.showTotalSystem
+                )
+                drawLogGrid(context: context, size: size, minMs: minMs, maxMs: maxMs, stepMs: stepMs)
                 drawGroupDelayCurves(context: context, size: size, minMs: minMs, maxMs: maxMs)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -93,34 +98,61 @@ public struct GroupDelayChartView: View {
         .padding()
     }
 
-    private func determineRange() -> (minMs: Double, maxMs: Double) {
-        guard !viewModel.simulationPoints.isEmpty else {
-            return (0.0, 10.0)
+    /// Computes auto-scaled Y-axis range and grid step for the Group Delay plot to maximize vertical resolution.
+    public static func determineGroupDelayRange(
+        points: [SimulationPoint],
+        showWoofer: Bool,
+        showTweeter: Bool,
+        showTotalSystem: Bool
+    ) -> (minMs: Double, maxMs: Double, stepMs: Double) {
+        guard !points.isEmpty else {
+            return (0.0, 5.0, 1.0)
         }
-        var maxObserved: Double = 5.0
-        var minObserved: Double = 0.0
+        var maxObserved: Double = -Double.infinity
+        var minObserved: Double = Double.infinity
 
-        for p in viewModel.simulationPoints {
-            if viewModel.showWoofer && p.wooferGroupDelayMs.isFinite {
+        for p in points {
+            if showWoofer && p.wooferGroupDelayMs.isFinite {
                 maxObserved = max(maxObserved, p.wooferGroupDelayMs)
                 minObserved = min(minObserved, p.wooferGroupDelayMs)
             }
-            if viewModel.showTweeter && p.tweeterGroupDelayMs.isFinite {
+            if showTweeter && p.tweeterGroupDelayMs.isFinite {
                 maxObserved = max(maxObserved, p.tweeterGroupDelayMs)
                 minObserved = min(minObserved, p.tweeterGroupDelayMs)
             }
-            if viewModel.showTotalSystem && p.totalSystemGroupDelayMs.isFinite {
+            if showTotalSystem && p.totalSystemGroupDelayMs.isFinite {
                 maxObserved = max(maxObserved, p.totalSystemGroupDelayMs)
                 minObserved = min(minObserved, p.totalSystemGroupDelayMs)
             }
         }
 
-        let minMs = minObserved < -0.2 ? -1.0 : 0.0
-        let maxMs = max(6.0, ceil(maxObserved + 0.5))
-        return (minMs, maxMs)
+        if !maxObserved.isFinite || !minObserved.isFinite {
+            return (0.0, 5.0, 1.0)
+        }
+
+        let rawMax = max(0.4, maxObserved * 1.08)
+        let rawMin = minObserved < -0.05 ? (minObserved * 1.08) : 0.0
+        let rawSpan = max(0.4, rawMax - rawMin)
+
+        let stepMs: Double
+        if rawSpan <= 1.2 {
+            stepMs = 0.2
+        } else if rawSpan <= 3.0 {
+            stepMs = 0.5
+        } else if rawSpan <= 10.0 {
+            stepMs = 1.0
+        } else if rawSpan <= 25.0 {
+            stepMs = 2.0
+        } else {
+            stepMs = 5.0
+        }
+
+        let minMs = rawMin < 0.0 ? (floor(rawMin / stepMs) * stepMs) : 0.0
+        let maxMs = max(minMs + stepMs, ceil(rawMax / stepMs) * stepMs)
+        return (minMs, maxMs, stepMs)
     }
 
-    private func drawLogGrid(context: GraphicsContext, size: CGSize, minMs: Double, maxMs: Double) {
+    private func drawLogGrid(context: GraphicsContext, size: CGSize, minMs: Double, maxMs: Double, stepMs: Double) {
         let minF = 20.0
         let maxF = 20000.0
         let logMin = log10(minF)
@@ -151,11 +183,10 @@ public struct GroupDelayChartView: View {
             context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: textX, y: size.height - 12))
         }
 
-        // Horizontal Group Delay Gridlines (ms)
-        let span = maxMs - minMs
-        let step: Double = span > 10.0 ? 2.0 : 1.0
+        // Auto-scaled Horizontal Group Delay Gridlines (ms)
+        let span = max(maxMs - minMs, 0.1)
         var ms = minMs
-        while ms <= maxMs + 0.05 {
+        while ms <= maxMs + 0.001 {
             let y = size.height * CGFloat(1.0 - (ms - minMs) / span)
             var path = Path()
             path.move(to: CGPoint(x: 0, y: y))
@@ -167,12 +198,12 @@ public struct GroupDelayChartView: View {
                 lineWidth: isZero ? 1.5 : 0.8
             )
 
-            if ms > minMs + 0.01 {
+            if ms > minMs + 0.001 {
                 let textY = y <= 2.0 ? y + 8 : y - 8
-                let label = String(format: "%.0f ms", ms)
-                context.draw(Text(label).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 22, y: textY))
+                let label = stepMs < 1.0 ? String(format: "%.1f ms", ms) : String(format: "%.0f ms", ms)
+                context.draw(Text(label).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 24, y: textY))
             }
-            ms += step
+            ms += stepMs
         }
     }
 

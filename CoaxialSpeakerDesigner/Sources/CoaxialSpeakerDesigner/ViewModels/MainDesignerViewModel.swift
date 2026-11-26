@@ -72,6 +72,7 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var unwrapPhase: Bool = true
     @Published public var compensateTweeterDelay: Bool = false
     @Published public var showAboutDialog: Bool = false
+    @Published public var showHelpDialog: Bool = false
     @Published public var showWooferRaw: Bool = true
     @Published public var showWooferFinal: Bool = true
     @Published public var showTweeterRaw: Bool = true

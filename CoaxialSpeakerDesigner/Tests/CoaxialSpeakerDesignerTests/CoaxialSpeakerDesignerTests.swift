@@ -1226,4 +1226,48 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         vm.closeAllDetachedCharts()
         XCTAssertTrue(vm.openDetachedCharts.isEmpty)
     }
+
+    func testImpedanceAndGroupDelayYAxisAutoScaling() {
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        let crossover = CrossoverNetwork(crossoverFrequency: 2200.0, enableZobelNetwork: true)
+        let points = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: crossover)
+
+        // 1. Impedance auto-scaling: Tweeter only (low peak ~11-16 Ohms) vs All curves (woofer resonance peak ~40-60 Ohms)
+        let zRangeTweeterOnly = ImpedanceChartView.determineImpedanceRange(
+            points: points,
+            showWoofer: false,
+            showTweeter: true,
+            showTotalSystem: false
+        )
+        let zRangeAll = ImpedanceChartView.determineImpedanceRange(
+            points: points,
+            showWoofer: true,
+            showTweeter: true,
+            showTotalSystem: true
+        )
+
+        XCTAssertEqual(zRangeTweeterOnly.minZ, 0.0)
+        XCTAssertLessThanOrEqual(zRangeTweeterOnly.maxZ, 25.0, "Tweeter-only impedance plot should auto-scale tightly (<= 25 Ohms) instead of 100 Ohms")
+        XCTAssertLessThan(zRangeTweeterOnly.maxZ, zRangeAll.maxZ, "Tweeter-only maxZ must be smaller than full-system maxZ to maximize resolution")
+        XCTAssertLessThanOrEqual(zRangeAll.maxZ, 80.0, "With Zobel enabled, full-system maxZ should fit resonance peak tightly (< 80 Ohms)")
+
+        // 2. Group Delay auto-scaling: Tweeter only (sub-millisecond peak) vs All curves (cabinet LF group delay ~3-6 ms)
+        let gdRangeTweeterOnly = GroupDelayChartView.determineGroupDelayRange(
+            points: points,
+            showWoofer: false,
+            showTweeter: true,
+            showTotalSystem: false
+        )
+        let gdRangeAll = GroupDelayChartView.determineGroupDelayRange(
+            points: points,
+            showWoofer: true,
+            showTweeter: true,
+            showTotalSystem: true
+        )
+
+        XCTAssertLessThanOrEqual(gdRangeTweeterOnly.maxMs, 2.0, "Tweeter-only group delay should auto-scale to fine sub-2ms ceiling instead of 6ms")
+        XCTAssertLessThan(gdRangeTweeterOnly.stepMs, 1.0, "Tweeter-only group delay should use sub-millisecond grid steps (0.2 or 0.5 ms)")
+        XCTAssertLessThan(gdRangeTweeterOnly.maxMs, gdRangeAll.maxMs, "Tweeter-only maxMs must be smaller than full-system maxMs")
+    }
 }

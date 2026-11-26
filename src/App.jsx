@@ -190,6 +190,7 @@ export default function App() {
   const [wooferFx, setWooferFx] = useState(2200);
   const [tweeterFx, setTweeterFx] = useState(2200);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
+  const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [wooferOrder, setWooferOrder] = useState('secondOrderLR');
   const [tweeterOrder, setTweeterOrder] = useState('secondOrderLR');
   const [enableZobel, setEnableZobel] = useState(true);
@@ -1272,8 +1273,8 @@ export default function App() {
       const logMin = Math.log10(minF);
       const logMax = Math.log10(maxF);
 
-      let maxObserved = 5.0;
-      let minObserved = 0.0;
+      let maxObserved = -Infinity;
+      let minObserved = Infinity;
       simulationData.forEach(p => {
         if (showWoofer && Number.isFinite(p.wooferGD)) {
           maxObserved = Math.max(maxObserved, p.wooferGD);
@@ -1289,9 +1290,25 @@ export default function App() {
         }
       });
 
-      const minMs = minObserved < -0.2 ? -1.0 : 0.0;
-      const maxMs = Math.max(6.0, Math.ceil(maxObserved + 0.5));
-      const spanMs = maxMs - minMs;
+      if (!Number.isFinite(maxObserved) || !Number.isFinite(minObserved)) {
+        maxObserved = 5.0;
+        minObserved = 0.0;
+      }
+
+      const rawMax = Math.max(0.4, maxObserved * 1.08);
+      const rawMin = minObserved < -0.05 ? (minObserved * 1.08) : 0.0;
+      const rawSpan = Math.max(0.4, rawMax - rawMin);
+
+      let stepMs = 1.0;
+      if (rawSpan <= 1.2) stepMs = 0.2;
+      else if (rawSpan <= 3.0) stepMs = 0.5;
+      else if (rawSpan <= 10.0) stepMs = 1.0;
+      else if (rawSpan <= 25.0) stepMs = 2.0;
+      else stepMs = 5.0;
+
+      const minMs = rawMin < 0 ? (Math.floor(rawMin / stepMs) * stepMs) : 0.0;
+      const maxMs = Math.max(minMs + stepMs, Math.ceil(rawMax / stepMs) * stepMs);
+      const spanMs = Math.max(maxMs - minMs, 0.1);
 
       // Gridlines for frequency
       const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
@@ -1320,8 +1337,7 @@ export default function App() {
         ctx.fillText(label, textX, height - 8);
       });
 
-      const stepMs = spanMs > 10 ? 2 : 1;
-      for (let ms = minMs; ms <= maxMs + 0.05; ms += stepMs) {
+      for (let ms = minMs; ms <= maxMs + 0.001; ms += stepMs) {
         const y = height * (1 - (ms - minMs) / spanMs);
         ctx.strokeStyle = Math.abs(ms) < 0.01 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
         ctx.lineWidth = Math.abs(ms) < 0.01 ? 1.5 : 1;
@@ -1329,9 +1345,10 @@ export default function App() {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
         ctx.stroke();
-        if (ms > minMs + 0.01) {
+        if (ms > minMs + 0.001) {
           const textY = y <= 2 ? 12 : y - 4;
-          ctx.fillText(`${ms} ms`, 8, textY);
+          const labelStr = stepMs < 1.0 ? `${ms.toFixed(1)} ms` : `${Math.round(ms)} ms`;
+          ctx.fillText(labelStr, 8, textY);
         }
       }
 
@@ -1385,7 +1402,28 @@ export default function App() {
       const maxF = 20000.0;
       const logMin = Math.log10(minF);
       const logMax = Math.log10(maxF);
-      const maxZ = 100.0; // 0 to 100 Ohms
+
+      // Auto-scale Impedance Y-axis to maximize vertical resolution
+      let maxObservedZ = 0.0;
+      simulationData.forEach(p => {
+        if (showWoofer && Number.isFinite(p.zWooferMag)) {
+          maxObservedZ = Math.max(maxObservedZ, p.zWooferMag);
+        }
+        if (showTweeter && Number.isFinite(p.zTweeterMag)) {
+          maxObservedZ = Math.max(maxObservedZ, p.zTweeterMag);
+        }
+        if (showTotalSystem && Number.isFinite(p.zTotalMag)) {
+          maxObservedZ = Math.max(maxObservedZ, p.zTotalMag);
+        }
+      });
+
+      const targetMaxZ = maxObservedZ > 0 ? Math.max(8.0, maxObservedZ * 1.08) : 50.0;
+      let stepZ = 10.0;
+      if (targetMaxZ <= 16.0) stepZ = 2.0;
+      else if (targetMaxZ <= 45.0) stepZ = 5.0;
+      else if (targetMaxZ <= 120.0) stepZ = 10.0;
+      else stepZ = 20.0;
+      const maxZ = Math.ceil(targetMaxZ / stepZ) * stepZ;
 
       // Crossover handover band highlight
       const actualWooferFx = enableIndependentFx ? wooferFx : fx;
@@ -1415,8 +1453,8 @@ export default function App() {
         ctx.fillText(label, textX, height - 8);
       });
 
-      // Horizontal Impedance Gridlines (0 to 100 Ohms, step 10)
-      for (let z = 0; z <= maxZ; z += 10) {
+      // Auto-scaled Horizontal Impedance Gridlines
+      for (let z = 0; z <= maxZ + 0.01; z += stepZ) {
         const y = height * (1 - z / maxZ);
         ctx.strokeStyle = z === 0 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
         ctx.lineWidth = z === 0 ? 1.5 : 1;
@@ -1426,7 +1464,7 @@ export default function App() {
         ctx.stroke();
         if (z > 0.01) {
           const textY = y <= 2 ? 12 : y - 4;
-          ctx.fillText(`${z} Ω`, 8, textY);
+          ctx.fillText(`${Math.round(z)} Ω`, 8, textY);
         }
       }
 
@@ -2634,13 +2672,22 @@ export default function App() {
             <button onClick={() => setActiveTab('crossover')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'crossover' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Crossover Designer</button>
             <button onClick={() => setActiveTab('bom')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'bom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Schematic & BOM</button>
           </div>
-          <button
-            onClick={() => setShowAboutDialog(true)}
-            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-md transition cursor-pointer"
-          >
-            <Info className="w-3.5 h-3.5" />
-            <span>About</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowHelpDialog(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-md transition cursor-pointer"
+            >
+              <span>?</span>
+              <span>Help</span>
+            </button>
+            <button
+              onClick={() => setShowAboutDialog(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-md transition cursor-pointer"
+            >
+              <Info className="w-3.5 h-3.5" />
+              <span>About</span>
+            </button>
+          </div>
         </header>
 
         {/* View Workspace Content */}
@@ -3647,6 +3694,70 @@ export default function App() {
                 type="button"
                 onClick={() => setShowAboutDialog(false)}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Help Modal Dialog */}
+      {showHelpDialog && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-sm">
+                  ?
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">Coaxial Speaker Designer — Quick Help Guide</h3>
+                  <p className="text-[11px] text-slate-400">Step-by-step loudspeaker & crossover design workflow</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHelpDialog(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-300 space-y-3 max-h-[380px] overflow-y-auto pr-1">
+              <div className="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50 space-y-1">
+                <div className="font-semibold text-white">1. Driver Setup & Datasheet Ingestion</div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Import a local PDF datasheet, paste a web URL, or load the <strong>Altec 604-8K Preset (CLIO)</strong>. T/S parameters (Fs, Qes, Qms, Qts, Vas, Re, Le, Sd, Xmax, SPL) and response curves are extracted automatically.
+                </p>
+              </div>
+              <div className="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50 space-y-1">
+                <div className="font-semibold text-white">2. Sealed (2nd-Order) & Vented (4th-Order) Cabinets</div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Use <strong>Sealed</strong> for Qts ≥ 0.40 or <strong>Vented Bass-Reflex</strong> (QB3, B4, SC4) for low-Qts pro coaxial woofers. Keep port duct diameter above the recommended minimum to prevent port chuffing.
+                </p>
+              </div>
+              <div className="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50 space-y-1">
+                <div className="font-semibold text-white">3. Crossover Tuning, Phase Optimizer & Live Windows</div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Click <strong>Open 2×2 Live Monitor Grid</strong> in the Crossover tab to watch all curves update live while adjusting sliders. Enable the <strong>All-Pass Network</strong> to phase-align recessed coaxial tweeters: Green (≤ 10° RMS) = Optimal, Yellow (10°–20°) = Acceptable, Red (&gt; 20°) = Invert polarity or adjust fx. Use <strong>E12</strong> or <strong>E24</strong> snapping for commercial component values.
+                </p>
+              </div>
+              <div className="bg-slate-800/60 p-3 rounded-lg border border-slate-700/50 space-y-1">
+                <div className="font-semibold text-white">4. Auto-Scaled Plots, Project Save & PDF Export</div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  <strong>Group Delay</strong> and <strong>System Impedance</strong> auto-scale their vertical Y-axis to maximize resolution for visible traces. Save/Load complete projects as JSON or export a PDF schematic and BOM.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-between border-t border-slate-800">
+              <span className="text-[11px] text-slate-400">Complete documentation available in HELP.md</span>
+              <button
+                type="button"
+                onClick={() => setShowHelpDialog(false)}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition cursor-pointer"
               >
                 Close
               </button>

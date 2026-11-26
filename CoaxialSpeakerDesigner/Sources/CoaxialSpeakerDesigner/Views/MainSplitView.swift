@@ -42,6 +42,14 @@ public struct MainSplitView: View {
                     .buttonStyle(.plain)
                     .help("Open Design File (⌘O)")
 
+                    Button(action: { viewModel.showHelpDialog = true }) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 15))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Quick User & Engineering Help Guide")
+
                     Button(action: { viewModel.showAboutDialog = true }) {
                         Image(systemName: "info.circle")
                             .font(.system(size: 15))
@@ -88,6 +96,12 @@ public struct MainSplitView: View {
             set: { viewModel.showAboutDialog = $0 }
         )) {
             AboutDialogView(viewModel: viewModel)
+        }
+        .sheet(isPresented: Binding<Bool>(
+            get: { viewModel.showHelpDialog },
+            set: { viewModel.showHelpDialog = $0 }
+        )) {
+            HelpDialogView(viewModel: viewModel)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CSD_SaveDesign"))) { _ in
             #if canImport(AppKit)
@@ -154,5 +168,97 @@ public struct AboutDialogView: View {
         }
         .padding(24)
         .frame(width: 440)
+    }
+}
+
+public struct HelpDialogView: View {
+    @ObservedObject var viewModel: MainDesignerViewModel
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.accentColor)
+                Text("Coaxial Speaker Designer — Quick Help Guide")
+                    .font(.headline)
+                Spacer()
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    helpSection(
+                        title: "1. Driver Setup & Datasheet Ingestion",
+                        bullets: [
+                            "Import local PDF datasheets or paste a URL to auto-extract Thiele-Small specs (Fs, Qes, Qms, Qts, Vas, Re, Le, Sd, Xmax, SPL) and digitize response curves.",
+                            "Or click 'Load Altec 604-8K Preset (CLIO)' to load factory specs and 100-point measured curves."
+                        ]
+                    )
+
+                    helpSection(
+                        title: "2. Enclosure Design (Sealed 2nd-Order & Vented 4th-Order)",
+                        bullets: [
+                            "Sealed Box (12 dB/oct): Choose Butterworth B2 (Qtc = 0.707), Bessel (0.577), Critically Damped (0.500), or Target f3.",
+                            "Vented Bass-Reflex (24 dB/oct): Recommended for low-Qts pro coaxial woofers (0.25–0.38). Select QB3, B4, or SC4 and keep port diameter above Min Recommended Dia to avoid chuffing."
+                        ]
+                    )
+
+                    helpSection(
+                        title: "3. Crossover Tuning, Phase Alignment & Live Windows",
+                        bullets: [
+                            "Live Curve Windows: In the Crossover tab, click 'Open 2×2 Live Monitor Grid' (or detach individual plots) so changes reflect immediately in the curves.",
+                            "All-Pass Phase Optimizer: Enter tweeter physical depth offset (mm) and enable the All-Pass Network. Green (≤ 10° RMS) = Optimal, Yellow (10°–20°) = Acceptable, Red (> 20°) = Try inverting polarity or adjusting fx.",
+                            "E12 / E24 Snapping: Snap ideal components to standard commercial E12 (±10%) or E24 (±5%) values."
+                        ]
+                    )
+
+                    helpSection(
+                        title: "4. Auto-Scaled Plots, Project Save & CAD PDF Export",
+                        bullets: [
+                            "Group Delay and System Impedance automatically scale their vertical Y-axis to maximize resolution for visible traces.",
+                            "Use Save/Load Design (⌘S / ⌘O) for JSON project files, or export a 2-page vector schematic & BOM report from the Schematic & BOM tab."
+                        ]
+                    )
+                }
+            }
+            .frame(maxHeight: 340)
+
+            Divider()
+
+            HStack {
+                Text("Full guide available in HELP.md")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Close") {
+                    viewModel.showHelpDialog = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 540)
+    }
+
+    @ViewBuilder
+    private func helpSection(title: String, bullets: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.bold())
+                .foregroundColor(.primary)
+            ForEach(bullets, id: \.self) { b in
+                Text("• \(b)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(6)
     }
 }

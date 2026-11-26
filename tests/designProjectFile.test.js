@@ -589,6 +589,83 @@ test('Detached Live Curve Windows State and 2x2 Monitor Grid Lifecycle', () => {
   assert.equal(Object.values(detachedPlots).some(Boolean), false);
 });
 
+test('Auto-Scaling Y-Axis for Impedance and Group Delay Plots', () => {
+  function computeImpedanceScale(points, { showWoofer = true, showTweeter = true, showTotalSystem = true } = {}) {
+    let maxObservedZ = 0.0;
+    for (const p of points) {
+      if (showWoofer && Number.isFinite(p.zWooferMag)) maxObservedZ = Math.max(maxObservedZ, p.zWooferMag);
+      if (showTweeter && Number.isFinite(p.zTweeterMag)) maxObservedZ = Math.max(maxObservedZ, p.zTweeterMag);
+      if (showTotalSystem && Number.isFinite(p.zTotalMag)) maxObservedZ = Math.max(maxObservedZ, p.zTotalMag);
+    }
+    const targetMaxZ = maxObservedZ > 0 ? Math.max(8.0, maxObservedZ * 1.08) : 50.0;
+    let stepZ = 10.0;
+    if (targetMaxZ <= 16.0) stepZ = 2.0;
+    else if (targetMaxZ <= 45.0) stepZ = 5.0;
+    else if (targetMaxZ <= 120.0) stepZ = 10.0;
+    else stepZ = 20.0;
+    const maxZ = Math.ceil(targetMaxZ / stepZ) * stepZ;
+    return { minZ: 0.0, maxZ, stepZ };
+  }
+
+  function computeGroupDelayScale(points, { showWoofer = true, showTweeter = true, showTotalSystem = true } = {}) {
+    let maxObserved = -Infinity;
+    let minObserved = Infinity;
+    for (const p of points) {
+      if (showWoofer && Number.isFinite(p.wooferGD)) {
+        maxObserved = Math.max(maxObserved, p.wooferGD);
+        minObserved = Math.min(minObserved, p.wooferGD);
+      }
+      if (showTweeter && Number.isFinite(p.tweeterGD)) {
+        maxObserved = Math.max(maxObserved, p.tweeterGD);
+        minObserved = Math.min(minObserved, p.tweeterGD);
+      }
+      if (showTotalSystem && Number.isFinite(p.totalGD)) {
+        maxObserved = Math.max(maxObserved, p.totalGD);
+        minObserved = Math.min(minObserved, p.totalGD);
+      }
+    }
+    if (!Number.isFinite(maxObserved) || !Number.isFinite(minObserved)) {
+      maxObserved = 5.0;
+      minObserved = 0.0;
+    }
+    const rawMax = Math.max(0.4, maxObserved * 1.08);
+    const rawMin = minObserved < -0.05 ? (minObserved * 1.08) : 0.0;
+    const rawSpan = Math.max(0.4, rawMax - rawMin);
+    let stepMs = 1.0;
+    if (rawSpan <= 1.2) stepMs = 0.2;
+    else if (rawSpan <= 3.0) stepMs = 0.5;
+    else if (rawSpan <= 10.0) stepMs = 1.0;
+    else if (rawSpan <= 25.0) stepMs = 2.0;
+    else stepMs = 5.0;
+    const minMs = rawMin < 0 ? (Math.floor(rawMin / stepMs) * stepMs) : 0.0;
+    const maxMs = Math.max(minMs + stepMs, Math.ceil(rawMax / stepMs) * stepMs);
+    return { minMs, maxMs, stepMs };
+  }
+
+  const samplePoints = [
+    { zWooferMag: 34.2, zTweeterMag: 11.5, zTotalMag: 12.1, wooferGD: 3.4, tweeterGD: 0.45, totalGD: 1.8 },
+    { zWooferMag: 7.5, zTweeterMag: 6.2, zTotalMag: 6.4, wooferGD: 0.8, tweeterGD: 0.12, totalGD: 0.6 }
+  ];
+
+  // Impedance: Tweeter only (peak 11.5 -> maxZ = 14, stepZ = 2) vs All (peak 34.2 -> maxZ = 40, stepZ = 5)
+  const zTw = computeImpedanceScale(samplePoints, { showWoofer: false, showTweeter: true, showTotalSystem: false });
+  assert.equal(zTw.maxZ, 14.0);
+  assert.equal(zTw.stepZ, 2.0);
+
+  const zAll = computeImpedanceScale(samplePoints, { showWoofer: true, showTweeter: true, showTotalSystem: true });
+  assert.equal(zAll.maxZ, 40.0);
+  assert.equal(zAll.stepZ, 5.0);
+
+  // Group Delay: Tweeter only (peak 0.45 -> maxMs = 0.6, stepMs = 0.2) vs All (peak 3.4 -> maxMs = 4.0, stepMs = 1.0)
+  const gdTw = computeGroupDelayScale(samplePoints, { showWoofer: false, showTweeter: true, showTotalSystem: false });
+  assert.ok(Math.abs(gdTw.maxMs - 0.6) < 1e-6);
+  assert.equal(gdTw.stepMs, 0.2);
+
+  const gdAll = computeGroupDelayScale(samplePoints, { showWoofer: true, showTweeter: true, showTotalSystem: true });
+  assert.equal(gdAll.maxMs, 4.0);
+  assert.equal(gdAll.stepMs, 1.0);
+});
+
 test('Design Project File - Complex Number Physics Math', () => {
   class Complex {
     constructor(re, im = 0) {

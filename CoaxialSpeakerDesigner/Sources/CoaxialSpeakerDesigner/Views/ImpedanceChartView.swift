@@ -66,8 +66,14 @@ public struct ImpedanceChartView: View {
             .padding(.horizontal)
 
             Canvas { context, size in
-                drawLogGrid(context: context, size: size)
-                drawImpedanceCurves(context: context, size: size)
+                let (minZ, maxZ, stepZ) = Self.determineImpedanceRange(
+                    points: viewModel.simulationPoints,
+                    showWoofer: viewModel.showWoofer,
+                    showTweeter: viewModel.showTweeter,
+                    showTotalSystem: viewModel.showTotalSystem
+                )
+                drawLogGrid(context: context, size: size, minZ: minZ, maxZ: maxZ, stepZ: stepZ)
+                drawImpedanceCurves(context: context, size: size, minZ: minZ, maxZ: maxZ)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
@@ -78,13 +84,56 @@ public struct ImpedanceChartView: View {
         .padding()
     }
 
-    private func drawLogGrid(context: GraphicsContext, size: CGSize) {
+    /// Computes auto-scaled Y-axis range and grid step for the Impedance plot to maximize vertical resolution.
+    public static func determineImpedanceRange(
+        points: [SimulationPoint],
+        showWoofer: Bool,
+        showTweeter: Bool,
+        showTotalSystem: Bool
+    ) -> (minZ: Double, maxZ: Double, stepZ: Double) {
+        guard !points.isEmpty else {
+            return (0.0, 50.0, 10.0)
+        }
+        var maxObserved: Double = 0.0
+
+        for p in points {
+            if showWoofer && p.wooferImpedanceMag.isFinite {
+                maxObserved = max(maxObserved, p.wooferImpedanceMag)
+            }
+            if showTweeter && p.tweeterImpedanceMag.isFinite {
+                maxObserved = max(maxObserved, p.tweeterImpedanceMag)
+            }
+            if showTotalSystem && p.totalSystemImpedanceMag.isFinite {
+                maxObserved = max(maxObserved, p.totalSystemImpedanceMag)
+            }
+        }
+
+        if maxObserved <= 0.0 {
+            return (0.0, 50.0, 10.0)
+        }
+
+        let targetMax = max(8.0, maxObserved * 1.08)
+        let stepZ: Double
+        if targetMax <= 16.0 {
+            stepZ = 2.0
+        } else if targetMax <= 45.0 {
+            stepZ = 5.0
+        } else if targetMax <= 120.0 {
+            stepZ = 10.0
+        } else {
+            stepZ = 20.0
+        }
+
+        let maxZ = ceil(targetMax / stepZ) * stepZ
+        return (0.0, maxZ, stepZ)
+    }
+
+    private func drawLogGrid(context: GraphicsContext, size: CGSize, minZ: Double, maxZ: Double, stepZ: Double) {
         let minF = 20.0
         let maxF = 20000.0
         let logMin = log10(minF)
         let logMax = log10(maxF)
-
-        let maxZScale: Double = 100.0 // 0 to 100 Ohms scale
+        let spanZ = max(maxZ - minZ, 1.0)
 
         // Vertical Logarithmic Frequency Gridlines
         let majorFreqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
@@ -100,35 +149,35 @@ public struct ImpedanceChartView: View {
             context.draw(Text(labelText).font(.caption2).foregroundColor(.secondary), at: CGPoint(x: textX, y: size.height - 12))
         }
 
-        // Horizontal Impedance Gridlines (0 to 100 Ohms, step 10 Ohms)
-        for z in stride(from: 0.0, through: maxZScale, by: 10.0) {
-            let y = size.height * CGFloat(1.0 - z / maxZScale)
+        // Auto-scaled Horizontal Impedance Gridlines
+        for z in stride(from: minZ, through: maxZ + 0.01, by: stepZ) {
+            let y = size.height * CGFloat(1.0 - (z - minZ) / spanZ)
             var path = Path()
             path.move(to: CGPoint(x: 0, y: y))
             path.addLine(to: CGPoint(x: size.width, y: y))
             context.stroke(path, with: .color(Color.gray.opacity(0.2)), lineWidth: 1)
 
-            if z > 0.01 {
+            if z > minZ + 0.01 {
                 let textY = y <= 2.0 ? y + 8 : y - 8
-                context.draw(Text("\(Int(z)) Ω").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: textY))
+                context.draw(Text("\(Int(round(z))) Ω").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: textY))
             }
         }
     }
 
-    private func drawImpedanceCurves(context: GraphicsContext, size: CGSize) {
+    private func drawImpedanceCurves(context: GraphicsContext, size: CGSize, minZ: Double, maxZ: Double) {
         let minF = 20.0
         let maxF = 20000.0
         let logMin = log10(minF)
         let logMax = log10(maxF)
-        let maxZScale: Double = 100.0
+        let spanZ = max(maxZ - minZ, 1.0)
 
         let points = viewModel.simulationPoints
         guard !points.isEmpty else { return }
 
         func zToCanvas(freq: Double, zMag: Double) -> CGPoint {
-            let clampedZ = max(min(zMag, maxZScale), 0.0)
+            let clampedZ = max(min(zMag, maxZ), minZ)
             let x = size.width * CGFloat((log10(freq) - logMin) / (logMax - logMin))
-            let y = size.height * CGFloat(1.0 - clampedZ / maxZScale)
+            let y = size.height * CGFloat(1.0 - (clampedZ - minZ) / spanZ)
             return CGPoint(x: x, y: y)
         }
 
