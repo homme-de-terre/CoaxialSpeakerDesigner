@@ -1,7 +1,39 @@
 import Foundation
 import Combine
 import AppKit
+import SwiftUI
 import UniformTypeIdentifiers
+
+/// Enumerates the simulation chart views that can be detached into live floating windows.
+public enum DetachedChartKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case amplitude = "Amplitude Response"
+    case phase = "Phase & Delay"
+    case groupDelay = "Group Delay"
+    case stepResponse = "Step Response"
+    case impedance = "System Impedance"
+
+    public var id: String { rawValue }
+
+    public var shortTitle: String {
+        switch self {
+        case .amplitude: return "Amplitude"
+        case .phase: return "Phase & Delay"
+        case .groupDelay: return "Group Delay"
+        case .stepResponse: return "Step Response"
+        case .impedance: return "Impedance"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .amplitude: return "chart.xyaxis.line"
+        case .phase: return "waveform"
+        case .groupDelay: return "clock"
+        case .stepResponse: return "waveform.path.ecg"
+        case .impedance: return "bolt.horizontal"
+        }
+    }
+}
 
 @MainActor
 public class MainDesignerViewModel: ObservableObject {
@@ -46,6 +78,12 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var showTweeterFinal: Bool = true
     @Published public var showTargetReference: Bool = true
     @Published public var targetReferenceSPL: Double = 89.0
+    @Published public var openDetachedCharts: Set<DetachedChartKind> = []
+
+    #if canImport(AppKit)
+    private var detachedWindows: [DetachedChartKind: NSWindow] = [:]
+    private var windowCloseObservers: [DetachedChartKind: NSObjectProtocol] = [:]
+    #endif
 
     public init(
         driver: CoaxialDriver = .defaultSampleDriver,
@@ -423,4 +461,134 @@ public class MainDesignerViewModel: ObservableObject {
         }
     }
     #endif
+
+    // MARK: - Detached Live Curve Windows Manager
+
+    /// Checks whether a specific chart is currently open in a detached window.
+    public func isChartDetached(_ kind: DetachedChartKind) -> Bool {
+        return openDetachedCharts.contains(kind)
+    }
+
+    /// Toggles a detached chart window open or closed.
+    public func toggleDetachedChart(_ kind: DetachedChartKind) {
+        if openDetachedCharts.contains(kind) {
+            closeDetachedChart(kind)
+        } else {
+            openDetachedChart(kind)
+        }
+    }
+
+    /// Opens (or brings to front) a detached live window for the requested simulation chart.
+    public func openDetachedChart(_ kind: DetachedChartKind, frame: NSRect? = nil) {
+        openDetachedCharts.insert(kind)
+
+        #if canImport(AppKit)
+        if let existingWindow = detachedWindows[kind] {
+            if let targetFrame = frame {
+                existingWindow.setFrame(targetFrame, display: true, animate: false)
+            }
+            existingWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let hostingView: NSView
+        switch kind {
+        case .amplitude:
+            hostingView = NSHostingView(rootView: AmplitudeBodeChartView(viewModel: self, isDetachedWindow: true).frame(minWidth: 480, minHeight: 340))
+        case .phase:
+            hostingView = NSHostingView(rootView: PhaseBodeChartView(viewModel: self, isDetachedWindow: true).frame(minWidth: 480, minHeight: 340))
+        case .groupDelay:
+            hostingView = NSHostingView(rootView: GroupDelayChartView(viewModel: self, isDetachedWindow: true).frame(minWidth: 480, minHeight: 340))
+        case .stepResponse:
+            hostingView = NSHostingView(rootView: StepResponseChartView(viewModel: self, isDetachedWindow: true).frame(minWidth: 480, minHeight: 340))
+        case .impedance:
+            hostingView = NSHostingView(rootView: ImpedanceChartView(viewModel: self, isDetachedWindow: true).frame(minWidth: 480, minHeight: 340))
+        }
+
+        let indexOffset = CGFloat((DetachedChartKind.allCases.firstIndex(of: kind) ?? 0) * 28)
+        let defaultRect = frame ?? NSRect(x: 140.0 + indexOffset, y: 140.0 + indexOffset, width: 680.0, height: 440.0)
+
+        let window = NSWindow(
+            contentRect: defaultRect,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Coaxial Speaker Designer — \(kind.rawValue) (Live)"
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        if let targetFrame = frame {
+            window.setFrame(targetFrame, display: true, animate: false)
+        }
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                self.openDetachedCharts.remove(kind)
+                self.detachedWindows.removeValue(forKey: kind)
+                if let obs = self.windowCloseObservers.removeValue(forKey: kind) {
+                    NotificationCenter.default.removeObserver(obs)
+                }
+            }
+        }
+
+        windowCloseObservers[kind] = observer
+        detachedWindows[kind] = window
+        window.makeKeyAndOrderFront(nil)
+        #endif
+    }
+
+    /// Closes a specific detached chart window if open.
+    public func closeDetachedChart(_ kind: DetachedChartKind) {
+        openDetachedCharts.remove(kind)
+        #if canImport(AppKit)
+        if let obs = windowCloseObservers.removeValue(forKey: kind) {
+            NotificationCenter.default.removeObserver(obs)
+        }
+        if let window = detachedWindows.removeValue(forKey: kind) {
+            window.close()
+        }
+        #endif
+    }
+
+    /// Opens the 4 primary frequency-domain plots (Amplitude, Phase & Delay, Group Delay, System Impedance)
+    /// arranged in a 2×2 live monitor grid on screen, with optional 5th Step Response window.
+    public func openLiveMonitorGrid(includeStepResponse: Bool = false) {
+        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 40, y: 40, width: 1440, height: 900)
+        let gap: CGFloat = 12.0
+        let cellW = max(480.0, (screenFrame.width - gap * 3.0) / 2.0)
+        let cellH = max(340.0, (screenFrame.height - gap * 3.0) / 2.0)
+
+        let leftX = screenFrame.minX + gap
+        let rightX = leftX + cellW + gap
+        let bottomY = screenFrame.minY + gap
+        let topY = bottomY + cellH + gap
+
+        openDetachedChart(.amplitude, frame: NSRect(x: leftX, y: topY, width: cellW, height: cellH))
+        openDetachedChart(.phase, frame: NSRect(x: rightX, y: topY, width: cellW, height: cellH))
+        openDetachedChart(.groupDelay, frame: NSRect(x: leftX, y: bottomY, width: cellW, height: cellH))
+        openDetachedChart(.impedance, frame: NSRect(x: rightX, y: bottomY, width: cellW, height: cellH))
+
+        if includeStepResponse {
+            let centerRect = NSRect(
+                x: screenFrame.midX - cellW / 2.0,
+                y: screenFrame.midY - cellH / 2.0,
+                width: cellW,
+                height: cellH
+            )
+            openDetachedChart(.stepResponse, frame: centerRect)
+        }
+    }
+
+    /// Closes all currently open detached chart windows.
+    public func closeAllDetachedCharts() {
+        let activeKinds = Array(openDetachedCharts)
+        for kind in activeKinds {
+            closeDetachedChart(kind)
+        }
+    }
 }

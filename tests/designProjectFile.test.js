@@ -532,6 +532,63 @@ test('Crossover Component Calculation with Exact, E12, and E24 Snapping', () => 
   }
 });
 
+test('Detached Live Curve Windows State and 2x2 Monitor Grid Lifecycle', () => {
+  let detachedPlots = {
+    amplitude: false,
+    phase: false,
+    delay: false,
+    step: false,
+    impedance: false
+  };
+
+  const toggleDetachedPlot = (key) => {
+    detachedPlots = { ...detachedPlots, [key]: !detachedPlots[key] };
+  };
+  const openLiveMonitorGrid = () => {
+    detachedPlots = {
+      ...detachedPlots,
+      amplitude: true,
+      phase: true,
+      delay: true,
+      impedance: true
+    };
+  };
+  const closeAllDetachedPlots = () => {
+    detachedPlots = {
+      amplitude: false,
+      phase: false,
+      delay: false,
+      step: false,
+      impedance: false
+    };
+  };
+
+  // Initially none detached
+  assert.equal(Object.values(detachedPlots).some(Boolean), false);
+
+  // Detach Step Response individually
+  toggleDetachedPlot('step');
+  assert.equal(detachedPlots.step, true);
+  assert.equal(detachedPlots.amplitude, false);
+
+  // Open 2x2 Live Monitor Grid (opens Amplitude, Phase & Delay, Group Delay, Impedance while preserving Step)
+  openLiveMonitorGrid();
+  assert.equal(detachedPlots.amplitude, true);
+  assert.equal(detachedPlots.phase, true);
+  assert.equal(detachedPlots.delay, true);
+  assert.equal(detachedPlots.impedance, true);
+  assert.equal(detachedPlots.step, true);
+
+  // Toggle Phase off
+  toggleDetachedPlot('phase');
+  assert.equal(detachedPlots.phase, false);
+  assert.equal(detachedPlots.amplitude, true);
+
+  // Close all detached plots
+  closeAllDetachedPlots();
+  assert.equal(Object.values(detachedPlots).some(Boolean), false);
+});
+
 test('Design Project File - Complex Number Physics Math', () => {
   class Complex {
     constructor(re, im = 0) {

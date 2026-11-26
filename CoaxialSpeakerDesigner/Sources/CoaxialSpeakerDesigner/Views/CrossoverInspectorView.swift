@@ -30,9 +30,56 @@ public struct CrossoverInspectorView: View {
                 Text("Coaxial Crossover Network Designer")
                     .font(.title2)
                     .bold()
+                Spacer()
+                Button(action: { viewModel.openLiveMonitorGrid(includeStepResponse: false) }) {
+                    Label("Open 2×2 Live Monitor Grid", systemImage: "square.grid.2x2")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Open Amplitude, Phase & Delay, Group Delay, and System Impedance in a 2×2 screen grid")
+
+                if !viewModel.openDetachedCharts.isEmpty {
+                    Button(action: { viewModel.closeAllDetachedCharts() }) {
+                        Label("Close All Windows", systemImage: "xmark.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
 
             Divider()
+
+            GroupBox(label: Label("Detached Live Curve Windows (Real-Time Crossover Monitor)", systemImage: "macwindow.on.rectangle")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Detach any curve view into a live floating window to observe real-time acoustic and electrical response changes while adjusting crossover parameters.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 8) {
+                        ForEach(DetachedChartKind.allCases) { kind in
+                            let isOpen = viewModel.isChartDetached(kind)
+                            Button(action: {
+                                viewModel.toggleDetachedChart(kind)
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: isOpen ? "checkmark.rectangle.stack.fill" : "arrow.up.forward.square")
+                                    Text(kind.shortTitle)
+                                }
+                                .font(.caption.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(isOpen ? .accentColor : .secondary)
+                            .help(isOpen ? "Close detached \(kind.rawValue) window" : "Open \(kind.rawValue) in a floating live window")
+                        }
+                        Spacer()
+                    }
+                }
+                .padding(6)
+            }
 
             GroupBox(label: Label("Frequency & Topology Settings", systemImage: "slider.horizontal.2.square.on.square")) {
                 VStack(alignment: .leading, spacing: 12) {

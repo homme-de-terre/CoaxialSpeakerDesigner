@@ -4,9 +4,11 @@ import SwiftUI
 
 public struct PhaseBodeChartView: View {
     @ObservedObject var viewModel: MainDesignerViewModel
+    public var isDetachedWindow: Bool
 
-    public init(viewModel: MainDesignerViewModel) {
+    public init(viewModel: MainDesignerViewModel, isDetachedWindow: Bool = false) {
         self.viewModel = viewModel
+        self.isDetachedWindow = isDetachedWindow
     }
 
     public var body: some View {
@@ -90,6 +92,17 @@ public struct PhaseBodeChartView: View {
                 Toggle("Compensate Delay", isOn: $viewModel.compensateTweeterDelay)
                     .toggleStyle(.checkbox)
                     .font(.caption)
+
+                if !isDetachedWindow {
+                    Divider().frame(height: 16)
+                    Button(action: { viewModel.openDetachedChart(.phase) }) {
+                        Label("Detach", systemImage: "arrow.up.forward.square")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Open Phase & Delay in a floating live window")
+                }
             }
             .padding(.horizontal)
 

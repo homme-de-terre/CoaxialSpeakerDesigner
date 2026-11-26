@@ -2,9 +2,11 @@ import SwiftUI
 
 public struct ImpedanceChartView: View {
     @ObservedObject var viewModel: MainDesignerViewModel
+    public var isDetachedWindow: Bool
 
-    public init(viewModel: MainDesignerViewModel) {
+    public init(viewModel: MainDesignerViewModel, isDetachedWindow: Bool = false) {
         self.viewModel = viewModel
+        self.isDetachedWindow = isDetachedWindow
     }
 
     public var body: some View {
@@ -49,6 +51,17 @@ public struct ImpedanceChartView: View {
                     }
                 }
                 .buttonStyle(.plain)
+
+                if !isDetachedWindow {
+                    Divider().frame(height: 16)
+                    Button(action: { viewModel.openDetachedChart(.impedance) }) {
+                        Label("Detach", systemImage: "arrow.up.forward.square")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Open System Impedance in a floating live window")
+                }
             }
             .padding(.horizontal)
 

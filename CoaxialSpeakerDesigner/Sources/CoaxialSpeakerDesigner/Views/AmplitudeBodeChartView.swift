@@ -2,9 +2,11 @@ import SwiftUI
 
 public struct AmplitudeBodeChartView: View {
     @ObservedObject var viewModel: MainDesignerViewModel
+    public var isDetachedWindow: Bool
 
-    public init(viewModel: MainDesignerViewModel) {
+    public init(viewModel: MainDesignerViewModel, isDetachedWindow: Bool = false) {
         self.viewModel = viewModel
+        self.isDetachedWindow = isDetachedWindow
     }
 
     public var body: some View {
@@ -66,6 +68,17 @@ public struct AmplitudeBodeChartView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Toggle target reference line")
+
+                if !isDetachedWindow {
+                    Divider().frame(height: 16)
+                    Button(action: { viewModel.openDetachedChart(.amplitude) }) {
+                        Label("Detach", systemImage: "arrow.up.forward.square")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Open Amplitude Response in a floating live window")
+                }
             }
             .padding(.horizontal)
 

@@ -1183,4 +1183,47 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertTrue(restored.crossover.snapToE24Values)
         XCTAssertFalse(restored.crossover.snapToStandardValues)
     }
+
+    @MainActor
+    func testDetachedChartWindowsAndLiveCrossoverReflection() {
+        let vm = MainDesignerViewModel()
+        XCTAssertTrue(vm.openDetachedCharts.isEmpty)
+
+        // 1. Verify all 5 detachable chart kinds exist
+        XCTAssertEqual(DetachedChartKind.allCases.count, 5)
+        XCTAssertTrue(DetachedChartKind.allCases.contains(.amplitude))
+        XCTAssertTrue(DetachedChartKind.allCases.contains(.phase))
+        XCTAssertTrue(DetachedChartKind.allCases.contains(.groupDelay))
+        XCTAssertTrue(DetachedChartKind.allCases.contains(.stepResponse))
+        XCTAssertTrue(DetachedChartKind.allCases.contains(.impedance))
+
+        // 2. Toggle individual detached chart window
+        vm.toggleDetachedChart(.amplitude)
+        XCTAssertTrue(vm.isChartDetached(.amplitude))
+        XCTAssertFalse(vm.isChartDetached(.phase))
+
+        // 3. Open 2x2 Live Monitor Grid
+        vm.openLiveMonitorGrid(includeStepResponse: false)
+        XCTAssertTrue(vm.isChartDetached(.amplitude))
+        XCTAssertTrue(vm.isChartDetached(.phase))
+        XCTAssertTrue(vm.isChartDetached(.groupDelay))
+        XCTAssertTrue(vm.isChartDetached(.impedance))
+
+        // 4. Verify live crossover parameter edits immediately update shared simulation curves
+        let initialMidSPL = vm.simulationPoints[vm.simulationPoints.count / 2].tweeterFinalSPL
+        let initialMidPhase = vm.simulationPoints[vm.simulationPoints.count / 2].tweeterPhaseDeg
+
+        vm.crossover.userTargetAttenuationdB = 10.0
+        vm.crossover.invertTweeterPolarity = true
+
+        let updatedMidSPL = vm.simulationPoints[vm.simulationPoints.count / 2].tweeterFinalSPL
+        let updatedMidPhase = vm.simulationPoints[vm.simulationPoints.count / 2].tweeterPhaseDeg
+
+        XCTAssertNotEqual(initialMidSPL, updatedMidSPL, "Crossover L-Pad change must immediately update shared simulation points for detached Amplitude chart")
+        XCTAssertNotEqual(initialMidPhase, updatedMidPhase, "Crossover polarity change must immediately update shared simulation points for detached Phase chart")
+
+        // 5. Close all detached chart windows
+        vm.closeAllDetachedCharts()
+        XCTAssertTrue(vm.openDetachedCharts.isEmpty)
+    }
 }

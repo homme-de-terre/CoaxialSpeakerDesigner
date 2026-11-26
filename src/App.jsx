@@ -215,12 +215,52 @@ export default function App() {
   const [wooferFRDText, setWooferFRDText] = useState("");
   const [tweeterFRDText, setTweeterFRDText] = useState("");
 
-  // Canvas Refs for Bode Plots
+  // Canvas Refs for Bode Plots (Main Tab & Detached Live Monitor Windows)
   const amplitudeCanvasRef = useRef(null);
   const phaseCanvasRef = useRef(null);
   const impedanceCanvasRef = useRef(null);
   const stepCanvasRef = useRef(null);
   const groupDelayCanvasRef = useRef(null);
+
+  const detachedAmplitudeCanvasRef = useRef(null);
+  const detachedPhaseCanvasRef = useRef(null);
+  const detachedImpedanceCanvasRef = useRef(null);
+  const detachedStepCanvasRef = useRef(null);
+  const detachedGroupDelayCanvasRef = useRef(null);
+
+  const [detachedPlots, setDetachedPlots] = useState({
+    amplitude: false,
+    phase: false,
+    delay: false,
+    step: false,
+    impedance: false
+  });
+
+  const toggleDetachedPlot = (plotKey) => {
+    setDetachedPlots(prev => ({ ...prev, [plotKey]: !prev[plotKey] }));
+  };
+
+  const openLiveMonitorGrid = () => {
+    setDetachedPlots(prev => ({
+      ...prev,
+      amplitude: true,
+      phase: true,
+      delay: true,
+      impedance: true
+    }));
+  };
+
+  const closeAllDetachedPlots = () => {
+    setDetachedPlots({
+      amplitude: false,
+      phase: false,
+      delay: false,
+      step: false,
+      impedance: false
+    });
+  };
+
+  const hasDetachedPlots = Object.values(detachedPlots).some(Boolean);
 
   // --- Enclosure & Cabinet Computations (Sealed 2nd-Order & Vented 4th-Order) ---
   const cabinetCalculations = useMemo(() => {
@@ -981,430 +1021,449 @@ export default function App() {
 
   // --- Render Bode Amplitude Plot ---
   useEffect(() => {
-    const canvas = amplitudeCanvasRef.current;
-    if (!canvas || simulationData.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
+    if (simulationData.length === 0) return;
+    const renderAmplitudeToCanvas = (canvas) => {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
 
-    ctx.clearRect(0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
 
-    const minF = 20.0;
-    const maxF = 20000.0;
-    const logMin = Math.log10(minF);
-    const logMax = Math.log10(maxF);
-    const minSPL = 40.0;
-    const maxSPL = 110.0;
+      const minF = 20.0;
+      const maxF = 20000.0;
+      const logMin = Math.log10(minF);
+      const logMax = Math.log10(maxF);
+      const minSPL = 40.0;
+      const maxSPL = 110.0;
 
-    // Gridlines
-    const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '10px sans-serif';
+      // Gridlines
+      const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px sans-serif';
 
-    freqs.forEach(f => {
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
-      const textX = f === 20000 ? x - 26 : x + 4;
-      ctx.fillText(label, textX, height - 8);
-    });
+      freqs.forEach(f => {
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+        const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+        const textX = f === 20000 ? x - 26 : x + 4;
+        ctx.fillText(label, textX, height - 8);
+      });
 
-    for (let spl = minSPL; spl <= maxSPL; spl += 10) {
-      const y = height * (1 - (spl - minSPL) / (maxSPL - minSPL));
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-      if (spl > minSPL) {
-        const textY = y <= 2 ? 12 : y - 4;
-        ctx.fillText(`${spl} dB`, 8, textY);
+      for (let spl = minSPL; spl <= maxSPL; spl += 10) {
+        const y = height * (1 - (spl - minSPL) / (maxSPL - minSPL));
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+        if (spl > minSPL) {
+          const textY = y <= 2 ? 12 : y - 4;
+          ctx.fillText(`${spl} dB`, 8, textY);
+        }
       }
-    }
 
-    function toCanvas(f, spl) {
-      const clampedSPL = Math.max(Math.min(spl, maxSPL), minSPL);
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      const y = height * (1 - (clampedSPL - minSPL) / (maxSPL - minSPL));
-      return [x, y];
-    }
+      function toCanvas(f, spl) {
+        const clampedSPL = Math.max(Math.min(spl, maxSPL), minSPL);
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        const y = height * (1 - (clampedSPL - minSPL) / (maxSPL - minSPL));
+        return [x, y];
+      }
 
-    // Woofer Curve (Blue)
-    if (showWoofer) {
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      simulationData.forEach((p, i) => {
-        const [x, y] = toCanvas(p.frequency, p.wooferFinalSPL);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    }
+      // Woofer Curve (Blue)
+      if (showWoofer) {
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        simulationData.forEach((p, i) => {
+          const [x, y] = toCanvas(p.frequency, p.wooferFinalSPL);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
 
-    // Tweeter Curve (Red)
-    if (showTweeter) {
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      simulationData.forEach((p, i) => {
-        const [x, y] = toCanvas(p.frequency, p.tweeterFinalSPL);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    }
+      // Tweeter Curve (Red)
+      if (showTweeter) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        simulationData.forEach((p, i) => {
+          const [x, y] = toCanvas(p.frequency, p.tweeterFinalSPL);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
 
-    // Summed Total Curve (Green)
-    if (showTotalSystem) {
-      ctx.strokeStyle = '#22c55e';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      simulationData.forEach((p, i) => {
-        const [x, y] = toCanvas(p.frequency, p.totalSPL);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    }
+      // Summed Total Curve (Green)
+      if (showTotalSystem) {
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        simulationData.forEach((p, i) => {
+          const [x, y] = toCanvas(p.frequency, p.totalSPL);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+    };
 
-  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem]);
+    renderAmplitudeToCanvas(amplitudeCanvasRef.current);
+    renderAmplitudeToCanvas(detachedAmplitudeCanvasRef.current);
+  }, [simulationData, activeTab, detachedPlots, showWoofer, showTweeter, showTotalSystem]);
 
   // --- Render Bode Phase Plot ---
   useEffect(() => {
-    const canvas = phaseCanvasRef.current;
-    if (!canvas || activeTab !== 'phase' || simulationData.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
+    if (simulationData.length === 0) return;
+    const renderPhaseToCanvas = (canvas) => {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
 
-    ctx.clearRect(0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
 
-    const minF = 20.0;
-    const maxF = 20000.0;
-    const logMin = Math.log10(minF);
-    const logMax = Math.log10(maxF);
+      const minF = 20.0;
+      const maxF = 20000.0;
+      const logMin = Math.log10(minF);
+      const logMax = Math.log10(maxF);
 
-    // Determine phase range (unwrap vs wrapped)
-    let minDeg = -180.0;
-    let maxDeg = 180.0;
-    if (unwrapPhase) {
-      let minVal = 0.0, maxVal = 180.0;
-      simulationData.forEach(p => {
-        if (showWoofer && Number.isFinite(p.wooferUnwrappedPhase)) {
-          minVal = Math.min(minVal, p.wooferUnwrappedPhase);
-          maxVal = Math.max(maxVal, p.wooferUnwrappedPhase);
-        }
-        if (showTweeter) {
-          const twP = compensateTweeterDelay ? p.tweeterDelayCompPhase : p.tweeterUnwrappedPhase;
-          if (Number.isFinite(twP)) {
-            minVal = Math.min(minVal, twP);
-            maxVal = Math.max(maxVal, twP);
+      // Determine phase range (unwrap vs wrapped)
+      let minDeg = -180.0;
+      let maxDeg = 180.0;
+      if (unwrapPhase) {
+        let minVal = 0.0, maxVal = 180.0;
+        simulationData.forEach(p => {
+          if (showWoofer && Number.isFinite(p.wooferUnwrappedPhase)) {
+            minVal = Math.min(minVal, p.wooferUnwrappedPhase);
+            maxVal = Math.max(maxVal, p.wooferUnwrappedPhase);
           }
-        }
-        if (showTotalSystem && Number.isFinite(p.totalUnwrappedPhase)) {
-          minVal = Math.min(minVal, p.totalUnwrappedPhase);
-          maxVal = Math.max(maxVal, p.totalUnwrappedPhase);
-        }
-      });
-      minDeg = Math.min(-180, Math.floor((minVal - 15) / 90) * 90);
-      maxDeg = Math.max(180, Math.ceil((maxVal + 15) / 90) * 90);
-    }
-    const spanDeg = maxDeg - minDeg;
-
-    // Gridlines for frequency
-    const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '10px sans-serif';
-
-    // Crossover highlight band [fx/2, 2*fx]
-    const f1 = Math.max(minF, fx / 2.0);
-    const f2 = Math.min(maxF, fx * 2.0);
-    const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
-    const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
-    ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
-    ctx.fillRect(x1, 0, x2 - x1, height);
-
-    ctx.fillStyle = '#94a3b8';
-    freqs.forEach(f => {
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
-      const textX = f === 20000 ? x - 26 : x + 4;
-      ctx.fillText(label, textX, height - 8);
-    });
-
-    const stepDeg = spanDeg > 540 ? 180 : (spanDeg > 360 ? 90 : 45);
-    for (let d = minDeg; d <= maxDeg + 0.1; d += stepDeg) {
-      const y = height * (1 - (d - minDeg) / spanDeg);
-      ctx.strokeStyle = Math.abs(d) < 0.01 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = Math.abs(d) < 0.01 ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-      if (d > minDeg + 0.01) {
-        const textY = y <= 2 ? 12 : y - 4;
-        ctx.fillText(`${Math.round(d)}°`, 8, textY);
+          if (showTweeter) {
+            const twP = compensateTweeterDelay ? p.tweeterDelayCompPhase : p.tweeterUnwrappedPhase;
+            if (Number.isFinite(twP)) {
+              minVal = Math.min(minVal, twP);
+              maxVal = Math.max(maxVal, twP);
+            }
+          }
+          if (showTotalSystem && Number.isFinite(p.totalUnwrappedPhase)) {
+            minVal = Math.min(minVal, p.totalUnwrappedPhase);
+            maxVal = Math.max(maxVal, p.totalUnwrappedPhase);
+          }
+        });
+        minDeg = Math.min(-180, Math.floor((minVal - 15) / 90) * 90);
+        maxDeg = Math.max(180, Math.ceil((maxVal + 15) / 90) * 90);
       }
-    }
+      const spanDeg = maxDeg - minDeg;
 
-    function toCanvas(f, deg) {
-      const clamped = Math.max(Math.min(deg, maxDeg), minDeg);
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      const y = height * (1 - (clamped - minDeg) / spanDeg);
-      return [x, y];
-    }
+      // Gridlines for frequency
+      const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px sans-serif';
 
-    function drawCurve(dataKey, color, lineWidth = 2, isDashed = false) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
-      if (isDashed) ctx.setLineDash([4, 4]);
-      else ctx.setLineDash([]);
-      ctx.beginPath();
-      let started = false;
-      let prevDeg = 0;
+      // Crossover highlight band [fx/2, 2*fx]
+      const f1 = Math.max(minF, fx / 2.0);
+      const f2 = Math.min(maxF, fx * 2.0);
+      const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
+      const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
+      ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
+      ctx.fillRect(x1, 0, x2 - x1, height);
 
-      simulationData.forEach(p => {
-        const deg = p[dataKey];
-        if (deg === undefined || !Number.isFinite(deg)) return;
-        const [x, y] = toCanvas(p.frequency, deg);
-        if (!started) {
-          ctx.moveTo(x, y);
-          started = true;
-        } else if (!unwrapPhase && Math.abs(deg - prevDeg) > 170) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-        prevDeg = deg;
+      ctx.fillStyle = '#94a3b8';
+      freqs.forEach(f => {
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+        const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+        const textX = f === 20000 ? x - 26 : x + 4;
+        ctx.fillText(label, textX, height - 8);
       });
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
 
-    if (showWoofer) {
-      drawCurve(unwrapPhase ? 'wooferUnwrappedPhase' : 'wooferPhase', '#3b82f6', 2);
-    }
-    if (showTweeter) {
-      const twKey = compensateTweeterDelay ? 'tweeterDelayCompPhase' : (unwrapPhase ? 'tweeterUnwrappedPhase' : 'tweeterPhase');
-      drawCurve(twKey, '#ef4444', 2);
-    }
-    if (showPhaseDiff) {
-      drawCurve('deltaPhase', '#f97316', 1.5, true);
-    }
-    if (showTotalSystem) {
-      drawCurve(unwrapPhase ? 'totalUnwrappedPhase' : 'totalPhase', '#22c55e', 2.5);
-    }
-  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem, showPhaseDiff, unwrapPhase, compensateTweeterDelay, fx]);
+      const stepDeg = spanDeg > 540 ? 180 : (spanDeg > 360 ? 90 : 45);
+      for (let d = minDeg; d <= maxDeg + 0.1; d += stepDeg) {
+        const y = height * (1 - (d - minDeg) / spanDeg);
+        ctx.strokeStyle = Math.abs(d) < 0.01 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = Math.abs(d) < 0.01 ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+        if (d > minDeg + 0.01) {
+          const textY = y <= 2 ? 12 : y - 4;
+          ctx.fillText(`${Math.round(d)}°`, 8, textY);
+        }
+      }
+
+      function toCanvas(f, deg) {
+        const clamped = Math.max(Math.min(deg, maxDeg), minDeg);
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        const y = height * (1 - (clamped - minDeg) / spanDeg);
+        return [x, y];
+      }
+
+      function drawCurve(dataKey, color, lineWidth = 2, isDashed = false) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        if (isDashed) ctx.setLineDash([4, 4]);
+        else ctx.setLineDash([]);
+        ctx.beginPath();
+        let started = false;
+        let prevDeg = 0;
+
+        simulationData.forEach(p => {
+          const deg = p[dataKey];
+          if (deg === undefined || !Number.isFinite(deg)) return;
+          const [x, y] = toCanvas(p.frequency, deg);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else if (!unwrapPhase && Math.abs(deg - prevDeg) > 170) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+          prevDeg = deg;
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      if (showWoofer) {
+        drawCurve(unwrapPhase ? 'wooferUnwrappedPhase' : 'wooferPhase', '#3b82f6', 2);
+      }
+      if (showTweeter) {
+        const twKey = compensateTweeterDelay ? 'tweeterDelayCompPhase' : (unwrapPhase ? 'tweeterUnwrappedPhase' : 'tweeterPhase');
+        drawCurve(twKey, '#ef4444', 2);
+      }
+      if (showPhaseDiff) {
+        drawCurve('deltaPhase', '#f97316', 1.5, true);
+      }
+      if (showTotalSystem) {
+        drawCurve(unwrapPhase ? 'totalUnwrappedPhase' : 'totalPhase', '#22c55e', 2.5);
+      }
+    };
+
+    renderPhaseToCanvas(phaseCanvasRef.current);
+    renderPhaseToCanvas(detachedPhaseCanvasRef.current);
+  }, [simulationData, activeTab, detachedPlots, showWoofer, showTweeter, showTotalSystem, showPhaseDiff, unwrapPhase, compensateTweeterDelay, fx]);
 
   // --- Render Group Delay Plot ---
   useEffect(() => {
-    const canvas = groupDelayCanvasRef.current;
-    if (!canvas || activeTab !== 'delay' || simulationData.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
+    if (simulationData.length === 0) return;
+    const renderGDToCanvas = (canvas) => {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
 
-    ctx.clearRect(0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
 
-    const minF = 20.0;
-    const maxF = 20000.0;
-    const logMin = Math.log10(minF);
-    const logMax = Math.log10(maxF);
+      const minF = 20.0;
+      const maxF = 20000.0;
+      const logMin = Math.log10(minF);
+      const logMax = Math.log10(maxF);
 
-    let maxObserved = 5.0;
-    let minObserved = 0.0;
-    simulationData.forEach(p => {
-      if (showWoofer && Number.isFinite(p.wooferGD)) {
-        maxObserved = Math.max(maxObserved, p.wooferGD);
-        minObserved = Math.min(minObserved, p.wooferGD);
-      }
-      if (showTweeter && Number.isFinite(p.tweeterGD)) {
-        maxObserved = Math.max(maxObserved, p.tweeterGD);
-        minObserved = Math.min(minObserved, p.tweeterGD);
-      }
-      if (showTotalSystem && Number.isFinite(p.totalGD)) {
-        maxObserved = Math.max(maxObserved, p.totalGD);
-        minObserved = Math.min(minObserved, p.totalGD);
-      }
-    });
-
-    const minMs = minObserved < -0.2 ? -1.0 : 0.0;
-    const maxMs = Math.max(6.0, Math.ceil(maxObserved + 0.5));
-    const spanMs = maxMs - minMs;
-
-    // Gridlines for frequency
-    const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '10px sans-serif';
-
-    // Crossover highlight band [fx/2, 2*fx]
-    const f1 = Math.max(minF, fx / 2.0);
-    const f2 = Math.min(maxF, fx * 2.0);
-    const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
-    const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
-    ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
-    ctx.fillRect(x1, 0, x2 - x1, height);
-
-    ctx.fillStyle = '#94a3b8';
-    freqs.forEach(f => {
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
-      const textX = f === 20000 ? x - 26 : x + 4;
-      ctx.fillText(label, textX, height - 8);
-    });
-
-    const stepMs = spanMs > 10 ? 2 : 1;
-    for (let ms = minMs; ms <= maxMs + 0.05; ms += stepMs) {
-      const y = height * (1 - (ms - minMs) / spanMs);
-      ctx.strokeStyle = Math.abs(ms) < 0.01 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = Math.abs(ms) < 0.01 ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-      if (ms > minMs + 0.01) {
-        const textY = y <= 2 ? 12 : y - 4;
-        ctx.fillText(`${ms} ms`, 8, textY);
-      }
-    }
-
-    function toCanvas(f, ms) {
-      const clamped = Math.max(Math.min(ms, maxMs), minMs);
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      const y = height * (1 - (clamped - minMs) / spanMs);
-      return [x, y];
-    }
-
-    function drawGDCurve(dataKey, color, lineWidth = 2) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
-      ctx.beginPath();
-      let started = false;
+      let maxObserved = 5.0;
+      let minObserved = 0.0;
       simulationData.forEach(p => {
-        const ms = p[dataKey];
-        if (ms === undefined || !Number.isFinite(ms)) return;
-        const [x, y] = toCanvas(p.frequency, ms);
-        if (!started) {
-          ctx.moveTo(x, y);
-          started = true;
-        } else {
-          ctx.lineTo(x, y);
+        if (showWoofer && Number.isFinite(p.wooferGD)) {
+          maxObserved = Math.max(maxObserved, p.wooferGD);
+          minObserved = Math.min(minObserved, p.wooferGD);
+        }
+        if (showTweeter && Number.isFinite(p.tweeterGD)) {
+          maxObserved = Math.max(maxObserved, p.tweeterGD);
+          minObserved = Math.min(minObserved, p.tweeterGD);
+        }
+        if (showTotalSystem && Number.isFinite(p.totalGD)) {
+          maxObserved = Math.max(maxObserved, p.totalGD);
+          minObserved = Math.min(minObserved, p.totalGD);
         }
       });
-      ctx.stroke();
-    }
 
-    if (showWoofer) drawGDCurve('wooferGD', '#3b82f6', 2);
-    if (showTweeter) drawGDCurve('tweeterGD', '#ef4444', 2);
-    if (showTotalSystem) drawGDCurve('totalGD', '#22c55e', 2.5);
-  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem, fx]);
+      const minMs = minObserved < -0.2 ? -1.0 : 0.0;
+      const maxMs = Math.max(6.0, Math.ceil(maxObserved + 0.5));
+      const spanMs = maxMs - minMs;
+
+      // Gridlines for frequency
+      const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px sans-serif';
+
+      // Crossover highlight band [fx/2, 2*fx]
+      const f1 = Math.max(minF, fx / 2.0);
+      const f2 = Math.min(maxF, fx * 2.0);
+      const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
+      const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
+      ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
+      ctx.fillRect(x1, 0, x2 - x1, height);
+
+      ctx.fillStyle = '#94a3b8';
+      freqs.forEach(f => {
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+        const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+        const textX = f === 20000 ? x - 26 : x + 4;
+        ctx.fillText(label, textX, height - 8);
+      });
+
+      const stepMs = spanMs > 10 ? 2 : 1;
+      for (let ms = minMs; ms <= maxMs + 0.05; ms += stepMs) {
+        const y = height * (1 - (ms - minMs) / spanMs);
+        ctx.strokeStyle = Math.abs(ms) < 0.01 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = Math.abs(ms) < 0.01 ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+        if (ms > minMs + 0.01) {
+          const textY = y <= 2 ? 12 : y - 4;
+          ctx.fillText(`${ms} ms`, 8, textY);
+        }
+      }
+
+      function toCanvas(f, ms) {
+        const clamped = Math.max(Math.min(ms, maxMs), minMs);
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        const y = height * (1 - (clamped - minMs) / spanMs);
+        return [x, y];
+      }
+
+      function drawGDCurve(dataKey, color, lineWidth = 2) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.beginPath();
+        let started = false;
+        simulationData.forEach(p => {
+          const ms = p[dataKey];
+          if (ms === undefined || !Number.isFinite(ms)) return;
+          const [x, y] = toCanvas(p.frequency, ms);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+      }
+
+      if (showWoofer) drawGDCurve('wooferGD', '#3b82f6', 2);
+      if (showTweeter) drawGDCurve('tweeterGD', '#ef4444', 2);
+      if (showTotalSystem) drawGDCurve('totalGD', '#22c55e', 2.5);
+    };
+
+    renderGDToCanvas(groupDelayCanvasRef.current);
+    renderGDToCanvas(detachedGroupDelayCanvasRef.current);
+  }, [simulationData, activeTab, detachedPlots, showWoofer, showTweeter, showTotalSystem, fx]);
 
   // --- Render System Electrical Load Impedance Plot ---
   useEffect(() => {
-    const canvas = impedanceCanvasRef.current;
-    if (!canvas || activeTab !== 'impedance' || simulationData.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
+    if (simulationData.length === 0) return;
+    const renderImpedanceToCanvas = (canvas) => {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
 
-    ctx.clearRect(0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
 
-    const minF = 20.0;
-    const maxF = 20000.0;
-    const logMin = Math.log10(minF);
-    const logMax = Math.log10(maxF);
-    const maxZ = 100.0; // 0 to 100 Ohms
+      const minF = 20.0;
+      const maxF = 20000.0;
+      const logMin = Math.log10(minF);
+      const logMax = Math.log10(maxF);
+      const maxZ = 100.0; // 0 to 100 Ohms
 
-    // Crossover handover band highlight
-    const actualWooferFx = enableIndependentFx ? wooferFx : fx;
-    const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
-    const f1 = Math.max(minF, Math.min(actualWooferFx, actualTweeterFx) / 2.0);
-    const f2 = Math.min(maxF, Math.max(actualWooferFx, actualTweeterFx) * 2.0);
-    const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
-    const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
-    ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
-    ctx.fillRect(x1, 0, x2 - x1, height);
+      // Crossover handover band highlight
+      const actualWooferFx = enableIndependentFx ? wooferFx : fx;
+      const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
+      const f1 = Math.max(minF, Math.min(actualWooferFx, actualTweeterFx) / 2.0);
+      const f2 = Math.min(maxF, Math.max(actualWooferFx, actualTweeterFx) * 2.0);
+      const x1 = width * ((Math.log10(f1) - logMin) / (logMax - logMin));
+      const x2 = width * ((Math.log10(f2) - logMin) / (logMax - logMin));
+      ctx.fillStyle = 'rgba(20, 184, 166, 0.08)';
+      ctx.fillRect(x1, 0, x2 - x1, height);
 
-    // Vertical Frequency Gridlines
-    const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '10px sans-serif';
+      // Vertical Frequency Gridlines
+      const freqs = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px sans-serif';
 
-    freqs.forEach(f => {
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-      const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
-      const textX = f === 20000 ? x - 26 : x + 4;
-      ctx.fillText(label, textX, height - 8);
-    });
-
-    // Horizontal Impedance Gridlines (0 to 100 Ohms, step 10)
-    for (let z = 0; z <= maxZ; z += 10) {
-      const y = height * (1 - z / maxZ);
-      ctx.strokeStyle = z === 0 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = z === 0 ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-      if (z > 0.01) {
-        const textY = y <= 2 ? 12 : y - 4;
-        ctx.fillText(`${z} Ω`, 8, textY);
-      }
-    }
-
-    function toCanvas(f, zVal) {
-      const clamped = Math.max(Math.min(zVal, maxZ), 0.0);
-      const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
-      const y = height * (1 - clamped / maxZ);
-      return [x, y];
-    }
-
-    function drawZCurve(dataKey, color, lineWidth = 2) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
-      ctx.beginPath();
-      let started = false;
-      simulationData.forEach(p => {
-        const val = p[dataKey];
-        if (val === undefined || !Number.isFinite(val)) return;
-        const [x, y] = toCanvas(p.frequency, val);
-        if (!started) {
-          ctx.moveTo(x, y);
-          started = true;
-        } else {
-          ctx.lineTo(x, y);
-        }
+      freqs.forEach(f => {
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+        const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+        const textX = f === 20000 ? x - 26 : x + 4;
+        ctx.fillText(label, textX, height - 8);
       });
-      ctx.stroke();
-    }
 
-    if (showWoofer) drawZCurve('zWooferMag', '#3b82f6', 1.8);
-    if (showTweeter) drawZCurve('zTweeterMag', '#ef4444', 1.8);
-    if (showTotalSystem) drawZCurve('zTotalMag', '#a855f7', 2.5);
-  }, [simulationData, activeTab, showWoofer, showTweeter, showTotalSystem, enableIndependentFx, wooferFx, tweeterFx, fx]);
+      // Horizontal Impedance Gridlines (0 to 100 Ohms, step 10)
+      for (let z = 0; z <= maxZ; z += 10) {
+        const y = height * (1 - z / maxZ);
+        ctx.strokeStyle = z === 0 ? 'rgba(255, 255, 255, 0.35)' : 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = z === 0 ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+        if (z > 0.01) {
+          const textY = y <= 2 ? 12 : y - 4;
+          ctx.fillText(`${z} Ω`, 8, textY);
+        }
+      }
+
+      function toCanvas(f, zVal) {
+        const clamped = Math.max(Math.min(zVal, maxZ), 0.0);
+        const x = width * ((Math.log10(f) - logMin) / (logMax - logMin));
+        const y = height * (1 - clamped / maxZ);
+        return [x, y];
+      }
+
+      function drawZCurve(dataKey, color, lineWidth = 2) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.beginPath();
+        let started = false;
+        simulationData.forEach(p => {
+          const val = p[dataKey];
+          if (val === undefined || !Number.isFinite(val)) return;
+          const [x, y] = toCanvas(p.frequency, val);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+      }
+
+      if (showWoofer) drawZCurve('zWooferMag', '#3b82f6', 1.8);
+      if (showTweeter) drawZCurve('zTweeterMag', '#ef4444', 1.8);
+      if (showTotalSystem) drawZCurve('zTotalMag', '#a855f7', 2.5);
+    };
+
+    renderImpedanceToCanvas(impedanceCanvasRef.current);
+    renderImpedanceToCanvas(detachedImpedanceCanvasRef.current);
+  }, [simulationData, activeTab, detachedPlots, showWoofer, showTweeter, showTotalSystem, enableIndependentFx, wooferFx, tweeterFx, fx]);
 
   // --- Step Response Transient Simulation Engine ---
   const stepResponseData = useMemo(() => {
@@ -1625,96 +1684,101 @@ export default function App() {
 
   // --- Render Step Response Plot ---
   useEffect(() => {
-    const canvas = stepCanvasRef.current;
-    if (!canvas || activeTab !== 'step' || stepResponseData.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
+    if (stepResponseData.length === 0) return;
+    const renderStepToCanvas = (canvas) => {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
 
-    ctx.clearRect(0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
 
-    const maxTimeMs = 6.0;
-    const minAmp = -0.6;
-    const maxAmp = 1.4;
+      const maxTimeMs = 6.0;
+      const minAmp = -0.6;
+      const maxAmp = 1.4;
 
-    const toCanvas = (tMs, a) => {
-      const x = width * (tMs / maxTimeMs);
-      const y = height * (1.0 - (a - minAmp) / (maxAmp - minAmp));
-      return [x, y];
+      const toCanvas = (tMs, a) => {
+        const x = width * (tMs / maxTimeMs);
+        const y = height * (1.0 - (a - minAmp) / (maxAmp - minAmp));
+        return [x, y];
+      };
+
+      ctx.lineWidth = 1;
+      for (let t = 0; t <= maxTimeMs; t += 0.5) {
+        const [x] = toCanvas(t, 0);
+        const isMajor = Math.round(t * 10) % 10 === 0;
+        ctx.strokeStyle = isMajor ? 'rgba(100, 116, 139, 0.35)' : 'rgba(100, 116, 139, 0.15)';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+
+        if (isMajor) {
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '10px monospace';
+          const textX = t >= maxTimeMs - 0.01 ? x - 32 : x + 4;
+          ctx.fillText(`${t} ms`, textX, height - 8);
+        }
+      }
+
+      for (let a = minAmp; a <= maxAmp; a += 0.25) {
+        const [, y] = toCanvas(0, a);
+        const isZero = Math.abs(a) < 0.01;
+        ctx.strokeStyle = isZero ? 'rgba(148, 163, 184, 0.6)' : 'rgba(100, 116, 139, 0.2)';
+        ctx.lineWidth = isZero ? 1.5 : 0.8;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+
+        if (a > minAmp + 0.01) {
+          ctx.fillStyle = isZero ? '#f1f5f9' : '#64748b';
+          ctx.font = '10px monospace';
+          const textY = y <= 2 ? 12 : y - 4;
+          ctx.fillText(a.toFixed(2), 6, textY);
+        }
+      }
+
+      // Woofer (Blue)
+      if (showWoofer) {
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        stepResponseData.forEach((p, i) => {
+          const [x, y] = toCanvas(p.timeMs, p.woofer);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      // Tweeter (Red)
+      if (showTweeter) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        stepResponseData.forEach((p, i) => {
+          const [x, y] = toCanvas(p.timeMs, p.tweeter);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      // Total System (Green)
+      if (showTotalSystem) {
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        stepResponseData.forEach((p, i) => {
+          const [x, y] = toCanvas(p.timeMs, p.total);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
     };
 
-    ctx.lineWidth = 1;
-    for (let t = 0; t <= maxTimeMs; t += 0.5) {
-      const [x] = toCanvas(t, 0);
-      const isMajor = Math.round(t * 10) % 10 === 0;
-      ctx.strokeStyle = isMajor ? 'rgba(100, 116, 139, 0.35)' : 'rgba(100, 116, 139, 0.15)';
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-
-      if (isMajor) {
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '10px monospace';
-        const textX = t >= maxTimeMs - 0.01 ? x - 32 : x + 4;
-        ctx.fillText(`${t} ms`, textX, height - 8);
-      }
-    }
-
-    for (let a = minAmp; a <= maxAmp; a += 0.25) {
-      const [, y] = toCanvas(0, a);
-      const isZero = Math.abs(a) < 0.01;
-      ctx.strokeStyle = isZero ? 'rgba(148, 163, 184, 0.6)' : 'rgba(100, 116, 139, 0.2)';
-      ctx.lineWidth = isZero ? 1.5 : 0.8;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-
-      if (a > minAmp + 0.01) {
-        ctx.fillStyle = isZero ? '#f1f5f9' : '#64748b';
-        ctx.font = '10px monospace';
-        const textY = y <= 2 ? 12 : y - 4;
-        ctx.fillText(a.toFixed(2), 6, textY);
-      }
-    }
-
-    // Woofer (Blue)
-    if (showWoofer) {
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      stepResponseData.forEach((p, i) => {
-        const [x, y] = toCanvas(p.timeMs, p.woofer);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    }
-
-    // Tweeter (Red)
-    if (showTweeter) {
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      stepResponseData.forEach((p, i) => {
-        const [x, y] = toCanvas(p.timeMs, p.tweeter);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    }
-
-    // Total System (Green)
-    if (showTotalSystem) {
-      ctx.strokeStyle = '#22c55e';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      stepResponseData.forEach((p, i) => {
-        const [x, y] = toCanvas(p.timeMs, p.total);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    }
-  }, [stepResponseData, activeTab, showWoofer, showTweeter, showTotalSystem]);
+    renderStepToCanvas(stepCanvasRef.current);
+    renderStepToCanvas(detachedStepCanvasRef.current);
+  }, [stepResponseData, activeTab, detachedPlots, showWoofer, showTweeter, showTotalSystem]);
 
   // --- Shared Datasheet Application Helper ---
   const applyParsedDatasheet = (parsed, sourceName) => {
@@ -2692,6 +2756,17 @@ export default function App() {
                     />
                     <span>Compensate Delay</span>
                   </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetachedPlots(prev => ({ ...prev, phase: true }));
+                      setActiveTab('crossover');
+                    }}
+                    className="flex items-center space-x-1 px-2.5 py-1 rounded-md border border-blue-500/50 bg-blue-950/40 text-blue-300 hover:bg-blue-900/50 transition cursor-pointer"
+                    title="Detach Phase & Delay to Live Crossover Monitor"
+                  >
+                    <span>↗ Detach</span>
+                  </button>
                 </div>
               </div>
 
@@ -2734,6 +2809,17 @@ export default function App() {
                   >
                     <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
                     <span>Total System GD</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetachedPlots(prev => ({ ...prev, delay: true }));
+                      setActiveTab('crossover');
+                    }}
+                    className="flex items-center space-x-1 px-2.5 py-1 rounded-md border border-blue-500/50 bg-blue-950/40 text-blue-300 hover:bg-blue-900/50 transition cursor-pointer"
+                    title="Detach Group Delay to Live Crossover Monitor"
+                  >
+                    <span>↗ Detach</span>
                   </button>
                 </div>
               </div>
@@ -2778,6 +2864,17 @@ export default function App() {
                     <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
                     <span>Total System</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetachedPlots(prev => ({ ...prev, step: true }));
+                      setActiveTab('crossover');
+                    }}
+                    className="flex items-center space-x-1 px-2.5 py-1 rounded-md border border-blue-500/50 bg-blue-950/40 text-blue-300 hover:bg-blue-900/50 transition cursor-pointer"
+                    title="Detach Step Response to Live Crossover Monitor"
+                  >
+                    <span>↗ Detach</span>
+                  </button>
                 </div>
               </div>
 
@@ -2820,6 +2917,17 @@ export default function App() {
                   >
                     <span className={`w-2.5 h-2.5 rounded-full ${showTotalSystem ? 'bg-purple-500' : 'bg-slate-600'}`}></span>
                     <span>System Load |Z|</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetachedPlots(prev => ({ ...prev, impedance: true }));
+                      setActiveTab('crossover');
+                    }}
+                    className="flex items-center space-x-1 px-2.5 py-1 rounded-md border border-blue-500/50 bg-blue-950/40 text-blue-300 hover:bg-blue-900/50 transition cursor-pointer"
+                    title="Detach System Impedance to Live Crossover Monitor"
+                  >
+                    <span>↗ Detach</span>
                   </button>
                 </div>
               </div>
@@ -3142,9 +3250,142 @@ export default function App() {
           )}
 
           {activeTab === 'crossover' && (
-            <div className="max-w-3xl space-y-6">
-              <h2 className="text-xl font-bold text-white flex items-center space-x-2"><Sliders className="text-blue-400" /><span>Coaxial Crossover Designer</span></h2>
-              <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-5">
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3 max-w-6xl">
+                <h2 className="text-xl font-bold text-white flex items-center space-x-2"><Sliders className="text-blue-400" /><span>Coaxial Crossover Designer</span></h2>
+                <div className="flex items-center space-x-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={openLiveMonitorGrid}
+                    className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-3 py-1.5 rounded-lg transition cursor-pointer shadow-sm"
+                  >
+                    Open 2×2 Live Monitor Grid
+                  </button>
+                  {hasDetachedPlots && (
+                    <button
+                      type="button"
+                      onClick={closeAllDetachedPlots}
+                      className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-medium px-3 py-1.5 rounded-lg transition cursor-pointer"
+                    >
+                      Close All Windows
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Detached Live Curve Windows Launcher Bar */}
+              <div className="max-w-6xl bg-slate-900/90 p-4 rounded-xl border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200">Detached Live Curve Windows (Real-Time Crossover Monitor)</span>
+                  <span className="text-[11px] text-slate-400">Changes in the Crossover Designer reflect immediately in detached plots</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  {[
+                    { key: 'amplitude', label: 'Amplitude Response' },
+                    { key: 'phase', label: 'Phase & Delay' },
+                    { key: 'delay', label: 'Group Delay' },
+                    { key: 'step', label: 'Step Response' },
+                    { key: 'impedance', label: 'System Impedance' }
+                  ].map(item => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => toggleDetachedPlot(item.key)}
+                      className={`px-3 py-1.5 rounded-lg border font-medium transition cursor-pointer flex items-center space-x-1.5 ${
+                        detachedPlots[item.key]
+                          ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                          : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>{detachedPlots[item.key] ? '✓' : '↗'}</span>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Detached Live Plots 2x2 Grid Monitor */}
+              {hasDetachedPlots && (
+                <div className="max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {detachedPlots.amplitude && (
+                    <div className="bg-slate-900 border border-blue-500/40 rounded-xl p-3.5 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-white">Amplitude Response (dB SPL vs Log Hz) — Live</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleDetachedPlot('amplitude')}
+                          className="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-slate-800 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <canvas ref={detachedAmplitudeCanvasRef} width={600} height={260} className="w-full h-[240px]" />
+                    </div>
+                  )}
+                  {detachedPlots.phase && (
+                    <div className="bg-slate-900 border border-blue-500/40 rounded-xl p-3.5 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-white">Phase & Delay (Degrees vs Log Hz) — Live</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleDetachedPlot('phase')}
+                          className="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-slate-800 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <canvas ref={detachedPhaseCanvasRef} width={600} height={260} className="w-full h-[240px]" />
+                    </div>
+                  )}
+                  {detachedPlots.delay && (
+                    <div className="bg-slate-900 border border-blue-500/40 rounded-xl p-3.5 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-white">Group Delay (ms vs Log Hz) — Live</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleDetachedPlot('delay')}
+                          className="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-slate-800 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <canvas ref={detachedGroupDelayCanvasRef} width={600} height={260} className="w-full h-[240px]" />
+                    </div>
+                  )}
+                  {detachedPlots.impedance && (
+                    <div className="bg-slate-900 border border-blue-500/40 rounded-xl p-3.5 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-white">System Impedance (|Z| in Ω vs Log Hz) — Live</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleDetachedPlot('impedance')}
+                          className="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-slate-800 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <canvas ref={detachedImpedanceCanvasRef} width={600} height={260} className="w-full h-[240px]" />
+                    </div>
+                  )}
+                  {detachedPlots.step && (
+                    <div className="bg-slate-900 border border-blue-500/40 rounded-xl p-3.5 shadow-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-white">Step Response (Amplitude vs Time) — Live</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleDetachedPlot('step')}
+                          className="text-slate-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-slate-800 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <canvas ref={detachedStepCanvasRef} width={600} height={260} className="w-full h-[240px]" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="max-w-3xl bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-5">
                 <div className="space-y-4">
                   <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
                     <input
