@@ -155,9 +155,12 @@ public class MainDesignerViewModel: ObservableObject {
             warns.append("Crossover Frequency (\(Int(crossover.crossoverFrequency)) Hz) outside typical coaxial range.")
         }
 
-        // Include All-Pass Filter optimization and setup warnings
+        // Include All-Pass Filter setup warnings (and severe >20° phase offset warnings)
         if crossover.enableAllpassFilter {
             warns.append(contentsOf: crossover.allpassWarnings)
+            if crossover.allpassAlignmentStatus == .largeOffset {
+                warns.append(crossover.allpassAlignmentStatus.label)
+            }
         }
 
         self.missingParameters = missing

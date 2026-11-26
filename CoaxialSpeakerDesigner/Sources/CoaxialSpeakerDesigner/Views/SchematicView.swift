@@ -36,8 +36,21 @@ public struct SchematicView: View {
 
             Divider()
 
-            if viewModel.crossover.enableAllpassFilter && !viewModel.crossover.allpassWarnings.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+            if viewModel.crossover.enableAllpassFilter {
+                let status = viewModel.crossover.allpassAlignmentStatus
+                let statusColor: Color = status == .optimal ? .green : (status == .acceptable ? .yellow : .red)
+                let statusIcon = status == .optimal ? "checkmark.circle.fill" : (status == .acceptable ? "exclamationmark.triangle.fill" : "exclamationmark.octagon.fill")
+                let errVal = String(format: "%.2f°", viewModel.crossover.allpassOptimizationErrorDeg ?? 0.0)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 6) {
+                        Image(systemName: statusIcon)
+                            .foregroundColor(statusColor)
+                        Text("RMS Phase Error (\(errVal)): \(status.label)")
+                            .font(.caption.bold())
+                            .foregroundColor(statusColor)
+                    }
+
                     ForEach(viewModel.crossover.allpassWarnings, id: \.self) { warn in
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -49,7 +62,8 @@ public struct SchematicView: View {
                     }
                 }
                 .padding(10)
-                .background(Color.orange.opacity(0.12))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(statusColor.opacity(0.12))
                 .cornerRadius(8)
             }
 

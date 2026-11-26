@@ -19,8 +19,9 @@ public struct PhaseBodeChartView: View {
                         let f0 = Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)
                         let qVal = String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.70)
                         let errVal = String(format: "%.1f°", viewModel.crossover.allpassOptimizationErrorDeg ?? 0.0)
-                        let statusColor: Color = viewModel.crossover.allpassOptimizationAchieved ? .teal : .orange
-                        Text("All-Pass Nelder-Mead Optimization: F0 = \(f0) Hz, Q = \(qVal) • Crossover Window [\(Int(viewModel.crossover.crossoverFrequency / 2))–\(Int(viewModel.crossover.crossoverFrequency * 2)) Hz] Residual RMS: \(errVal)")
+                        let status = viewModel.crossover.allpassAlignmentStatus
+                        let statusColor: Color = status == .optimal ? .green : (status == .acceptable ? .yellow : .red)
+                        Text("All-Pass Nelder-Mead Optimization: F0 = \(f0) Hz, Q = \(qVal) • Residual RMS: \(errVal) • \(status.label)")
                             .font(.caption2)
                             .foregroundColor(statusColor)
                     } else if viewModel.compensateTweeterDelay {

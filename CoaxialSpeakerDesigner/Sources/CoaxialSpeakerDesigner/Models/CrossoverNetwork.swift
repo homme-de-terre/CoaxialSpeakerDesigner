@@ -84,7 +84,20 @@ public struct CrossoverNetwork: Codable, Sendable {
     // Coaxial Acoustic Alignment
     public var acousticCenterOffsetMM: Double = 35.0 // Tweeter physical delay offset behind woofer cone (mm)
     public var invertTweeterPolarity: Bool = false  // Tweeter inverted polarity (+180 deg)
-    public var snapToStandardValues: Bool = false    // Snap component values to commercial E12 series
+    public var snapToStandardValues: Bool = false { // Snap component values to commercial E12 series
+        didSet {
+            if snapToStandardValues && snapToE24Values {
+                snapToE24Values = false
+            }
+        }
+    }
+    public var snapToE24Values: Bool = false {      // Snap component values to commercial E24 series
+        didSet {
+            if snapToE24Values && snapToStandardValues {
+                snapToStandardValues = false
+            }
+        }
+    }
 
     // All-Pass Filter Optimization State
     public var allpassOptimizedF0: Double? = nil
@@ -92,6 +105,11 @@ public struct CrossoverNetwork: Codable, Sendable {
     public var allpassOptimizationErrorDeg: Double? = nil
     public var allpassOptimizationAchieved: Bool = true
     public var allpassWarnings: [String] = []
+
+    /// 3-tier phase alignment status based on residual RMS phase error
+    public var allpassAlignmentStatus: PhaseAlignmentStatus {
+        return PhaseAlignmentStatus.from(rmsErrorDeg: allpassOptimizationErrorDeg ?? 0.0)
+    }
 
     public init(
         crossoverFrequency: Double = 2200.0,
@@ -103,6 +121,7 @@ public struct CrossoverNetwork: Codable, Sendable {
         acousticCenterOffsetMM: Double = 35.0,
         invertTweeterPolarity: Bool = false,
         snapToStandardValues: Bool = false,
+        snapToE24Values: Bool = false,
         enableAllpassFilter: Bool = false,
         enableIndependentFrequencies: Bool = false,
         wooferCrossoverFrequency: Double? = nil,
@@ -116,11 +135,59 @@ public struct CrossoverNetwork: Codable, Sendable {
         self.userTargetAttenuationdB = userTargetAttenuationdB
         self.acousticCenterOffsetMM = acousticCenterOffsetMM
         self.invertTweeterPolarity = invertTweeterPolarity
-        self.snapToStandardValues = snapToStandardValues
+        self.snapToStandardValues = snapToE24Values ? false : snapToStandardValues
+        self.snapToE24Values = snapToE24Values
         self.enableAllpassFilter = enableAllpassFilter
         self.enableIndependentFrequencies = enableIndependentFrequencies
         self.wooferCrossoverFrequency = wooferCrossoverFrequency
         self.tweeterCrossoverFrequency = tweeterCrossoverFrequency
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case crossoverFrequency
+        case wooferOrder
+        case tweeterOrder
+        case enableIndependentFrequencies
+        case wooferCrossoverFrequency
+        case tweeterCrossoverFrequency
+        case enableZobelNetwork
+        case enableLPadAttenuator
+        case userTargetAttenuationdB
+        case enableAllpassFilter
+        case acousticCenterOffsetMM
+        case invertTweeterPolarity
+        case snapToStandardValues
+        case snapToE24Values
+        case allpassOptimizedF0
+        case allpassOptimizedQ
+        case allpassOptimizationErrorDeg
+        case allpassOptimizationAchieved
+        case allpassWarnings
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.crossoverFrequency = try container.decodeIfPresent(Double.self, forKey: .crossoverFrequency) ?? 2200.0
+        self.wooferOrder = try container.decodeIfPresent(FilterOrder.self, forKey: .wooferOrder) ?? .secondOrderLR
+        self.tweeterOrder = try container.decodeIfPresent(FilterOrder.self, forKey: .tweeterOrder) ?? .secondOrderLR
+        self.enableIndependentFrequencies = try container.decodeIfPresent(Bool.self, forKey: .enableIndependentFrequencies) ?? false
+        self.wooferCrossoverFrequency = try container.decodeIfPresent(Double.self, forKey: .wooferCrossoverFrequency)
+        self.tweeterCrossoverFrequency = try container.decodeIfPresent(Double.self, forKey: .tweeterCrossoverFrequency)
+        self.enableZobelNetwork = try container.decodeIfPresent(Bool.self, forKey: .enableZobelNetwork) ?? true
+        self.enableLPadAttenuator = try container.decodeIfPresent(Bool.self, forKey: .enableLPadAttenuator) ?? true
+        self.userTargetAttenuationdB = try container.decodeIfPresent(Double.self, forKey: .userTargetAttenuationdB) ?? 5.0
+        self.enableAllpassFilter = try container.decodeIfPresent(Bool.self, forKey: .enableAllpassFilter) ?? false
+        self.acousticCenterOffsetMM = try container.decodeIfPresent(Double.self, forKey: .acousticCenterOffsetMM) ?? 35.0
+        self.invertTweeterPolarity = try container.decodeIfPresent(Bool.self, forKey: .invertTweeterPolarity) ?? false
+        let decodedE24 = try container.decodeIfPresent(Bool.self, forKey: .snapToE24Values) ?? false
+        let decodedE12 = try container.decodeIfPresent(Bool.self, forKey: .snapToStandardValues) ?? false
+        self.snapToE24Values = decodedE24
+        self.snapToStandardValues = decodedE24 ? false : decodedE12
+        self.allpassOptimizedF0 = try container.decodeIfPresent(Double.self, forKey: .allpassOptimizedF0)
+        self.allpassOptimizedQ = try container.decodeIfPresent(Double.self, forKey: .allpassOptimizedQ)
+        self.allpassOptimizationErrorDeg = try container.decodeIfPresent(Double.self, forKey: .allpassOptimizationErrorDeg)
+        self.allpassOptimizationAchieved = try container.decodeIfPresent(Bool.self, forKey: .allpassOptimizationAchieved) ?? true
+        self.allpassWarnings = try container.decodeIfPresent([String].self, forKey: .allpassWarnings) ?? []
     }
 
     /// Compute ideal passive filter component values based on target driver nominal impedances.
@@ -202,40 +269,71 @@ public struct CrossoverNetwork: Codable, Sendable {
             let qAP = allpassOptimizedQ ?? max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
             let lAP = (Zw / (w0 * qAP)) * 1000.0
             let cAP = (1.0 / (w0 * qAP * Zw)) * 1e6
-            comp.L_AP_mH = snapToStandardValues ? snapE12(lAP) : lAP
-            comp.C_AP_uF = snapToStandardValues ? snapE12(cAP) : cAP
+            comp.L_AP_mH = lAP
+            comp.C_AP_uF = cAP
         }
 
-        // Snap to standard E12 values if requested
-        if snapToStandardValues {
-            comp.L1_mH = comp.L1_mH.map { snapE12($0) }
-            comp.C1_uF = comp.C1_uF.map { snapE12($0) }
-            comp.L2_mH = comp.L2_mH.map { snapE12($0) }
-            comp.C2_uF = comp.C2_uF.map { snapE12($0) }
+        // Snap to standard E24 or E12 values if requested
+        if snapToE24Values {
+            comp.L1_mH = comp.L1_mH.map { Self.snapE24($0) }
+            comp.C1_uF = comp.C1_uF.map { Self.snapE24($0) }
+            comp.L2_mH = comp.L2_mH.map { Self.snapE24($0) }
+            comp.C2_uF = comp.C2_uF.map { Self.snapE24($0) }
 
-            comp.C_HP1_uF = comp.C_HP1_uF.map { snapE12($0) }
-            comp.L_HP1_mH = comp.L_HP1_mH.map { snapE12($0) }
-            comp.C_HP2_uF = comp.C_HP2_uF.map { snapE12($0) }
-            comp.L_HP2_mH = comp.L_HP2_mH.map { snapE12($0) }
+            comp.C_HP1_uF = comp.C_HP1_uF.map { Self.snapE24($0) }
+            comp.L_HP1_mH = comp.L_HP1_mH.map { Self.snapE24($0) }
+            comp.C_HP2_uF = comp.C_HP2_uF.map { Self.snapE24($0) }
+            comp.L_HP2_mH = comp.L_HP2_mH.map { Self.snapE24($0) }
 
-            comp.R_zobel_ohms = comp.R_zobel_ohms.map { snapE12($0) }
-            comp.C_zobel_uF = comp.C_zobel_uF.map { snapE12($0) }
-            comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { snapE12($0) }
-            comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { snapE12($0) }
-            comp.L_AP_mH = comp.L_AP_mH.map { snapE12($0) }
-            comp.C_AP_uF = comp.C_AP_uF.map { snapE12($0) }
+            comp.R_zobel_ohms = comp.R_zobel_ohms.map { Self.snapE24($0) }
+            comp.C_zobel_uF = comp.C_zobel_uF.map { Self.snapE24($0) }
+            comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { Self.snapE24($0) }
+            comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { Self.snapE24($0) }
+            comp.L_AP_mH = comp.L_AP_mH.map { Self.snapE24($0) }
+            comp.C_AP_uF = comp.C_AP_uF.map { Self.snapE24($0) }
+        } else if snapToStandardValues {
+            comp.L1_mH = comp.L1_mH.map { Self.snapE12($0) }
+            comp.C1_uF = comp.C1_uF.map { Self.snapE12($0) }
+            comp.L2_mH = comp.L2_mH.map { Self.snapE12($0) }
+            comp.C2_uF = comp.C2_uF.map { Self.snapE12($0) }
+
+            comp.C_HP1_uF = comp.C_HP1_uF.map { Self.snapE12($0) }
+            comp.L_HP1_mH = comp.L_HP1_mH.map { Self.snapE12($0) }
+            comp.C_HP2_uF = comp.C_HP2_uF.map { Self.snapE12($0) }
+            comp.L_HP2_mH = comp.L_HP2_mH.map { Self.snapE12($0) }
+
+            comp.R_zobel_ohms = comp.R_zobel_ohms.map { Self.snapE12($0) }
+            comp.C_zobel_uF = comp.C_zobel_uF.map { Self.snapE12($0) }
+            comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { Self.snapE12($0) }
+            comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { Self.snapE12($0) }
+            comp.L_AP_mH = comp.L_AP_mH.map { Self.snapE12($0) }
+            comp.C_AP_uF = comp.C_AP_uF.map { Self.snapE12($0) }
         }
 
         return comp
     }
 
-    /// Snap value to closest E12 standard commercial electronic series.
-    private func snapE12(_ val: Double) -> Double {
+    /// Snap value to closest E12 standard commercial electronic series (±10%).
+    public static func snapE12(_ val: Double) -> Double {
         guard val > 0 else { return 0 }
         let e12Base = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2, 10.0]
         let exponent = floor(log10(val))
         let normalized = val / pow(10.0, exponent)
         let closest = e12Base.min(by: { abs($0 - normalized) < abs($1 - normalized) }) ?? normalized
+        return closest * pow(10.0, exponent)
+    }
+
+    /// Snap value to closest E24 standard commercial electronic series (±5%).
+    public static func snapE24(_ val: Double) -> Double {
+        guard val > 0 else { return 0 }
+        let e24Base = [
+            1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0,
+            2.2, 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3,
+            4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1, 10.0
+        ]
+        let exponent = floor(log10(val))
+        let normalized = val / pow(10.0, exponent)
+        let closest = e24Base.min(by: { abs($0 - normalized) < abs($1 - normalized) }) ?? normalized
         return closest * pow(10.0, exponent)
     }
 

@@ -160,8 +160,8 @@ public class SchematicReportRenderer {
 
         var startY: CGFloat = 82.0
 
-        // 3. Warning Alert Box (if APF warnings exist)
-        if crossover.enableAllpassFilter && !crossover.allpassWarnings.isEmpty {
+        // 3. Phase Alignment Status & Warning Alert Box (when APF is enabled)
+        if crossover.enableAllpassFilter {
             startY = drawWarningBanner(bounds: bounds, startY: startY)
         }
 
@@ -546,32 +546,61 @@ public class SchematicReportRenderer {
         drawJunctionDot(point: CGPoint(x: speakerX, y: tweeterGroundY))
     }
 
-    // MARK: - Warning Alert Box (Page 2)
+    // MARK: - Phase Alignment Status & Warning Alert Box (Page 2)
     private func drawWarningBanner(bounds: CGRect, startY: CGFloat) -> CGFloat {
         let margin: CGFloat = 36.0
         let width = bounds.width - (margin * 2)
-        let warningH: CGFloat = CGFloat(crossover.allpassWarnings.count * 15 + 14)
+
+        let status = crossover.allpassAlignmentStatus
+        let errVal = String(format: "%.2f°", crossover.allpassOptimizationErrorDeg ?? 0.0)
+        let primaryLine = "RMS Phase Alignment (\(errVal)): \(status.label)"
+        let allLines = [primaryLine] + crossover.allpassWarnings
+        let warningH: CGFloat = CGFloat(allLines.count * 15 + 14)
+
+        let fillColor: NSColor
+        let strokeColor: NSColor
+        let textColor: NSColor
+        let iconSymbol: String
+
+        switch status {
+        case .optimal:
+            fillColor = NSColor(calibratedRed: 0.90, green: 0.98, blue: 0.92, alpha: 1.0)
+            strokeColor = NSColor(calibratedRed: 0.15, green: 0.65, blue: 0.30, alpha: 1.0)
+            textColor = NSColor(calibratedRed: 0.08, green: 0.45, blue: 0.18, alpha: 1.0)
+            iconSymbol = "✓  "
+        case .acceptable:
+            fillColor = NSColor(calibratedRed: 1.0, green: 0.96, blue: 0.86, alpha: 1.0)
+            strokeColor = NSColor(calibratedRed: 0.90, green: 0.60, blue: 0.08, alpha: 1.0)
+            textColor = NSColor(calibratedRed: 0.65, green: 0.38, blue: 0.02, alpha: 1.0)
+            iconSymbol = "⚠  "
+        case .largeOffset:
+            fillColor = NSColor(calibratedRed: 1.0, green: 0.91, blue: 0.91, alpha: 1.0)
+            strokeColor = NSColor(calibratedRed: 0.85, green: 0.20, blue: 0.20, alpha: 1.0)
+            textColor = NSColor(calibratedRed: 0.68, green: 0.10, blue: 0.10, alpha: 1.0)
+            iconSymbol = "✖  "
+        }
 
         let warnRect = CGRect(x: margin, y: startY, width: width, height: warningH)
         let path = NSBezierPath(roundedRect: warnRect, xRadius: 4, yRadius: 4)
-        NSColor(calibratedRed: 1.0, green: 0.95, blue: 0.88, alpha: 1.0).setFill()
+        fillColor.setFill()
         path.fill()
-        NSColor(calibratedRed: 0.95, green: 0.55, blue: 0.1, alpha: 1.0).setStroke()
+        strokeColor.setStroke()
         path.lineWidth = 1.0
         path.stroke()
 
         let warnTitleAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: 8.5),
-            .foregroundColor: NSColor(calibratedRed: 0.8, green: 0.35, blue: 0.05, alpha: 1.0)
+            .foregroundColor: textColor
         ]
         let warnTextAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 8.0),
-            .foregroundColor: NSColor(calibratedRed: 0.6, green: 0.25, blue: 0.05, alpha: 1.0)
+            .font: NSFont.boldSystemFont(ofSize: 8.0),
+            .foregroundColor: textColor
         ]
 
         var lineY = startY + 6.0
-        for w in crossover.allpassWarnings {
-            "⚠  ".draw(at: CGPoint(x: margin + 8, y: lineY), withAttributes: warnTitleAttrs)
+        for (idx, w) in allLines.enumerated() {
+            let prefix = idx == 0 ? iconSymbol : "⚠  "
+            prefix.draw(at: CGPoint(x: margin + 8, y: lineY), withAttributes: warnTitleAttrs)
             w.draw(at: CGPoint(x: margin + 24, y: lineY + 0.5), withAttributes: warnTextAttrs)
             lineY += 15.0
         }
@@ -757,8 +786,9 @@ public class SchematicReportRenderer {
         )
 
         // Card 3: Acoustic Alignment & All-Pass Optimizer Report
+        let apfStatus = crossover.allpassAlignmentStatus
         let apfAchievedStr = crossover.enableAllpassFilter
-            ? (crossover.allpassOptimizationAchieved ? "Parallel Track Achieved" : "Tolerances Exceeded")
+            ? apfStatus.label
             : "Off (Disabled)"
         let f0Str = crossover.allpassOptimizedF0 != nil ? "\(Int(crossover.allpassOptimizedF0!)) Hz" : "N/A"
         let qStr = crossover.allpassOptimizedQ != nil ? String(format: "%.2f", crossover.allpassOptimizedQ!) : "N/A"
@@ -768,6 +798,21 @@ public class SchematicReportRenderer {
         let xoSpecPoint = crossover.enableIndependentFrequencies
             ? "\(Int(crossover.actualWooferFrequency)) Hz (W) / \(Int(crossover.actualTweeterFrequency)) Hz (T)"
             : "\(Int(crossover.crossoverFrequency)) Hz"
+
+        var card3Colors: [String: NSColor] = [:]
+        if crossover.enableAllpassFilter {
+            let statusNSColor: NSColor
+            switch apfStatus {
+            case .optimal:
+                statusNSColor = NSColor(calibratedRed: 0.08, green: 0.50, blue: 0.20, alpha: 1.0)
+            case .acceptable:
+                statusNSColor = NSColor(calibratedRed: 0.72, green: 0.44, blue: 0.02, alpha: 1.0)
+            case .largeOffset:
+                statusNSColor = NSColor(calibratedRed: 0.78, green: 0.12, blue: 0.12, alpha: 1.0)
+            }
+            card3Colors["APF Optimization"] = statusNSColor
+            card3Colors["Residual Phase RMS"] = statusNSColor
+        }
 
         drawSpecCard(
             rect: CGRect(x: margin + (cardW + gap) * 2, y: startY, width: cardW, height: cardH),
@@ -781,11 +826,12 @@ public class SchematicReportRenderer {
                 ("Optimal APF F0", f0Str),
                 ("Optimal APF Q", qStr),
                 ("Residual Phase RMS", errStr)
-            ]
+            ],
+            itemColors: card3Colors
         )
     }
 
-    private func drawSpecCard(rect: CGRect, title: String, headerColor: NSColor, items: [(String, String)]) {
+    private func drawSpecCard(rect: CGRect, title: String, headerColor: NSColor, items: [(String, String)], itemColors: [String: NSColor] = [:]) {
         // Card Background Box
         let boxPath = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
         NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.99, alpha: 1.0).setFill()
@@ -812,15 +858,26 @@ public class SchematicReportRenderer {
             .font: NSFont.systemFont(ofSize: 8.0),
             .foregroundColor: NSColor.darkGray
         ]
-        let valAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 8.0),
-            .foregroundColor: NSColor.black
-        ]
 
         var itemY = rect.minY + headerH + 6.0
         for item in items {
             item.0.draw(at: CGPoint(x: rect.minX + 8, y: itemY), withAttributes: labelAttrs)
-            let valSize = item.1.size(withAttributes: valAttrs)
+            let labelSize = item.0.size(withAttributes: labelAttrs)
+            let maxValWidth = rect.width - 22.0 - labelSize.width
+            let valColor = itemColors[item.0] ?? NSColor.black
+
+            var fontSize: CGFloat = 8.0
+            var valAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: fontSize),
+                .foregroundColor: valColor
+            ]
+            var valSize = item.1.size(withAttributes: valAttrs)
+            while valSize.width > maxValWidth && fontSize > 5.5 {
+                fontSize -= 0.5
+                valAttrs[.font] = NSFont.boldSystemFont(ofSize: fontSize)
+                valSize = item.1.size(withAttributes: valAttrs)
+            }
+
             item.1.draw(at: CGPoint(x: rect.maxX - 8 - valSize.width, y: itemY), withAttributes: valAttrs)
             itemY += 18.0
         }

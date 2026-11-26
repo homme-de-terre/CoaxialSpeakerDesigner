@@ -161,11 +161,17 @@ public struct CrossoverInspectorView: View {
                         Toggle("Invert Tweeter Polarity (+180°)", isOn: $viewModel.crossover.invertTweeterPolarity)
                         Spacer()
                         Toggle("Snap Components to Commercial E12 Series", isOn: $viewModel.crossover.snapToStandardValues)
+                        Spacer()
+                        Toggle("Snap Components to Commercial E24 Series", isOn: $viewModel.crossover.snapToE24Values)
                     }
 
                     Toggle("Enable All-Pass Woofer Delay Compensation Network", isOn: $viewModel.crossover.enableAllpassFilter)
 
                     if viewModel.crossover.enableAllpassFilter {
+                        let status = viewModel.crossover.allpassAlignmentStatus
+                        let statusColor: Color = status == .optimal ? .green : (status == .acceptable ? .yellow : .red)
+                        let statusIcon = status == .optimal ? "checkmark.circle.fill" : (status == .acceptable ? "exclamationmark.triangle.fill" : "exclamationmark.octagon.fill")
+
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Image(systemName: "wand.and.stars")
@@ -179,7 +185,7 @@ public struct CrossoverInspectorView: View {
                                     Text("RMS Error: \(String(format: "%.2f°", err))")
                                         .font(.caption)
                                         .bold()
-                                        .foregroundColor(viewModel.crossover.allpassOptimizationAchieved ? .teal : .orange)
+                                        .foregroundColor(statusColor)
                                 }
                             }
 
@@ -189,7 +195,22 @@ public struct CrossoverInspectorView: View {
                                     .foregroundColor(.secondary)
                             }
 
-                            // Show APF warnings
+                            // 3-Tier Phase Alignment Status Banner (Green / Yellow / Red)
+                            HStack(alignment: .center, spacing: 6) {
+                                Image(systemName: statusIcon)
+                                    .foregroundColor(statusColor)
+                                    .font(.caption)
+                                Text(status.label)
+                                    .font(.caption2)
+                                    .bold()
+                                    .foregroundColor(statusColor)
+                            }
+                            .padding(6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(statusColor.opacity(0.12))
+                            .cornerRadius(6)
+
+                            // Show additional APF setup warnings (e.g., Zobel disabled)
                             ForEach(viewModel.crossover.allpassWarnings, id: \.self) { warn in
                                 HStack(alignment: .top, spacing: 6) {
                                     Image(systemName: "exclamationmark.triangle.fill")

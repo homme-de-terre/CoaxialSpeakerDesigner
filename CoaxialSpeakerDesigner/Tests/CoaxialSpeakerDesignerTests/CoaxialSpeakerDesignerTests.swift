@@ -1066,4 +1066,121 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
             XCTAssertEqual(result.recommendedCrossover, 900.0, accuracy: 50.0)
         }
     }
+
+    func testThreeTierPhaseAlignmentWarningLogicAndPDFReflection() {
+        // 1. Green threshold (<= 10.0 deg)
+        for rms in [0.0, 5.0, 8.5, 10.0] {
+            let status = PhaseAlignmentStatus.from(rmsErrorDeg: rms)
+            XCTAssertEqual(status, .optimal, "RMS \(rms) deg should be green (.optimal)")
+            XCTAssertEqual(status.label, "Phase Aligned (Optimal)")
+        }
+
+        // 2. Yellow threshold (10.0 < rms <= 20.0 deg)
+        for rms in [10.01, 12.5, 15.0, 20.0] {
+            let status = PhaseAlignmentStatus.from(rmsErrorDeg: rms)
+            XCTAssertEqual(status, .acceptable, "RMS \(rms) deg should be yellow (.acceptable)")
+            XCTAssertEqual(status.label, "Acceptable Alignment - Minor Phase Offset")
+        }
+
+        // 3. Red threshold (> 20.0 deg)
+        for rms in [20.01, 25.0, 45.0] {
+            let status = PhaseAlignmentStatus.from(rmsErrorDeg: rms)
+            XCTAssertEqual(status, .largeOffset, "RMS \(rms) deg should be red (.largeOffset)")
+            XCTAssertEqual(status.label, "Large Phase Offset - Try Inverting Tweeter Polarity or Adjusting Fx")
+        }
+
+        // 4. Verify PDF generation across Green, Yellow, and Red phase alignment states
+        let driver = CoaxialDriver.defaultSampleDriver
+        let cabinet = SealedCabinet()
+        for testError in [4.5, 14.2, 26.8] {
+            var crossover = CrossoverNetwork(
+                crossoverFrequency: 2000.0,
+                enableZobelNetwork: true,
+                acousticCenterOffsetMM: 35.0,
+                enableAllpassFilter: true
+            )
+            crossover.allpassOptimizedF0 = 2000.0
+            crossover.allpassOptimizedQ = 0.85
+            crossover.allpassOptimizationErrorDeg = testError
+            crossover.allpassOptimizationAchieved = testError <= 10.0
+
+            let components = crossover.computeComponentValues(
+                wooferRe: driver.wooferTS.re,
+                tweeterRe: driver.tweeter.re,
+                wooferLe: driver.wooferTS.le
+            )
+            let pdfData = PDFExporter.generateSchematicPDF(
+                driver: driver,
+                cabinet: cabinet,
+                crossover: crossover,
+                components: components
+            )
+            XCTAssertFalse(pdfData.isEmpty)
+            XCTAssertEqual(String(data: pdfData.prefix(4), encoding: .ascii), "%PDF")
+        }
+    }
+
+    func testE12AndE24ComponentValueSnapping() throws {
+        // 1. Direct E12 vs E24 snapping accuracy tests
+        // Value 1.11 -> E12 snaps to 1.2, E24 snaps to 1.1
+        XCTAssertEqual(CrossoverNetwork.snapE12(1.11), 1.2, accuracy: 1e-6)
+        XCTAssertEqual(CrossoverNetwork.snapE24(1.11), 1.1, accuracy: 1e-6)
+
+        // Value 1.62 -> E12 snaps to 1.5, E24 snaps to 1.6
+        XCTAssertEqual(CrossoverNetwork.snapE12(1.62), 1.5, accuracy: 1e-6)
+        XCTAssertEqual(CrossoverNetwork.snapE24(1.62), 1.6, accuracy: 1e-6)
+
+        // Value 24.1 -> E12 snaps to 22.0, E24 snaps to 24.0
+        XCTAssertEqual(CrossoverNetwork.snapE12(24.1), 22.0, accuracy: 1e-6)
+        XCTAssertEqual(CrossoverNetwork.snapE24(24.1), 24.0, accuracy: 1e-6)
+
+        // Value 0.362 -> E12 snaps to 0.39, E24 snaps to 0.36
+        XCTAssertEqual(CrossoverNetwork.snapE12(0.362), 0.39, accuracy: 1e-6)
+        XCTAssertEqual(CrossoverNetwork.snapE24(0.362), 0.36, accuracy: 1e-6)
+
+        // 2. Mutual exclusivity of E12 and E24 flags on CrossoverNetwork
+        var xo = CrossoverNetwork(crossoverFrequency: 2100.0)
+        XCTAssertFalse(xo.snapToStandardValues)
+        XCTAssertFalse(xo.snapToE24Values)
+
+        xo.snapToStandardValues = true
+        XCTAssertTrue(xo.snapToStandardValues)
+        XCTAssertFalse(xo.snapToE24Values)
+
+        xo.snapToE24Values = true
+        XCTAssertFalse(xo.snapToStandardValues, "Enabling E24 must automatically disable E12")
+        XCTAssertTrue(xo.snapToE24Values)
+
+        xo.snapToStandardValues = true
+        XCTAssertTrue(xo.snapToStandardValues, "Enabling E12 must automatically disable E24")
+        XCTAssertFalse(xo.snapToE24Values)
+
+        // 3. Verify component calculation with E24 enabled vs Exact vs E12
+        var xoExact = CrossoverNetwork(crossoverFrequency: 2150.0, enableAllpassFilter: true)
+        var xoE12 = xoExact
+        xoE12.snapToStandardValues = true
+        var xoE24 = xoExact
+        xoE24.snapToE24Values = true
+
+        let compExact = xoExact.computeComponentValues(wooferRe: 6.2, tweeterRe: 5.8, wooferLe: 0.85)
+        let compE12 = xoE12.computeComponentValues(wooferRe: 6.2, tweeterRe: 5.8, wooferLe: 0.85)
+        let compE24 = xoE24.computeComponentValues(wooferRe: 6.2, tweeterRe: 5.8, wooferLe: 0.85)
+
+        XCTAssertEqual(compE12.L1_mH!, CrossoverNetwork.snapE12(compExact.L1_mH!), accuracy: 1e-6)
+        XCTAssertEqual(compE24.L1_mH!, CrossoverNetwork.snapE24(compExact.L1_mH!), accuracy: 1e-6)
+        XCTAssertEqual(compE24.C1_uF!, CrossoverNetwork.snapE24(compExact.C1_uF!), accuracy: 1e-6)
+        XCTAssertEqual(compE24.L_AP_mH!, CrossoverNetwork.snapE24(compExact.L_AP_mH!), accuracy: 1e-6)
+
+        // 4. JSON Roundtrip with snapToE24Values
+        let doc = SpeakerDesignDocument(
+            name: "E24 Test Project",
+            driver: CoaxialDriver.defaultSampleDriver,
+            cabinet: SealedCabinet(),
+            crossover: xoE24
+        )
+        let jsonStr = try doc.toJSON()
+        let restored = try SpeakerDesignDocument.fromJSON(jsonStr)
+        XCTAssertTrue(restored.crossover.snapToE24Values)
+        XCTAssertFalse(restored.crossover.snapToStandardValues)
+    }
 }

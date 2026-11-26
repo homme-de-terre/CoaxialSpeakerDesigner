@@ -51,6 +51,7 @@ function createDesignDocument({
   acousticDelayMM = 30.0,
   invertTweeterPolarity = true,
   snapToE12 = true,
+  snapToE24 = false,
   enableAllpass = false,
   wooferFRDText = "20 75 0\n100 92 0",
   tweeterFRDText = "1000 95 0\n10000 96 0"
@@ -102,7 +103,8 @@ function createDesignDocument({
       userTargetAttenuationdB: lpadAttenDB,
       acousticCenterOffsetMM: acousticDelayMM,
       invertTweeterPolarity,
-      snapToStandardValues: snapToE12,
+      snapToStandardValues: snapToE24 ? false : snapToE12,
+      snapToE24Values: snapToE24,
       enableAllpassFilter: enableAllpass
     },
     wooferFRDText: wooferFRDText || "",
@@ -156,7 +158,17 @@ function restoreDesignDocument(jsonString) {
     if (doc.crossover.userTargetAttenuationdB !== undefined) state.lpadAttenDB = doc.crossover.userTargetAttenuationdB;
     if (doc.crossover.acousticCenterOffsetMM !== undefined) state.acousticDelayMM = doc.crossover.acousticCenterOffsetMM;
     if (doc.crossover.invertTweeterPolarity !== undefined) state.invertTweeterPolarity = doc.crossover.invertTweeterPolarity;
-    if (doc.crossover.snapToStandardValues !== undefined) state.snapToE12 = doc.crossover.snapToStandardValues;
+    if (doc.crossover.snapToE24Values !== undefined) {
+      state.snapToE24 = doc.crossover.snapToE24Values;
+      if (doc.crossover.snapToE24Values) {
+        state.snapToE12 = false;
+      } else if (doc.crossover.snapToStandardValues !== undefined) {
+        state.snapToE12 = doc.crossover.snapToStandardValues;
+      }
+    } else if (doc.crossover.snapToStandardValues !== undefined) {
+      state.snapToE12 = doc.crossover.snapToStandardValues;
+      if (doc.crossover.snapToStandardValues) state.snapToE24 = false;
+    }
     if (doc.crossover.enableAllpassFilter !== undefined) state.enableAllpass = doc.crossover.enableAllpassFilter;
   }
 
@@ -383,6 +395,141 @@ test('Design Project File - E12 Value Snapping Algorithm', () => {
   assert.equal(snapE12(14.8), 15.0);
   assert.equal(snapE12(0), 0);
   assert.equal(snapE12(-5), 0);
+});
+
+test('Design Project File - E24 Value Snapping Algorithm and Mutual Exclusivity', () => {
+  function snapE24(val) {
+    if (!val || val <= 0) return 0;
+    const e24Base = [
+      1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0,
+      2.2, 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3,
+      4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1, 10.0
+    ];
+    const exponent = Math.floor(Math.log10(val));
+    const norm = val / Math.pow(10, exponent);
+    let closest = norm;
+    let minDiff = Infinity;
+    for (const b of e24Base) {
+      const diff = Math.abs(b - norm);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = b;
+      }
+    }
+    return closest * Math.pow(10, exponent);
+  }
+
+  // Test intermediate E24 values not present in E12 (1.1, 1.3, 1.6, 2.0, 2.4, 3.0, 3.6, 4.3, 5.1, 6.2, 7.5, 9.1)
+  assert.ok(Math.abs(snapE24(1.11) - 1.1) < 1e-6);
+  assert.ok(Math.abs(snapE24(1.32) - 1.3) < 1e-6);
+  assert.ok(Math.abs(snapE24(1.62) - 1.6) < 1e-6);
+  assert.ok(Math.abs(snapE24(2.04) - 2.0) < 1e-6);
+  assert.ok(Math.abs(snapE24(24.2) - 24.0) < 1e-6);
+  assert.ok(Math.abs(snapE24(0.362) - 0.36) < 1e-6);
+  assert.ok(Math.abs(snapE24(4.32) - 4.3) < 1e-6);
+  assert.ok(Math.abs(snapE24(51.4) - 51.0) < 1e-6);
+  assert.ok(Math.abs(snapE24(6.18) - 6.2) < 1e-6);
+  assert.ok(Math.abs(snapE24(75.3) - 75.0) < 1e-6);
+  assert.ok(Math.abs(snapE24(9.08) - 9.1) < 1e-6);
+  assert.equal(snapE24(0), 0);
+  assert.equal(snapE24(-10), 0);
+
+  // Verify JSON serialization & restoration with E24 snap enabled
+  const docE24 = createDesignDocument({ snapToE12: true, snapToE24: true });
+  assert.equal(docE24.crossover.snapToE24Values, true);
+  assert.equal(docE24.crossover.snapToStandardValues, false, 'E24 must override E12 when active');
+
+  const restoredE24 = restoreDesignDocument(JSON.stringify(docE24));
+  assert.equal(restoredE24.snapToE24, true);
+  assert.equal(restoredE24.snapToE12, false);
+});
+
+test('Design Project File - 3-Tier Green/Yellow/Red RMS Phase Alignment Warning Logic', () => {
+  function getPhaseAlignmentStatus(rmsErrorDeg) {
+    if (rmsErrorDeg <= 10.0) {
+      return { level: 'green', label: 'Phase Aligned (Optimal)' };
+    } else if (rmsErrorDeg <= 20.0) {
+      return { level: 'yellow', label: 'Acceptable Alignment - Minor Phase Offset' };
+    } else {
+      return { level: 'red', label: 'Large Phase Offset - Try Inverting Tweeter Polarity or Adjusting Fx' };
+    }
+  }
+
+  // Green tier: <= 10.0°
+  for (const val of [0, 3.2, 5.0, 7.8, 10.0]) {
+    const res = getPhaseAlignmentStatus(val);
+    assert.equal(res.level, 'green');
+    assert.equal(res.label, 'Phase Aligned (Optimal)');
+  }
+
+  // Yellow tier: 10.0° - 20.0°
+  for (const val of [10.01, 12.5, 15.0, 19.99, 20.0]) {
+    const res = getPhaseAlignmentStatus(val);
+    assert.equal(res.level, 'yellow');
+    assert.equal(res.label, 'Acceptable Alignment - Minor Phase Offset');
+  }
+
+  // Red tier: > 20.0°
+  for (const val of [20.01, 25.4, 42.0, 90.0]) {
+    const res = getPhaseAlignmentStatus(val);
+    assert.equal(res.level, 'red');
+    assert.equal(res.label, 'Large Phase Offset - Try Inverting Tweeter Polarity or Adjusting Fx');
+  }
+});
+
+test('Crossover Component Calculation with Exact, E12, and E24 Snapping', () => {
+  function snapSeries(val, base) {
+    if (!val || val <= 0) return 0;
+    const exponent = Math.floor(Math.log10(val));
+    const norm = val / Math.pow(10, exponent);
+    let closest = norm;
+    let minDiff = Infinity;
+    for (const b of base) {
+      const diff = Math.abs(b - norm);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = b;
+      }
+    }
+    return closest * Math.pow(10, exponent);
+  }
+  const e12Base = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2, 10.0];
+  const e24Base = [
+    1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0,
+    2.2, 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3,
+    4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1, 10.0
+  ];
+
+  function computeCrossover({ fx = 2200, reW = 6.2, leW = 0.85, reT = 5.8, snapMode = 'none' }) {
+    const w = 2.0 * Math.PI * fx;
+    const Zw = Math.max(reW, 4.0);
+    const Zt = Math.max(reT, 4.0);
+    const comp = {
+      L1: (Zw / (w * Math.PI)) * 1000.0 * 2.0,
+      C1: (1.0 / (2.0 * Math.PI * fx * Zw)) * 1e6,
+      C_HP1: (1.0 / (w * Zt)) * 1e6,
+      L_HP1: (Zt / w) * 1000.0,
+      R_zobel: 1.25 * reW,
+      C_zobel: ((leW / 1000.0) / Math.pow(1.25 * reW, 2)) * 1e6
+    };
+    if (snapMode === 'e24') {
+      for (const k of Object.keys(comp)) comp[k] = snapSeries(comp[k], e24Base);
+    } else if (snapMode === 'e12') {
+      for (const k of Object.keys(comp)) comp[k] = snapSeries(comp[k], e12Base);
+    }
+    return comp;
+  }
+
+  const exact = computeCrossover({ snapMode: 'none' });
+  const snappedE12 = computeCrossover({ snapMode: 'e12' });
+  const snappedE24 = computeCrossover({ snapMode: 'e24' });
+
+  // E24 must always be at least as close to exact values as E12
+  for (const key of Object.keys(exact)) {
+    const errE12 = Math.abs(snappedE12[key] - exact[key]);
+    const errE24 = Math.abs(snappedE24[key] - exact[key]);
+    assert.ok(errE24 <= errE12 + 1e-9, `E24 error for ${key} (${errE24}) must be <= E12 error (${errE12})`);
+  }
 });
 
 test('Design Project File - Complex Number Physics Math', () => {

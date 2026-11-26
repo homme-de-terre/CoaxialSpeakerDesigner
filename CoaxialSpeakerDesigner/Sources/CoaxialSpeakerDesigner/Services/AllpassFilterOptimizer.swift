@@ -1,5 +1,33 @@
 import Foundation
 
+/// 3-Tier RMS Phase Alignment Warning & Status Logic.
+public enum PhaseAlignmentStatus: String, Codable, Sendable {
+    case optimal = "green"
+    case acceptable = "yellow"
+    case largeOffset = "red"
+
+    public static func from(rmsErrorDeg: Double) -> PhaseAlignmentStatus {
+        if rmsErrorDeg <= 10.0 {
+            return .optimal
+        } else if rmsErrorDeg <= 20.0 {
+            return .acceptable
+        } else {
+            return .largeOffset
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .optimal:
+            return "Phase Aligned (Optimal)"
+        case .acceptable:
+            return "Acceptable Alignment - Minor Phase Offset"
+        case .largeOffset:
+            return "Large Phase Offset - Try Inverting Tweeter Polarity or Adjusting Fx"
+        }
+    }
+}
+
 /// Result of Nelder-Mead All-Pass Filter Phase Alignment Optimization.
 public struct AllpassOptimizationResult: Codable, Sendable {
     public let f0: Double
@@ -7,6 +35,7 @@ public struct AllpassOptimizationResult: Codable, Sendable {
     public let rmsErrorDeg: Double
     public let maxDeltaErrorDeg: Double
     public let isGoalAchieved: Bool
+    public let alignmentStatus: PhaseAlignmentStatus
     public let warnings: [String]
 
     public init(
@@ -15,6 +44,7 @@ public struct AllpassOptimizationResult: Codable, Sendable {
         rmsErrorDeg: Double,
         maxDeltaErrorDeg: Double,
         isGoalAchieved: Bool,
+        alignmentStatus: PhaseAlignmentStatus? = nil,
         warnings: [String] = []
     ) {
         self.f0 = f0
@@ -22,6 +52,7 @@ public struct AllpassOptimizationResult: Codable, Sendable {
         self.rmsErrorDeg = rmsErrorDeg
         self.maxDeltaErrorDeg = maxDeltaErrorDeg
         self.isGoalAchieved = isGoalAchieved
+        self.alignmentStatus = alignmentStatus ?? PhaseAlignmentStatus.from(rmsErrorDeg: rmsErrorDeg)
         self.warnings = warnings
     }
 }
@@ -252,12 +283,12 @@ public enum AllpassFilterOptimizer {
 
         var warnings: [String] = []
 
-        // Tolerance check: Phase traces run parallel if RMS error < 8° and peak-to-peak span < 16°
-        let isGoalAchieved = rmsErrorDeg <= 8.0 && peakToPeakError <= 16.0
-
-        if !isGoalAchieved {
-            warnings.append("All-Pass Optimization Warning: Unable to achieve parallel phase alignment within ±8° across crossover zone [\(Int(fLow)) Hz – \(Int(fHigh)) Hz] (Residual RMS: \(String(format: "%.1f", rmsErrorDeg))°). Consider adjusting crossover frequency or acoustic offset.")
-        }
+        // 3-Tier RMS Phase Alignment logic:
+        // Green (<= 10.0°): "Phase Aligned (Optimal)"
+        // Yellow (10.0° - 20.0°): "Acceptable Alignment - Minor Phase Offset"
+        // Red (> 20.0°): "Large Phase Offset - Try Inverting Tweeter Polarity or Adjusting Fx"
+        let alignmentStatus = PhaseAlignmentStatus.from(rmsErrorDeg: rmsErrorDeg)
+        let isGoalAchieved = rmsErrorDeg <= 10.0
 
         if crossover.enableAllpassFilter && !crossover.enableZobelNetwork {
             warnings.append("All-Pass Filter Warning: Zobel impedance compensation network is disabled. All-pass delay compensation requires resistive woofer voice-coil termination to prevent inductive filter detuning.")
@@ -269,6 +300,7 @@ public enum AllpassFilterOptimizer {
             rmsErrorDeg: rmsErrorDeg,
             maxDeltaErrorDeg: peakToPeakError,
             isGoalAchieved: isGoalAchieved,
+            alignmentStatus: alignmentStatus,
             warnings: warnings
         )
     }

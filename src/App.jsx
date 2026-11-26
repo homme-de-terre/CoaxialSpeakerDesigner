@@ -45,7 +45,7 @@ class Complex {
   get phaseDeg() { return Math.atan2(this.im, this.re) * (180 / Math.PI); }
 }
 
-// --- E12 Value Snapping ---
+// --- E12 & E24 Value Snapping ---
 function snapE12(val) {
   if (!val || val <= 0) return 0;
   const e12Base = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2, 10.0];
@@ -61,6 +61,38 @@ function snapE12(val) {
     }
   }
   return closest * Math.pow(10, exponent);
+}
+
+function snapE24(val) {
+  if (!val || val <= 0) return 0;
+  const e24Base = [
+    1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0,
+    2.2, 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3,
+    4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1, 10.0
+  ];
+  const exponent = Math.floor(Math.log10(val));
+  const norm = val / Math.pow(10, exponent);
+  let closest = norm;
+  let minDiff = Infinity;
+  for (const b of e24Base) {
+    const diff = Math.abs(b - norm);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = b;
+    }
+  }
+  return closest * Math.pow(10, exponent);
+}
+
+// --- 3-Tier RMS Phase Alignment Warning & Status Logic ---
+function getPhaseAlignmentStatus(rmsErrorDeg) {
+  if (rmsErrorDeg <= 10.0) {
+    return { level: 'green', label: 'Phase Aligned (Optimal)' };
+  } else if (rmsErrorDeg <= 20.0) {
+    return { level: 'yellow', label: 'Acceptable Alignment - Minor Phase Offset' };
+  } else {
+    return { level: 'red', label: 'Large Phase Offset - Try Inverting Tweeter Polarity or Adjusting Fx' };
+  }
 }
 
 // --- Resilient Decimal Input Component ---
@@ -166,6 +198,7 @@ export default function App() {
   const [acousticDelayMM, setAcousticDelayMM] = useState(35.0);
   const [invertTweeterPolarity, setInvertTweeterPolarity] = useState(false);
   const [snapToE12, setSnapToE12] = useState(false);
+  const [snapToE24, setSnapToE24] = useState(false);
   const [enableAllpass, setEnableAllpass] = useState(false);
 
   // Curve Visibility Toggles
@@ -387,7 +420,7 @@ export default function App() {
     const centerFx = Math.round(Math.sqrt(actualWooferFx * actualTweeterFx));
 
     if (!enableAllpass || acousticDelayMM <= 0) {
-      return { f0: centerFx, q: 0.707, rmsErrorDeg: 0, isGoalAchieved: true, warnings: [] };
+      return { f0: centerFx, q: 0.707, rmsErrorDeg: 0, isGoalAchieved: true, alignmentStatus: getPhaseAlignmentStatus(0), warnings: [] };
     }
 
     const fLow = Math.max(20.0, Math.min(actualWooferFx, actualTweeterFx) / 2.0);
@@ -545,12 +578,10 @@ export default function App() {
     simplex.sort((a, b) => a.cost - b.cost);
     const opt = simplex[0];
     const rmsErrorDeg = Math.sqrt(opt.cost / sampleCount);
-    const isGoalAchieved = rmsErrorDeg <= 8.0;
+    const alignmentStatus = getPhaseAlignmentStatus(rmsErrorDeg);
+    const isGoalAchieved = rmsErrorDeg <= 10.0;
 
     const warnings = [];
-    if (!isGoalAchieved) {
-      warnings.push(`All-Pass Optimization Warning: Residual phase error is ${rmsErrorDeg.toFixed(1)}° across the crossover zone. Consider adjusting crossover frequency.`);
-    }
     if (!enableZobel) {
       warnings.push('All-Pass Filter Warning: Zobel network is disabled. All-pass filter requires resistive woofer termination to prevent inductive detuning.');
     }
@@ -560,6 +591,7 @@ export default function App() {
       q: opt.q,
       rmsErrorDeg,
       isGoalAchieved,
+      alignmentStatus,
       warnings
     };
   }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel, wooferCurve, tweeterCurve]);
@@ -639,15 +671,19 @@ export default function App() {
       comp.C_AP = (1.0 / (w0 * qAP * Zw)) * 1e6;
     }
 
-    // Snap if requested
-    if (snapToE12) {
+    // Snap if requested (E24 or E12)
+    if (snapToE24) {
+      for (const key of Object.keys(comp)) {
+        if (comp[key]) comp[key] = snapE24(comp[key]);
+      }
+    } else if (snapToE12) {
       for (const key of Object.keys(comp)) {
         if (comp[key]) comp[key] = snapE12(comp[key]);
       }
     }
 
     return comp;
-  }, [fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, ts, tweeter, enableAllpass, acousticDelayMM, apfOptimization]);
+  }, [fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, snapToE24, ts, tweeter, enableAllpass, acousticDelayMM, apfOptimization]);
 
   // --- Complete Simulation Engine Calculations ---
   const simulationData = useMemo(() => {
@@ -1839,6 +1875,7 @@ export default function App() {
         acousticCenterOffsetMM: acousticDelayMM,
         invertTweeterPolarity: invertTweeterPolarity,
         snapToStandardValues: snapToE12,
+        snapToE24Values: snapToE24,
         enableAllpassFilter: enableAllpass
       },
       wooferFRDText: wooferFRDText || "",
@@ -1961,7 +1998,17 @@ export default function App() {
         if (doc.crossover.userTargetAttenuationdB !== undefined) setLpadAttenDB(doc.crossover.userTargetAttenuationdB);
         if (doc.crossover.acousticCenterOffsetMM !== undefined) setAcousticDelayMM(doc.crossover.acousticCenterOffsetMM);
         if (doc.crossover.invertTweeterPolarity !== undefined) setInvertTweeterPolarity(doc.crossover.invertTweeterPolarity);
-        if (doc.crossover.snapToStandardValues !== undefined) setSnapToE12(doc.crossover.snapToStandardValues);
+        if (doc.crossover.snapToE24Values !== undefined) {
+          setSnapToE24(doc.crossover.snapToE24Values);
+          if (doc.crossover.snapToE24Values) {
+            setSnapToE12(false);
+          } else if (doc.crossover.snapToStandardValues !== undefined) {
+            setSnapToE12(doc.crossover.snapToStandardValues);
+          }
+        } else if (doc.crossover.snapToStandardValues !== undefined) {
+          setSnapToE12(doc.crossover.snapToStandardValues);
+          if (doc.crossover.snapToStandardValues) setSnapToE24(false);
+        }
         if (doc.crossover.enableAllpassFilter !== undefined) setEnableAllpass(doc.crossover.enableAllpassFilter);
       }
 
@@ -2577,9 +2624,15 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-white">Acoustic Phase & Driver Alignment (Degrees vs Log Hz)</h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className={`text-xs mt-0.5 ${
+                    enableAllpass
+                      ? (apfOptimization?.alignmentStatus?.level === 'green'
+                          ? 'text-emerald-400'
+                          : (apfOptimization?.alignmentStatus?.level === 'yellow' ? 'text-amber-400' : 'text-red-400'))
+                      : 'text-slate-400'
+                  }`}>
                     {enableAllpass
-                      ? `All-Pass Optimization: F0 = ${Math.round(apfOptimization?.f0 || fx)} Hz, Q = ${(apfOptimization?.q || 0.7).toFixed(2)} • Residual RMS: ${(apfOptimization?.rmsErrorDeg || 0).toFixed(1)}°`
+                      ? `All-Pass Optimization: F0 = ${Math.round(apfOptimization?.f0 || fx)} Hz, Q = ${(apfOptimization?.q || 0.7).toFixed(2)} • Residual RMS: ${(apfOptimization?.rmsErrorDeg || 0).toFixed(1)}° • ${apfOptimization?.alignmentStatus?.label || 'Phase Aligned (Optimal)'}`
                       : (compensateTweeterDelay
                           ? `Acoustic Center Depth Delay (${acousticDelayMM.toFixed(1)} mm / ${((acousticDelayMM / 1000.0) / 343.0 * 1000.0).toFixed(2)} ms) Compensated`
                           : `Acoustic Delay Offset: ${acousticDelayMM} mm • Tweeter Polarity: ${invertTweeterPolarity ? 'Inverted (-)' : 'Normal (+)'}`
@@ -3155,7 +3208,44 @@ export default function App() {
                   <label className="text-xs font-semibold text-slate-400">Coaxial Tweeter Depth Offset: {acousticDelayMM} mm</label>
                   <input type="range" min="0" max="100" value={acousticDelayMM} onChange={(e) => setAcousticDelayMM(+e.target.value)} className="w-full mt-2" />
                 </div>
-                  <div className="pt-2 border-t border-slate-800 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800 text-xs">
+                  <label className="flex items-center space-x-2 text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={invertTweeterPolarity}
+                      onChange={(e) => setInvertTweeterPolarity(e.target.checked)}
+                      className="rounded bg-slate-800 border-slate-700 text-blue-600"
+                    />
+                    <span className="font-medium">Invert Tweeter Polarity (+180°)</span>
+                  </label>
+                  <label className="flex items-center space-x-2 text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={snapToE12}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSnapToE12(checked);
+                        if (checked) setSnapToE24(false);
+                      }}
+                      className="rounded bg-slate-800 border-slate-700 text-blue-600"
+                    />
+                    <span className="font-medium">Snap Components to Commercial E12 Series</span>
+                  </label>
+                  <label className="flex items-center space-x-2 text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={snapToE24}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSnapToE24(checked);
+                        if (checked) setSnapToE12(false);
+                      }}
+                      className="rounded bg-slate-800 border-slate-700 text-blue-600"
+                    />
+                    <span className="font-medium">Snap Components to Commercial E24 Series</span>
+                  </label>
+                </div>
+                <div className="pt-2 border-t border-slate-800 space-y-2">
                   <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
                     <input 
                       type="checkbox" 
@@ -3173,12 +3263,30 @@ export default function App() {
                     <div className="p-3 bg-teal-950/30 border border-teal-800/50 rounded-lg space-y-2 text-xs mt-2">
                       <div className="flex items-center justify-between text-teal-300 font-semibold">
                         <span>Nelder-Mead Phase Optimization</span>
-                        <span className={apfOptimization.isGoalAchieved ? "text-teal-400" : "text-amber-400"}>
+                        <span className={
+                          apfOptimization.alignmentStatus.level === 'green'
+                            ? "text-emerald-400"
+                            : (apfOptimization.alignmentStatus.level === 'yellow' ? "text-amber-400" : "text-red-400")
+                        }>
                           RMS Phase Error: {apfOptimization.rmsErrorDeg.toFixed(2)}°
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-400">
                         Optimal F0: {Math.round(apfOptimization.f0)} Hz • Optimal Q: {apfOptimization.q.toFixed(2)} • Alignment Window: [{Math.round(fx / 2)} Hz – {Math.round(fx * 2)} Hz]
+                      </div>
+                      <div className={`flex items-center space-x-2 p-2 rounded border text-[11px] font-semibold ${
+                        apfOptimization.alignmentStatus.level === 'green'
+                          ? 'bg-emerald-950/40 border-emerald-700/50 text-emerald-300'
+                          : (apfOptimization.alignmentStatus.level === 'yellow'
+                              ? 'bg-amber-950/40 border-amber-700/50 text-amber-300'
+                              : 'bg-red-950/40 border-red-700/50 text-red-300')
+                      }`}>
+                        {apfOptimization.alignmentStatus.level === 'green' ? (
+                          <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                        )}
+                        <span>{apfOptimization.alignmentStatus.label}</span>
                       </div>
                       {apfOptimization.warnings.map((warn, i) => (
                         <div key={i} className="flex items-start space-x-2 p-2 bg-amber-950/40 border border-amber-800/40 rounded text-amber-300 text-[11px]">
@@ -3205,6 +3313,27 @@ export default function App() {
                   <span>Export PDF Schematic</span>
                 </button>
               </div>
+              {enableAllpass && (
+                <div className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                  apfOptimization.alignmentStatus.level === 'green'
+                    ? 'bg-emerald-950/40 border-emerald-700/50 text-emerald-300'
+                    : (apfOptimization.alignmentStatus.level === 'yellow'
+                        ? 'bg-amber-950/40 border-amber-700/50 text-amber-300'
+                        : 'bg-red-950/40 border-red-700/50 text-red-300')
+                }`}>
+                  <div className="flex items-center justify-between font-semibold">
+                    <div className="flex items-center space-x-2">
+                      {apfOptimization.alignmentStatus.level === 'green' ? (
+                        <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                      )}
+                      <span>RMS Phase Alignment ({apfOptimization.rmsErrorDeg.toFixed(2)}°): {apfOptimization.alignmentStatus.label}</span>
+                    </div>
+                    <span className="text-[11px] opacity-80">F0 = {Math.round(apfOptimization.f0)} Hz • Q = {apfOptimization.q.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
               <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 space-y-4">
                 <table className="w-full text-xs text-left text-slate-300">
                   <thead className="text-slate-400 border-b border-slate-800 uppercase text-[10px]">
