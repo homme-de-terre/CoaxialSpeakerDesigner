@@ -118,17 +118,23 @@ def convert_hfsplus_to_udzo(raw_path, out_dmg_path, vol_name="CoaxialSpeakerDesi
     block_descriptors = len(runs)
     raw_crc = zlib.crc32(raw_data)
 
+    # Apple UDIF _mishblk (exactly 204 bytes = 0xCC)
     mish_header = struct.pack(
-        ">4sIQQQII24sII32s",
-        b"mish",
-        1,
-        0,
-        total_sectors,
-        0,
-        2048,
-        block_descriptors,
-        b"\x00" * 24,
-        2, 32, struct.pack(">I28s", raw_crc, b"\x00" * 28)
+        ">IIQQQII24sIIII120sI",
+        0x6D697368,     # "mish" magic
+        1,              # InfoVersion
+        0,              # FirstSectorNumber
+        total_sectors,  # SectorCount
+        0,              # DataStart
+        2048,           # DecompressedBufferRequested
+        0,              # BlocksDescriptor
+        b"\x00" * 24,   # Reserved1
+        2,              # ChecksumType (CRC32)
+        0,              # Reserved2
+        raw_crc,        # Checksum
+        0,              # Reserved3
+        b"\x00" * 120,  # Reserved4
+        block_descriptors  # BlocksRunCount
     )
     mish_data = mish_header + b"".join(runs)
     mish_b64 = base64.b64encode(mish_data).decode("ascii")
@@ -165,32 +171,43 @@ def convert_hfsplus_to_udzo(raw_path, out_dmg_path, vol_name="CoaxialSpeakerDesi
     xml_offset = data_fork_len
     xml_len = len(plist_xml)
 
-    # 512-byte Apple UDIF 'koly' trailer
-    koly_fmt = ">4sIIIQQQQQII16sII32sQQ120sII32sIQ204s"
-    seg_uuid = uuid.uuid4().bytes
+    # Exact Apple UDIF _kolyblk trailer (512 bytes, XMLOffset at 0xD8 = 216)
+    koly_fmt = ">IIIIQQQQQIIIIIIIIII120sQQ120sIIII120sIQ12s"
+    assert struct.calcsize(koly_fmt) == 512, f"koly struct size must be 512, got {struct.calcsize(koly_fmt)}"
+
+    u = uuid.uuid4()
+    u1, u2, u3, u4 = struct.unpack(">IIII", u.bytes)
 
     koly = struct.pack(
         koly_fmt,
-        b"koly",
-        4,
-        512,
-        1,
-        0,
-        0,
-        data_fork_len,
-        0,
-        0,
-        1,
-        1,
-        seg_uuid,
-        2, 32, struct.pack(">I28s", data_fork_crc, b"\x00" * 28),
-        xml_offset,
-        xml_len,
-        b"\x00" * 120,
-        2, 32, struct.pack(">I28s", raw_crc, b"\x00" * 28),
-        1,
-        total_sectors,
-        b"\x00" * 204
+        0x6B6F6C79,     # "koly"
+        4,              # Version = 4
+        512,            # HeaderSize = 512
+        1,              # Flags = 1
+        0,              # RunningDataForkOffset = 0
+        0,              # DataForkOffset = 0
+        data_fork_len,  # DataForkLength
+        0,              # RsrcForkOffset = 0
+        0,              # RsrcForkLength = 0
+        1,              # SegmentNumber = 1
+        1,              # SegmentCount = 1
+        u1, u2, u3, u4, # SegmentID (16 bytes UUID)
+        2,              # DataForkChecksumType = 2 (CRC32)
+        0,              # Reserved1
+        data_fork_crc,  # DataForkChecksum
+        0,              # Reserved2
+        b"\x00" * 120,  # Reserved3 (120 bytes)
+        xml_offset,     # XMLOffset at 0xD8 (216 bytes from trailer start)
+        xml_len,        # XMLLength at 0xE0 (224 bytes from trailer start)
+        b"\x00" * 120,  # Reserved4 (120 bytes)
+        2,              # MasterChecksumType = 2 (CRC32)
+        0,              # Reserved5
+        raw_crc,        # MasterChecksum
+        0,              # Reserved6
+        b"\x00" * 120,  # Reserved7 (120 bytes)
+        1,              # ImageVariant = 1 (UDIF)
+        total_sectors,  # SectorCount
+        b"\x00" * 12    # Reserved8 (12 bytes -> 512 bytes total)
     )
 
     with open(out_dmg_path, "wb") as f:

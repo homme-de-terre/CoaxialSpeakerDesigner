@@ -1272,8 +1272,8 @@ test('macOS DMG Distribution Package - Apple Silicon Bundle, HFS+ UDIF Mountabil
   assert.equal(koly.readUInt32BE(4), 4, 'koly version must be 4');
   assert.equal(koly.readUInt32BE(8), 512, 'koly header size must be 512');
 
-  const xmlOffset = Number(koly.readBigUInt64BE(120));
-  const xmlLen = Number(koly.readBigUInt64BE(128));
+  const xmlOffset = Number(koly.readBigUInt64BE(216));
+  const xmlLen = Number(koly.readBigUInt64BE(224));
   assert.ok(xmlOffset > 0 && xmlLen > 0, 'XML plist metadata must be present');
 
   const xmlStr = dmgBuf.subarray(xmlOffset, xmlOffset + xmlLen).toString('utf8');
@@ -1286,7 +1286,7 @@ test('macOS DMG Distribution Package - Apple Silicon Bundle, HFS+ UDIF Mountabil
   const mishData = Buffer.from(dataMatch[1].replace(/\s+/g, ''), 'base64');
   assert.equal(mishData.toString('ascii', 0, 4), 'mish', 'Block descriptor magic must be mish');
 
-  let runsOffset = 104;
+  let runsOffset = 204; // 0xCC = 204 bytes _mishblk header
   const decompressedChunks = [];
   while (runsOffset + 40 <= mishData.length) {
     const rtype = mishData.readUInt32BE(runsOffset);
