@@ -1222,9 +1222,10 @@ test('Schematic PDF Exporter - 2-Page Vector PDF Generation, R_eq Symbol, and BO
   assert.ok(pdfOutput.includes('CROSSOVER BILL OF MATERIALS \\(BOM\\)'), 'Page 2 must contain BOM title');
 });
 
-test('macOS DMG Distribution Package - Package Integrity, Universal App Bundle, and Build Scripts', async () => {
+test('macOS DMG Distribution Package - Apple Silicon Bundle, HFS+ UDIF Mountability, and Renamed Apps', async () => {
   const fs = await import('node:fs');
   const path = await import('node:path');
+  const zlib = await import('node:zlib');
 
   const rootDMG = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner.dmg');
   const desktopDMG = path.resolve(process.cwd(), 'desktop-app/CoaxialSpeakerDesigner.dmg');
@@ -1237,23 +1238,94 @@ test('macOS DMG Distribution Package - Package Integrity, Universal App Bundle, 
 
   const rootStat = fs.statSync(rootDMG);
   const desktopStat = fs.statSync(desktopDMG);
-
   assert.ok(rootStat.size > 1024 * 1024, `Root DMG size (${rootStat.size} bytes) must be > 1 MB`);
   assert.equal(rootStat.size, desktopStat.size, 'Root DMG and desktop-app DMG sizes should match');
 
-  // 2. Scripts exist and are executable
+  // 2. Renamed Apple Silicon binaries exist and legacy HP35/universal apps are omitted
+  const macArm64Bin = path.resolve(process.cwd(), 'desktop-app/CoaxialSpeakerDesigner_mac_arm64');
+  const linuxArm64Bin = path.resolve(process.cwd(), 'desktop-app/CoaxialSpeakerDesigner_linux_arm64');
+  const appleSiliconApp = path.resolve(process.cwd(), 'desktop-app/CoaxialSpeakerDesigner_AppleSilicon.app');
+
+  assert.ok(fs.existsSync(macArm64Bin), 'desktop-app/CoaxialSpeakerDesigner_mac_arm64 must exist');
+  assert.ok(fs.existsSync(linuxArm64Bin), 'desktop-app/CoaxialSpeakerDesigner_linux_arm64 must exist');
+  assert.ok(fs.existsSync(appleSiliconApp), 'desktop-app/CoaxialSpeakerDesigner_AppleSilicon.app must exist');
+
+  // Check Mach-O Apple Silicon header for CoaxialSpeakerDesigner_mac_arm64
+  const fdBin = fs.openSync(macArm64Bin, 'r');
+  const binBuf = Buffer.alloc(16);
+  fs.readSync(fdBin, binBuf, 0, 16, 0);
+  fs.closeSync(fdBin);
+  assert.equal(binBuf.readUInt32LE(0), 0xfeedfacf, 'Must be Mach-O 64-bit binary');
+  assert.equal(binBuf.readUInt32LE(4), 0x0100000c, 'Must be CPU_TYPE_ARM64 (Apple Silicon)');
+
+  // Verify legacy HP35 apps and universal binary are omitted
+  assert.ok(!fs.existsSync(path.resolve(process.cwd(), 'desktop-app/HP35_AppleSilicon.app')), 'Legacy HP35_AppleSilicon.app must be removed');
+  assert.ok(!fs.existsSync(path.resolve(process.cwd(), 'desktop-app/HP35_Intel.app')), 'Legacy HP35_Intel.app must be removed');
+  assert.ok(!fs.existsSync(path.resolve(process.cwd(), 'desktop-app/HP35_mac_amd64')), 'Legacy HP35_mac_amd64 must be removed');
+  assert.ok(!fs.existsSync(path.resolve(process.cwd(), 'desktop-app/CoaxialSpeakerDesigner_universal')), 'Universal binary must be omitted');
+
+  // 3. Apple UDIF (UDZO zlib-compressed) disk image structure & HFS+ mountability verification
+  const dmgBuf = fs.readFileSync(rootDMG);
+  const koly = dmgBuf.subarray(dmgBuf.length - 512);
+
+  assert.equal(koly.toString('ascii', 0, 4), 'koly', 'Trailer must have koly magic');
+  assert.equal(koly.readUInt32BE(4), 4, 'koly version must be 4');
+  assert.equal(koly.readUInt32BE(8), 512, 'koly header size must be 512');
+
+  const xmlOffset = Number(koly.readBigUInt64BE(120));
+  const xmlLen = Number(koly.readBigUInt64BE(128));
+  assert.ok(xmlOffset > 0 && xmlLen > 0, 'XML plist metadata must be present');
+
+  const xmlStr = dmgBuf.subarray(xmlOffset, xmlOffset + xmlLen).toString('utf8');
+  assert.ok(xmlStr.includes('Apple_HFS'), 'blkx must identify Apple_HFS partition');
+  assert.ok(xmlStr.includes('CoaxialSpeakerDesigner'), 'blkx must reference CoaxialSpeakerDesigner volume');
+
+  // Decompress runs to verify the Apple HFS+ volume header
+  const dataMatch = xmlStr.match(/<data>\s*([A-Za-z0-9+/=\s]+)\s*<\/data>/);
+  assert.ok(dataMatch, 'mish data must be present in plist');
+  const mishData = Buffer.from(dataMatch[1].replace(/\s+/g, ''), 'base64');
+  assert.equal(mishData.toString('ascii', 0, 4), 'mish', 'Block descriptor magic must be mish');
+
+  let runsOffset = 104;
+  const decompressedChunks = [];
+  while (runsOffset + 40 <= mishData.length) {
+    const rtype = mishData.readUInt32BE(runsOffset);
+    const _sStart = Number(mishData.readBigUInt64BE(runsOffset + 8));
+    const sCount = Number(mishData.readBigUInt64BE(runsOffset + 16));
+    const compOff = Number(mishData.readBigUInt64BE(runsOffset + 24));
+    const compLen = Number(mishData.readBigUInt64BE(runsOffset + 32));
+    runsOffset += 40;
+
+    if (rtype === 0xffffffff) break;
+    if (rtype === 0x00000000) {
+      decompressedChunks.push(Buffer.alloc(sCount * 512));
+    } else if (rtype === 0x80000005) {
+      decompressedChunks.push(zlib.inflateSync(dmgBuf.subarray(compOff, compOff + compLen)));
+    } else if (rtype === 0x00000001) {
+      decompressedChunks.push(dmgBuf.subarray(compOff, compOff + compLen));
+    }
+  }
+
+  const decompressed = Buffer.concat(decompressedChunks);
+  assert.ok(decompressed.length > 0, 'Decompressed image must not be empty');
+
+  // Verify Apple Partition Map (APM) and Apple HFS Plus (H+ version 4) signatures
+  assert.equal(decompressed.toString('ascii', 0, 2), 'ER', 'Sector 0 must be Apple Driver Descriptor Map');
+  assert.equal(decompressed.toString('ascii', 512, 514), 'PM', 'Sector 1 must be Apple Partition Map');
+
+  const hfsPlusSig = Buffer.from([0x48, 0x2b, 0x00, 0x04]); // 'H+' version 4
+  const hfsIndex = decompressed.indexOf(hfsPlusSig);
+  assert.ok(hfsIndex !== -1, 'HFS Plus volume header (H+ version 4) must be present in decompressed image');
+
+  // Verify application artifacts and symlink in the volume image
+  assert.ok(decompressed.includes(Buffer.from('CoaxialSpeakerDesigner')), 'Volume must contain CoaxialSpeakerDesigner');
+  assert.ok(decompressed.includes(Buffer.from('Info.plist')), 'Volume must contain Info.plist');
+  assert.ok(decompressed.includes(Buffer.from('Applications')), 'Volume must contain Applications drag-and-drop symlink');
+  assert.ok(decompressed.includes(Buffer.from('README.txt')), 'Volume must contain README.txt');
+
+  // 4. Scripts exist and are executable
   assert.ok(fs.existsSync(packageScript), 'desktop-app/package_dmg.py must exist');
   assert.ok(fs.existsSync(buildDmgScript), 'desktop-app/build_dmg.sh must exist');
-
-  // 3. Inspect DMG file header
-  const fd = fs.openSync(rootDMG, 'r');
-  const buf = Buffer.alloc(4096);
-  fs.readSync(fd, buf, 0, 4096, 0);
-  fs.closeSync(fd);
-
-  // ISO9660 / HFS hybrid check
-  const headerStr = buf.toString('latin1');
-  assert.ok(headerStr.includes('Coaxial') || buf.length > 0, 'DMG must contain volume identification');
 });
 
 

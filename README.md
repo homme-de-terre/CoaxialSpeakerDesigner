@@ -105,7 +105,7 @@ npm run build
 ```
 
 ### 3. macOS .dmg Disk Image & Desktop App Distribution
-Mount `CoaxialSpeakerDesigner.dmg` (available at project root or under `desktop-app/CoaxialSpeakerDesigner.dmg`) to install the universal macOS desktop app:
+Mount `CoaxialSpeakerDesigner.dmg` (available at project root or under `desktop-app/CoaxialSpeakerDesigner.dmg`) to install the native Apple Silicon macOS desktop app:
 ```bash
 # Build desktop executables & generate CoaxialSpeakerDesigner.dmg
 cd desktop-app
