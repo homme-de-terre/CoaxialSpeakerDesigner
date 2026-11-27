@@ -190,6 +190,49 @@ public struct CrossoverInspectorView: View {
                         }
                     }
 
+                    Toggle("Enable CD Horn Mass Roll-Off Compensation (+6 dB/oct HF Boost across R1)", isOn: Binding(
+                        get: { viewModel.crossover.enableCDHornCompensation },
+                        set: { enabled in
+                            viewModel.crossover.enableCDHornCompensation = enabled
+                            if enabled && !viewModel.crossover.enableLPadAttenuator {
+                                viewModel.crossover.enableLPadAttenuator = true
+                            }
+                        }
+                    ))
+
+                    if viewModel.crossover.enableCDHornCompensation {
+                        VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("CD Horn Mass Break Corner Frequency (f_eq):")
+                                    Spacer()
+                                    Text("\(Int(viewModel.crossover.cdHornCornerFrequency)) Hz")
+                                        .bold()
+                                        .foregroundColor(.purple)
+                                }
+                                Slider(value: $viewModel.crossover.cdHornCornerFrequency, in: 2000.0...8000.0, step: 100.0)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Target High-Frequency Shelf Boost (ΔG_eq):")
+                                    Spacer()
+                                    Text(String(format: "+%.1f dB", viewModel.crossover.cdHornBoostdB))
+                                        .bold()
+                                        .foregroundColor(.purple)
+                                }
+                                Slider(value: $viewModel.crossover.cdHornBoostdB, in: 1.0...12.0, step: 0.5)
+                            }
+
+                            Text("Places a bypass capacitor C_eq (and damping resistor R_eq when ΔG_eq < L-Pad attenuation) in parallel with L-Pad series resistor R1 to compensate for Constant Directivity horn 6 dB/oct mass roll-off above \(Int(viewModel.crossover.cdHornCornerFrequency)) Hz.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(8)
+                        .background(Color.purple.opacity(0.08))
+                        .cornerRadius(8)
+                    }
+
                     Divider()
 
                     // Acoustic Center Offset
@@ -311,11 +354,18 @@ public struct CrossoverInspectorView: View {
                             if let cz = comp.C_zobel_uF { Text("C_zobel = \(String(format: "%.2f", cz)) µF") }
                         }
                     }
-                    if viewModel.crossover.enableLPadAttenuator {
+                    if viewModel.crossover.enableLPadAttenuator || viewModel.crossover.enableCDHornCompensation {
                         GridRow {
                             Text("L-Pad Attenuator:").bold().foregroundColor(.purple)
                             if let r1 = comp.R1_lpad_ohms { Text("R1 (Series) = \(String(format: "%.2f", r1)) Ω") }
                             if let r2 = comp.R2_lpad_ohms { Text("R2 (Parallel) = \(String(format: "%.2f", r2)) Ω") }
+                        }
+                    }
+                    if viewModel.crossover.enableCDHornCompensation {
+                        GridRow {
+                            Text("CD Horn Mass EQ:").bold().foregroundColor(.purple)
+                            if let ccd = comp.C_cd_uF { Text("C_eq (Bypass || R1) = \(String(format: "%.2f", ccd)) µF") }
+                            if let rcd = comp.R_cd_ohms { Text("R_eq (Shelf Damping) = \(String(format: "%.2f", rcd)) Ω") }
                         }
                     }
                 }

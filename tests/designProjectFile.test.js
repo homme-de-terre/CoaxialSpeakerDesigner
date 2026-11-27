@@ -48,6 +48,9 @@ function createDesignDocument({
   enableZobel = true,
   enableLPad = true,
   lpadAttenDB = 4.5,
+  enableCDHornComp = false,
+  cdHornCornerHz = 3500,
+  cdHornBoostDB = 6.0,
   acousticDelayMM = 30.0,
   invertTweeterPolarity = true,
   snapToE12 = true,
@@ -101,6 +104,9 @@ function createDesignDocument({
       enableZobelNetwork: enableZobel,
       enableLPadAttenuator: enableLPad,
       userTargetAttenuationdB: lpadAttenDB,
+      enableCDHornCompensation: enableCDHornComp,
+      cdHornCornerFrequency: cdHornCornerHz,
+      cdHornBoostdB: cdHornBoostDB,
       acousticCenterOffsetMM: acousticDelayMM,
       invertTweeterPolarity,
       snapToStandardValues: snapToE24 ? false : snapToE12,
@@ -156,6 +162,9 @@ function restoreDesignDocument(jsonString) {
     if (doc.crossover.enableZobelNetwork !== undefined) state.enableZobel = doc.crossover.enableZobelNetwork;
     if (doc.crossover.enableLPadAttenuator !== undefined) state.enableLPad = doc.crossover.enableLPadAttenuator;
     if (doc.crossover.userTargetAttenuationdB !== undefined) state.lpadAttenDB = doc.crossover.userTargetAttenuationdB;
+    if (doc.crossover.enableCDHornCompensation !== undefined) state.enableCDHornComp = doc.crossover.enableCDHornCompensation;
+    if (doc.crossover.cdHornCornerFrequency !== undefined) state.cdHornCornerHz = doc.crossover.cdHornCornerFrequency;
+    if (doc.crossover.cdHornBoostdB !== undefined) state.cdHornBoostDB = doc.crossover.cdHornBoostdB;
     if (doc.crossover.acousticCenterOffsetMM !== undefined) state.acousticDelayMM = doc.crossover.acousticCenterOffsetMM;
     if (doc.crossover.invertTweeterPolarity !== undefined) state.invertTweeterPolarity = doc.crossover.invertTweeterPolarity;
     if (doc.crossover.snapToE24Values !== undefined) {
@@ -1054,6 +1063,111 @@ test('End-to-End Simulation - Altec 604-8K Preset and Custom FRD Import Reflect 
   assert.notEqual(altecSim[idx2644].tweeterPhase, defaultSim[idx2644].tweeterPhase);
   assert.notEqual(altecSim[1].zWooferMag, defaultSim[1].zWooferMag);
 });
+
+test('Constant Directivity (CD) Horn Mass Roll-Off Compensation - Circuit Math, HF Restoration, Schematic & BOM', async () => {
+  const { altec604Tweeter, altec604TweeterCurve } = await import('../src/utils/altec604Data.js');
+  const fs = await import('node:fs');
+
+  class Complex {
+    constructor(re, im = 0) { this.re = re; this.im = im; }
+    add(c) { return c instanceof Complex ? new Complex(this.re + c.re, this.im + c.im) : new Complex(this.re + c, this.im); }
+    mul(c) { return c instanceof Complex ? new Complex(this.re * c.re - this.im * c.im, this.re * c.im + this.im * c.re) : new Complex(this.re * c, this.im * c); }
+    div(c) {
+      if (typeof c === 'number') return new Complex(this.re / c, this.im / c);
+      const d = c.re * c.re + c.im * c.im;
+      return d === 0 ? new Complex(0, 0) : new Complex((this.re * c.re + this.im * c.im) / d, (this.im * c.re - this.re * c.im) / d);
+    }
+    get mag() { return Math.hypot(this.re, this.im); }
+    get phaseDeg() { return Math.atan2(this.im, this.re) * (180 / Math.PI); }
+  }
+
+  function computeCDHornNetwork({ tweeterRe = 6.5, lpadAttenDB = 7.0, enableCDHornComp = true, cdHornCornerHz = 3500, cdHornBoostDB = 6.0 }) {
+    const Zt = Math.max(tweeterRe, 4.0);
+    const effectiveAttenDB = enableCDHornComp ? Math.max(lpadAttenDB, Math.max(cdHornBoostDB, 0.5)) : lpadAttenDB;
+    const k = Math.pow(10, -effectiveAttenDB / 20.0);
+    const R1_lpad = Zt * (1.0 - k);
+    const R2_lpad = Zt * (k / (1.0 - k));
+    let C_cd = null, R_cd = null;
+
+    if (enableCDHornComp && cdHornBoostDB > 0 && cdHornCornerHz > 0) {
+      const boost = Math.min(Math.max(cdHornBoostDB, 0.5), effectiveAttenDB);
+      const wEq = 2.0 * Math.PI * cdHornCornerHz;
+      const kInf = Math.pow(10, -(effectiveAttenDB - boost) / 20.0);
+      const rp = (R2_lpad * Zt) / (R2_lpad + Zt);
+      if (kInf >= 0.99 || Math.abs(boost - effectiveAttenDB) < 0.05) {
+        C_cd = (1.0 / (wEq * R1_lpad)) * 1e6;
+        R_cd = null;
+      } else {
+        const rsInf = rp * ((1.0 / kInf) - 1.0);
+        const rEq = (R1_lpad * rsInf) / Math.max(R1_lpad - rsInf, 0.05);
+        R_cd = rEq;
+        C_cd = (1.0 / (wEq * (R1_lpad + rEq))) * 1e6;
+      }
+    }
+
+    function evalTransfer(f) {
+      if (!enableCDHornComp || !C_cd) return new Complex(k, 0);
+      const w = 2.0 * Math.PI * f;
+      const zBypass = new Complex(R_cd || 0.0, -1.0 / (w * (C_cd / 1e6)));
+      const zR1 = new Complex(R1_lpad, 0.0);
+      const zSeries = (zR1.mul(zBypass)).div(zR1.add(zBypass));
+      const rParallel = (R2_lpad * Zt) / (R2_lpad + Zt);
+      const zShunt = new Complex(rParallel, 0.0);
+      return zShunt.div(zSeries.add(zShunt));
+    }
+
+    return { R1_lpad, R2_lpad, C_cd, R_cd, evalTransfer };
+  }
+
+  // 1. Damped shelf (+6.0 dB boost with 7.0 dB L-Pad at f_eq = 3500 Hz on Altec 604-8K Re = 6.5 Ω)
+  const dampedNet = computeCDHornNetwork({
+    tweeterRe: altec604Tweeter.re,
+    lpadAttenDB: 7.0,
+    enableCDHornComp: true,
+    cdHornCornerHz: 3500,
+    cdHornBoostDB: 6.0
+  });
+  assert.ok(dampedNet.R1_lpad > 3.0 && dampedNet.R1_lpad < 4.0);
+  assert.ok(dampedNet.R2_lpad > 5.0 && dampedNet.R2_lpad < 5.5);
+  assert.ok(dampedNet.C_cd > 8.0 && dampedNet.C_cd < 13.0, `Expected C_eq ~ 11.4 uF, got ${dampedNet.C_cd}`);
+  assert.ok(dampedNet.R_cd > 0.3 && dampedNet.R_cd < 1.5, `Expected R_eq ~ 0.39 Ohm, got ${dampedNet.R_cd}`);
+
+  // 2. Full R1 bypass (+7.0 dB boost with 7.0 dB L-Pad at f_eq = 3500 Hz)
+  const fullNet = computeCDHornNetwork({
+    tweeterRe: altec604Tweeter.re,
+    lpadAttenDB: 7.0,
+    enableCDHornComp: true,
+    cdHornCornerHz: 3500,
+    cdHornBoostDB: 7.0
+  });
+  assert.ok(fullNet.C_cd > 12.0 && fullNet.C_cd < 13.5, `Expected full bypass C_eq ~ 12.7 uF, got ${fullNet.C_cd}`);
+  assert.equal(fullNet.R_cd, null, 'Full R1 bypass requires no series damping resistor R_eq');
+
+  // 3. Verify transfer function boosts 15-20 kHz by +5 to +6 dB relative to uncompensated L-Pad
+  const gain1k_dB = 20 * Math.log10(dampedNet.evalTransfer(1000).mag);
+  const gain15k_dB = 20 * Math.log10(dampedNet.evalTransfer(15000).mag);
+  const gain20k_dB = 20 * Math.log10(dampedNet.evalTransfer(20000).mag);
+  assert.ok(gain15k_dB - gain1k_dB > 4.2, '15 kHz must be boosted by > 4.2 dB over 1 kHz mid-band');
+  assert.ok(gain20k_dB - gain1k_dB > 4.8, '20 kHz must be boosted by > 4.8 dB over 1 kHz mid-band');
+
+  // Verify on Altec 604-8K CLIO curve: uncompensated 16.2 kHz (88.91 - 7.0 = 81.91 dB) is lifted to ~87.6 dB
+  const raw16k = altec604TweeterCurve.find(p => Math.abs(p.frequency - 16222.6) < 10).magnitude;
+  const uncomp16k = raw16k - 7.0;
+  const comp16k = raw16k + 20 * Math.log10(dampedNet.evalTransfer(16222.6).mag);
+  assert.ok(comp16k > uncomp16k + 4.5);
+
+  // 4. Verify Schematic & BOM presence in both Swift and React
+  const appJSX = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const schematicSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/SchematicView.swift', import.meta.url), 'utf8');
+  const pdfSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Services/PDFExporter.swift', import.meta.url), 'utf8');
+
+  assert.ok(appJSX.includes('C_eq (CD Horn)'), 'App.jsx BOM must include C_eq (CD Horn)');
+  assert.ok(appJSX.includes('R_eq (CD Horn)'), 'App.jsx BOM must include R_eq (CD Horn)');
+  assert.ok(schematicSwift.includes('C_eq (CD Horn)'), 'SchematicView.swift BOM must include C_eq (CD Horn)');
+  assert.ok(schematicSwift.includes('R_eq (CD Horn)'), 'SchematicView.swift BOM must include R_eq (CD Horn)');
+  assert.ok(pdfSwift.includes('C_eq (CD Horn)'), 'PDFExporter.swift schematic & BOM must include C_eq (CD Horn)');
+});
+
 
 
 

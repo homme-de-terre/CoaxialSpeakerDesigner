@@ -1378,4 +1378,69 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertTrue(vm.tweeterFRDText.isEmpty)
         XCTAssertEqual(vm.driver.tweeterAcousticCurve.count, 201)
     }
+
+    func testCDHornMassRollOffCompensationAndAltec604HFExtension() throws {
+        let driver = Altec604Data.createDriver()
+        let cabinet = SealedCabinet()
+
+        // 1. Without CD Horn Compensation (standard 7 dB L-Pad on Altec 604-8K)
+        let xoNoCD = CrossoverNetwork(
+            crossoverFrequency: 1500.0,
+            enableLPadAttenuator: true,
+            userTargetAttenuationdB: 7.0,
+            enableCDHornCompensation: false
+        )
+        let compNoCD = xoNoCD.computeComponentValues(wooferRe: driver.wooferTS.re, tweeterRe: driver.tweeter.re, wooferLe: driver.wooferTS.le)
+        XCTAssertNil(compNoCD.C_cd_uF)
+        XCTAssertNil(compNoCD.R_cd_ohms)
+
+        // 2. With CD Horn Compensation (damped +5 dB HF shelf at 3500 Hz with 7 dB L-Pad)
+        let xoDampedCD = CrossoverNetwork(
+            crossoverFrequency: 1500.0,
+            enableLPadAttenuator: true,
+            userTargetAttenuationdB: 7.0,
+            enableCDHornCompensation: true,
+            cdHornCornerFrequency: 3500.0,
+            cdHornBoostdB: 5.0
+        )
+        let compDamped = xoDampedCD.computeComponentValues(wooferRe: driver.wooferTS.re, tweeterRe: driver.tweeter.re, wooferLe: driver.wooferTS.le)
+        XCTAssertNotNil(compDamped.C_cd_uF)
+        XCTAssertNotNil(compDamped.R_cd_ohms, "When boost < L-Pad attenuation, series damping resistor R_eq must be computed")
+        XCTAssertGreaterThan(compDamped.C_cd_uF!, 1.0)
+        XCTAssertGreaterThan(compDamped.R_cd_ohms!, 0.5)
+
+        // 3. With Full R1 Bypass CD Horn Compensation (+7 dB boost matching 7 dB L-Pad at 3500 Hz)
+        let xoFullCD = CrossoverNetwork(
+            crossoverFrequency: 1500.0,
+            enableLPadAttenuator: true,
+            userTargetAttenuationdB: 7.0,
+            enableCDHornCompensation: true,
+            cdHornCornerFrequency: 3500.0,
+            cdHornBoostdB: 7.0
+        )
+        let compFull = xoFullCD.computeComponentValues(wooferRe: driver.wooferTS.re, tweeterRe: driver.tweeter.re, wooferLe: driver.wooferTS.le)
+        XCTAssertNotNil(compFull.C_cd_uF)
+        XCTAssertNil(compFull.R_cd_ohms, "Full R1 bypass should not require a series damping resistor R_eq")
+
+        // 4. Verify simulation shows significantly higher 10-20 kHz SPL with CD Horn Compensation enabled
+        let simNoCD = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: xoNoCD)
+        let simWithCD = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: xoFullCD)
+
+        let idx15k = simNoCD.firstIndex(where: { abs($0.frequency - 15000.0) < 800.0 })!
+        let idx20k = simNoCD.count - 1
+        XCTAssertGreaterThan(simWithCD[idx15k].tweeterFinalSPL, simNoCD[idx15k].tweeterFinalSPL + 4.0, "CD Horn EQ must boost 15 kHz SPL to compensate mass roll-off")
+        XCTAssertGreaterThan(simWithCD[idx20k].totalSystemSPL, simNoCD[idx20k].totalSystemSPL + 4.5, "CD Horn EQ must restore 20 kHz total system SPL")
+
+        // 5. Verify PDF generation and JSON roundtrip with CD Horn Compensation
+        let pdfData = PDFExporter.generateSchematicPDF(driver: driver, cabinet: cabinet, crossover: xoDampedCD, components: compDamped)
+        XCTAssertFalse(pdfData.isEmpty)
+        XCTAssertEqual(String(data: pdfData.prefix(4), encoding: .ascii), "%PDF")
+
+        let doc = SpeakerDesignDocument(name: "Altec 604-8K CD EQ", driver: driver, cabinet: cabinet, crossover: xoDampedCD)
+        let jsonStr = try doc.toJSON()
+        let restored = try SpeakerDesignDocument.fromJSON(jsonStr)
+        XCTAssertTrue(restored.crossover.enableCDHornCompensation)
+        XCTAssertEqual(restored.crossover.cdHornCornerFrequency, 3500.0)
+        XCTAssertEqual(restored.crossover.cdHornBoostdB, 5.0)
+    }
 }

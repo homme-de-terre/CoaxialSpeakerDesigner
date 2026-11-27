@@ -356,6 +356,9 @@ public class MainDesignerViewModel: ObservableObject {
         self.crossover.crossoverFrequency = Altec604Data.recommendedCrossover
         self.crossover.wooferCrossoverFrequency = Altec604Data.recommendedCrossover
         self.crossover.tweeterCrossoverFrequency = Altec604Data.recommendedCrossover
+        self.crossover.userTargetAttenuationdB = 7.0
+        self.crossover.cdHornCornerFrequency = 3500.0
+        self.crossover.cdHornBoostdB = 6.0
         self.targetReferenceSPL = Altec604Data.wooferTS.spl
         self.missingParameters = []
         self.plausibilityWarnings = []

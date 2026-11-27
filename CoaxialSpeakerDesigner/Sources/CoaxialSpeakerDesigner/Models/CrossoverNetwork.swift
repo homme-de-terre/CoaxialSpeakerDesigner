@@ -42,6 +42,10 @@ public struct CalculatedComponents: Codable, Sendable {
     public var R1_lpad_ohms: Double? = nil // Series
     public var R2_lpad_ohms: Double? = nil // Parallel
 
+    // Constant Directivity (CD) Horn Mass Roll-Off Compensation (Parallel to R1)
+    public var C_cd_uF: Double? = nil
+    public var R_cd_ohms: Double? = nil
+
     // All-Pass Delay Compensation Network
     public var L_AP_mH: Double? = nil
     public var C_AP_uF: Double? = nil
@@ -79,6 +83,9 @@ public struct CrossoverNetwork: Codable, Sendable {
     public var enableZobelNetwork: Bool = true
     public var enableLPadAttenuator: Bool = true
     public var userTargetAttenuationdB: Double = 5.0 // dB attenuation for tweeter
+    public var enableCDHornCompensation: Bool = false // Constant Directivity (CD) horn 6 dB/oct mass roll-off EQ across R1
+    public var cdHornCornerFrequency: Double = 3500.0 // Mass break turnover frequency f_eq (Hz, e.g. 3500 Hz for Altec 604-8K Mantaray)
+    public var cdHornBoostdB: Double = 6.0            // Target high-frequency shelf boost (dB)
     public var enableAllpassFilter: Bool = false     // Optional woofer delay compensation all-pass network
     
     // Coaxial Acoustic Alignment
@@ -125,7 +132,10 @@ public struct CrossoverNetwork: Codable, Sendable {
         enableAllpassFilter: Bool = false,
         enableIndependentFrequencies: Bool = false,
         wooferCrossoverFrequency: Double? = nil,
-        tweeterCrossoverFrequency: Double? = nil
+        tweeterCrossoverFrequency: Double? = nil,
+        enableCDHornCompensation: Bool = false,
+        cdHornCornerFrequency: Double = 3500.0,
+        cdHornBoostdB: Double = 6.0
     ) {
         self.crossoverFrequency = crossoverFrequency
         self.wooferOrder = wooferOrder
@@ -141,6 +151,9 @@ public struct CrossoverNetwork: Codable, Sendable {
         self.enableIndependentFrequencies = enableIndependentFrequencies
         self.wooferCrossoverFrequency = wooferCrossoverFrequency
         self.tweeterCrossoverFrequency = tweeterCrossoverFrequency
+        self.enableCDHornCompensation = enableCDHornCompensation
+        self.cdHornCornerFrequency = cdHornCornerFrequency
+        self.cdHornBoostdB = cdHornBoostdB
     }
 
     enum CodingKeys: String, CodingKey {
@@ -153,6 +166,9 @@ public struct CrossoverNetwork: Codable, Sendable {
         case enableZobelNetwork
         case enableLPadAttenuator
         case userTargetAttenuationdB
+        case enableCDHornCompensation
+        case cdHornCornerFrequency
+        case cdHornBoostdB
         case enableAllpassFilter
         case acousticCenterOffsetMM
         case invertTweeterPolarity
@@ -176,6 +192,9 @@ public struct CrossoverNetwork: Codable, Sendable {
         self.enableZobelNetwork = try container.decodeIfPresent(Bool.self, forKey: .enableZobelNetwork) ?? true
         self.enableLPadAttenuator = try container.decodeIfPresent(Bool.self, forKey: .enableLPadAttenuator) ?? true
         self.userTargetAttenuationdB = try container.decodeIfPresent(Double.self, forKey: .userTargetAttenuationdB) ?? 5.0
+        self.enableCDHornCompensation = try container.decodeIfPresent(Bool.self, forKey: .enableCDHornCompensation) ?? false
+        self.cdHornCornerFrequency = try container.decodeIfPresent(Double.self, forKey: .cdHornCornerFrequency) ?? 3500.0
+        self.cdHornBoostdB = try container.decodeIfPresent(Double.self, forKey: .cdHornBoostdB) ?? 6.0
         self.enableAllpassFilter = try container.decodeIfPresent(Bool.self, forKey: .enableAllpassFilter) ?? false
         self.acousticCenterOffsetMM = try container.decodeIfPresent(Double.self, forKey: .acousticCenterOffsetMM) ?? 35.0
         self.invertTweeterPolarity = try container.decodeIfPresent(Bool.self, forKey: .invertTweeterPolarity) ?? false
@@ -250,14 +269,42 @@ public struct CrossoverNetwork: Codable, Sendable {
             comp.C_zobel_uF = czFarads * 1e6
         }
 
-        // 4. L-Pad Attenuator for Tweeter
-        if enableLPadAttenuator && userTargetAttenuationdB > 0 {
-            let k = pow(10.0, -userTargetAttenuationdB / 20.0)
+        // 4. L-Pad Attenuator & Constant Directivity (CD) Horn Mass Roll-Off Compensation for Tweeter
+        let effectiveAttenDB: Double = {
+            if enableCDHornCompensation {
+                let baseAtten = enableLPadAttenuator ? userTargetAttenuationdB : 0.0
+                return max(baseAtten, max(cdHornBoostdB, 0.5))
+            }
+            return enableLPadAttenuator ? userTargetAttenuationdB : 0.0
+        }()
+
+        if effectiveAttenDB > 0 {
+            let k = pow(10.0, -effectiveAttenDB / 20.0)
             if k < 1.0 {
                 let r1 = Zt * (1.0 - k)
                 let r2 = Zt * (k / (1.0 - k))
                 comp.R1_lpad_ohms = r1
                 comp.R2_lpad_ohms = r2
+
+                if enableCDHornCompensation && cdHornBoostdB > 0 && cdHornCornerFrequency > 0 {
+                    let boost = min(max(cdHornBoostdB, 0.5), effectiveAttenDB)
+                    let fEq = max(cdHornCornerFrequency, 500.0)
+                    let wEq = 2.0 * .pi * fEq
+                    let kInf = pow(10.0, -(effectiveAttenDB - boost) / 20.0)
+                    let rp = (r2 * Zt) / (r2 + Zt)
+
+                    if kInf >= 0.99 || abs(boost - effectiveAttenDB) < 0.05 {
+                        // Full R1 bypass: pure bypass capacitor C_eq across R1
+                        comp.C_cd_uF = (1.0 / (wEq * max(r1, 0.1))) * 1e6
+                        comp.R_cd_ohms = nil
+                    } else {
+                        // Damped HF shelf: series R_eq + C_eq across R1
+                        let rsInf = rp * ((1.0 / kInf) - 1.0)
+                        let rEq = (r1 * rsInf) / max(r1 - rsInf, 0.05)
+                        comp.R_cd_ohms = rEq
+                        comp.C_cd_uF = (1.0 / (wEq * max(r1 + rEq, 0.1))) * 1e6
+                    }
+                }
             }
         }
 
@@ -289,6 +336,8 @@ public struct CrossoverNetwork: Codable, Sendable {
             comp.C_zobel_uF = comp.C_zobel_uF.map { Self.snapE24($0) }
             comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { Self.snapE24($0) }
             comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { Self.snapE24($0) }
+            comp.C_cd_uF = comp.C_cd_uF.map { Self.snapE24($0) }
+            comp.R_cd_ohms = comp.R_cd_ohms.map { Self.snapE24($0) }
             comp.L_AP_mH = comp.L_AP_mH.map { Self.snapE24($0) }
             comp.C_AP_uF = comp.C_AP_uF.map { Self.snapE24($0) }
         } else if snapToStandardValues {
@@ -306,6 +355,8 @@ public struct CrossoverNetwork: Codable, Sendable {
             comp.C_zobel_uF = comp.C_zobel_uF.map { Self.snapE12($0) }
             comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { Self.snapE12($0) }
             comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { Self.snapE12($0) }
+            comp.C_cd_uF = comp.C_cd_uF.map { Self.snapE12($0) }
+            comp.R_cd_ohms = comp.R_cd_ohms.map { Self.snapE12($0) }
             comp.L_AP_mH = comp.L_AP_mH.map { Self.snapE12($0) }
             comp.C_AP_uF = comp.C_AP_uF.map { Self.snapE12($0) }
         }
@@ -417,5 +468,25 @@ public struct CrossoverNetwork: Codable, Sendable {
             return pow(10.0, -userTargetAttenuationdB / 20.0)
         }
         return 1.0
+    }
+
+    /// Frequency-dependent complex voltage transfer function H_LPad+CD(f) of the Tweeter L-Pad and optional CD Horn Mass Roll-Off Compensation network.
+    public func tweeterLPadAndCDHornTransferFunction(frequency f: Double, tweeterRe: Double = 8.0) -> ComplexNumber {
+        guard enableCDHornCompensation else {
+            return ComplexNumber(real: lpadVoltageGain, imag: 0.0)
+        }
+        let zT = max(tweeterRe, 4.0)
+        let comp = computeComponentValues(wooferRe: 8.0, tweeterRe: zT, wooferLe: 0.8)
+        guard let r1 = comp.R1_lpad_ohms, let r2 = comp.R2_lpad_ohms, let cCD = comp.C_cd_uF, cCD > 0 else {
+            return ComplexNumber(real: lpadVoltageGain, imag: 0.0)
+        }
+        let w = 2.0 * .pi * max(f, 1.0)
+        let rCD = comp.R_cd_ohms ?? 0.0
+        let zBypass = ComplexNumber(real: rCD, imag: -1.0 / (w * (cCD / 1e6)))
+        let zR1 = ComplexNumber(real: r1, imag: 0.0)
+        let zSeries = (zR1 * zBypass) / (zR1 + zBypass)
+        let rParallel = (r2 * zT) / (r2 + zT)
+        let zShuntLoad = ComplexNumber(real: rParallel, imag: 0.0)
+        return zShuntLoad / (zSeries + zShuntLoad)
     }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { parseDatasheetFromURL, parseDatasheetFromFile } from './utils/datasheetParser';
 import { altec604WooferTS, altec604Tweeter, altec604RecommendedCrossover, altec604WooferCurve, altec604TweeterCurve } from './utils/altec604Data';
 import { 
@@ -294,6 +294,9 @@ export default function App() {
   const [enableZobel, setEnableZobel] = useState(true);
   const [enableLPad, setEnableLPad] = useState(true);
   const [lpadAttenDB, setLpadAttenDB] = useState(5.0);
+  const [enableCDHornComp, setEnableCDHornComp] = useState(false);
+  const [cdHornCornerHz, setCdHornCornerHz] = useState(3500);
+  const [cdHornBoostDB, setCdHornBoostDB] = useState(6.0);
   const [acousticDelayMM, setAcousticDelayMM] = useState(35.0);
   const [invertTweeterPolarity, setInvertTweeterPolarity] = useState(false);
   const [snapToE12, setSnapToE12] = useState(false);
@@ -587,6 +590,66 @@ export default function App() {
     return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0.0 };
   }
 
+  // --- Tweeter L-Pad & CD Horn Mass Roll-Off Compensation Helper ---
+  const lpadAndCDHornParams = useMemo(() => {
+    const Zt = Math.max(tweeter.re, 4.0);
+    const effectiveAttenDB = enableCDHornComp
+      ? Math.max(enableLPad ? lpadAttenDB : 0.0, Math.max(cdHornBoostDB, 0.5))
+      : (enableLPad ? lpadAttenDB : 0.0);
+
+    let R1_lpad = null, R2_lpad = null, C_cd = null, R_cd = null;
+    if (effectiveAttenDB > 0) {
+      const k = Math.pow(10, -effectiveAttenDB / 20.0);
+      if (k < 1.0) {
+        R1_lpad = Zt * (1.0 - k);
+        R2_lpad = Zt * (k / (1.0 - k));
+        if (enableCDHornComp && cdHornBoostDB > 0 && cdHornCornerHz > 0) {
+          const boost = Math.min(Math.max(cdHornBoostDB, 0.5), effectiveAttenDB);
+          const fEq = Math.max(cdHornCornerHz, 500.0);
+          const wEq = 2.0 * Math.PI * fEq;
+          const kInf = Math.pow(10, -(effectiveAttenDB - boost) / 20.0);
+          const rp = (R2_lpad * Zt) / (R2_lpad + Zt);
+          if (kInf >= 0.99 || Math.abs(boost - effectiveAttenDB) < 0.05) {
+            C_cd = (1.0 / (wEq * Math.max(R1_lpad, 0.1))) * 1e6;
+            R_cd = null;
+          } else {
+            const rsInf = rp * ((1.0 / kInf) - 1.0);
+            const rEq = (R1_lpad * rsInf) / Math.max(R1_lpad - rsInf, 0.05);
+            R_cd = rEq;
+            C_cd = (1.0 / (wEq * Math.max(R1_lpad + rEq, 0.1))) * 1e6;
+          }
+        }
+      }
+    }
+    if (snapToE24) {
+      if (R1_lpad) R1_lpad = snapE24(R1_lpad);
+      if (R2_lpad) R2_lpad = snapE24(R2_lpad);
+      if (C_cd) C_cd = snapE24(C_cd);
+      if (R_cd) R_cd = snapE24(R_cd);
+    } else if (snapToE12) {
+      if (R1_lpad) R1_lpad = snapE12(R1_lpad);
+      if (R2_lpad) R2_lpad = snapE12(R2_lpad);
+      if (C_cd) C_cd = snapE12(C_cd);
+      if (R_cd) R_cd = snapE12(R_cd);
+    }
+    return { Zt, effectiveAttenDB, R1_lpad, R2_lpad, C_cd, R_cd };
+  }, [tweeter.re, enableLPad, lpadAttenDB, enableCDHornComp, cdHornCornerHz, cdHornBoostDB, snapToE12, snapToE24]);
+
+  const evaluateLPadAndCDHornTransfer = useCallback((f) => {
+    const { Zt, effectiveAttenDB, R1_lpad, R2_lpad, C_cd, R_cd } = lpadAndCDHornParams;
+    const baseGain = effectiveAttenDB > 0 ? Math.pow(10, -effectiveAttenDB / 20.0) : 1.0;
+    if (!enableCDHornComp || !R1_lpad || !R2_lpad || !C_cd || C_cd <= 0) {
+      return new Complex(baseGain, 0);
+    }
+    const w = 2.0 * Math.PI * Math.max(f, 1.0);
+    const zBypass = new Complex(R_cd || 0.0, -1.0 / (w * (C_cd / 1e6)));
+    const zR1 = new Complex(R1_lpad, 0.0);
+    const zSeries = (zR1.mul(zBypass)).div(zR1.add(zBypass));
+    const rParallel = (R2_lpad * Zt) / (R2_lpad + Zt);
+    const zShuntLoad = new Complex(rParallel, 0.0);
+    return zShuntLoad.div(zSeries.add(zShuntLoad));
+  }, [enableCDHornComp, lpadAndCDHornParams]);
+
   // --- Nelder-Mead All-Pass Filter Phase Alignment Optimizer ---
   const apfOptimization = useMemo(() => {
     const actualWooferFx = enableIndependentFx ? wooferFx : fx;
@@ -611,7 +674,6 @@ export default function App() {
     const speedOfSound = 343.0;
     const delaySec = (acousticDelayMM / 1000.0) / speedOfSound;
     const polarityMult = invertTweeterPolarity ? -1.0 : 1.0;
-    const gLpad = (enableLPad && lpadAttenDB > 0) ? Math.pow(10, -lpadAttenDB / 20.0) : 1.0;
 
     const fc = cabinetCalculations.fc;
     const qtc = cabinetCalculations.actualQtc;
@@ -645,8 +707,9 @@ export default function App() {
         const h2 = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
         hHP = h2.mul(h2);
       }
+      const hLpadCD = evaluateLPadAndCDHornTransfer(f);
       const hDelay = Complex.polar(polarityMult, -w * delaySec);
-      pTweeterFixed.push(pTweeterRawComp.mul(hHP).mul(gLpad).mul(hDelay));
+      pTweeterFixed.push(pTweeterRawComp.mul(hHP).mul(hLpadCD).mul(hDelay));
 
       const wfPt = interpolateCurvePoint(f, preparedWooferCurve);
       let pWooferRawSPL, pWooferRawPhaseRad = 0.0;
@@ -776,7 +839,7 @@ export default function App() {
       alignmentStatus,
       warnings
     };
-  }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel, preparedWooferCurve, preparedTweeterCurve]);
+  }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, evaluateLPadAndCDHornTransfer, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel, preparedWooferCurve, preparedTweeterCurve]);
 
   // --- Passive Crossover Component Calculations ---
   const crossoverComponents = useMemo(() => {
@@ -792,6 +855,7 @@ export default function App() {
       C_HP1: null, L_HP1: null, C_HP2: null, L_HP2: null,
       R_zobel: null, C_zobel: null,
       R1_lpad: null, R2_lpad: null,
+      C_cd: null, R_cd: null,
       L_AP: null, C_AP: null
     };
 
@@ -835,14 +899,11 @@ export default function App() {
       comp.C_zobel = czF * 1e6;
     }
 
-    // L-Pad
-    if (enableLPad && lpadAttenDB > 0) {
-      const k = Math.pow(10, -lpadAttenDB / 20.0);
-      if (k < 1.0) {
-        comp.R1_lpad = Zt * (1.0 - k);
-        comp.R2_lpad = Zt * (k / (1.0 - k));
-      }
-    }
+    // L-Pad & CD Horn Mass Roll-Off Compensation
+    comp.R1_lpad = lpadAndCDHornParams.R1_lpad;
+    comp.R2_lpad = lpadAndCDHornParams.R2_lpad;
+    comp.C_cd = lpadAndCDHornParams.C_cd;
+    comp.R_cd = lpadAndCDHornParams.R_cd;
 
     // All-Pass Delay Compensation Network (using Nelder-Mead optimized F0 & Q)
     if (enableAllpass && acousticDelayMM > 0) {
@@ -865,7 +926,7 @@ export default function App() {
     }
 
     return comp;
-  }, [fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, snapToE12, snapToE24, ts, tweeter, enableAllpass, acousticDelayMM, apfOptimization]);
+  }, [fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, lpadAndCDHornParams, snapToE12, snapToE24, ts, tweeter, enableAllpass, acousticDelayMM, apfOptimization]);
 
   // --- Complete Simulation Engine Calculations ---
   const simulationData = useMemo(() => {
@@ -881,7 +942,6 @@ export default function App() {
     const wc = 2.0 * Math.PI * fc;
     const speedOfSound = 343.0; // m/s
     const delaySec = (acousticDelayMM / 1000.0) / speedOfSound;
-    const lpadGain = (enableLPad && lpadAttenDB > 0) ? Math.pow(10, -lpadAttenDB / 20.0) : 1.0;
     const polarityMult = invertTweeterPolarity ? -1.0 : 1.0;
     const actualWooferFx = enableIndependentFx ? wooferFx : fx;
     const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
@@ -985,9 +1045,10 @@ export default function App() {
         hHP = h2.mul(h2);
       }
 
+      const hLpadCD = evaluateLPadAndCDHornTransfer(f);
       const hDelay = Complex.polar(polarityMult, -w * delaySec);
-      const pTweeterFinal = pTweeterRawComp.mul(hHP).mul(lpadGain).mul(hDelay);
-      const pTweeterDelayComp = pTweeterRawComp.mul(hHP).mul(lpadGain).scale(polarityMult);
+      const pTweeterFinal = pTweeterRawComp.mul(hHP).mul(hLpadCD).mul(hDelay);
+      const pTweeterDelayComp = pTweeterRawComp.mul(hHP).mul(hLpadCD).scale(polarityMult);
 
       // 3. Acoustic Summation
       const pTotal = pWooferFinal.add(pTweeterFinal);
@@ -1074,15 +1135,15 @@ export default function App() {
       const zTweeterRaw = new Complex(tweeter.re + rMotionalTw, w * (tweeter.le / 1000.0) + xMotionalTw);
       let zTweeterVoiceCoil = zTweeterRaw;
 
-      if (enableLPad && lpadAttenDB > 0) {
-        const k = Math.pow(10, -lpadAttenDB / 20.0);
-        if (k < 1.0) {
-          const r1 = 8.0 * (1.0 - k);
-          const r2 = 8.0 * (k / (1.0 - k));
-          const zR2 = new Complex(r2, 0);
-          const zParallel = (zTweeterVoiceCoil.mul(zR2)).div(zTweeterVoiceCoil.add(zR2));
-          zTweeterVoiceCoil = new Complex(r1, 0).add(zParallel);
+      if (crossoverComponents.R1_lpad && crossoverComponents.R2_lpad) {
+        const zR2 = new Complex(crossoverComponents.R2_lpad, 0);
+        const zParallel = (zTweeterVoiceCoil.mul(zR2)).div(zTweeterVoiceCoil.add(zR2));
+        let zSeries = new Complex(crossoverComponents.R1_lpad, 0);
+        if (enableCDHornComp && crossoverComponents.C_cd && crossoverComponents.C_cd > 0) {
+          const zBypass = new Complex(crossoverComponents.R_cd || 0.0, -1.0 / (w * (crossoverComponents.C_cd / 1e6)));
+          zSeries = (zSeries.mul(zBypass)).div(zSeries.add(zBypass));
         }
+        zTweeterVoiceCoil = zSeries.add(zParallel);
       }
 
       let zTweeterInput = zTweeterVoiceCoil;
@@ -1167,7 +1228,7 @@ export default function App() {
     }
 
     return points;
-  }, [ts, tweeter, cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, preparedWooferCurve, preparedTweeterCurve]);
+  }, [ts, tweeter, cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableCDHornComp, evaluateLPadAndCDHornTransfer, crossoverComponents, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, preparedWooferCurve, preparedTweeterCurve]);
 
   // --- Render Bode Amplitude Plot ---
   useEffect(() => {
@@ -1667,7 +1728,6 @@ export default function App() {
 
     const delaySec = (acousticDelayMM / 1000.0) / 343.0;
     const polaritySign = invertTweeterPolarity ? -1.0 : 1.0;
-    const lpadGain = (enableLPad && lpadAttenDB > 0) ? Math.pow(10, -lpadAttenDB / 20.0) : 1.0;
     const actualWooferFx = enableIndependentFx ? wooferFx : fx;
     const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
 
@@ -1773,8 +1833,9 @@ export default function App() {
       const sinD = Math.sin(phaseDelay) * polaritySign;
 
       const hHPC = new Complex(hHPR, hHPI);
+      const hLpadCD = evaluateLPadAndCDHornTransfer(f);
       const hDelayC = new Complex(cosD, sinD);
-      const pTFinal = pTweeterRawComp.mul(hHPC).mul(hDelayC).mul(lpadGain);
+      const pTFinal = pTweeterRawComp.mul(hHPC).mul(hLpadCD).mul(hDelayC);
       const pTR = pTFinal.re;
       const pTI = pTFinal.im;
 
@@ -1877,7 +1938,7 @@ export default function App() {
     }
 
     return points;
-  }, [cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, enableLPad, lpadAttenDB, preparedWooferCurve, preparedTweeterCurve, ts.fs, ts.spl, tweeter.spl]);
+  }, [cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, evaluateLPadAndCDHornTransfer, preparedWooferCurve, preparedTweeterCurve, ts.fs, ts.spl, tweeter.spl]);
 
   // --- Render Step Response Plot ---
   useEffect(() => {
@@ -2057,6 +2118,9 @@ export default function App() {
     setFx(altec604RecommendedCrossover);
     setWooferFx(altec604RecommendedCrossover);
     setTweeterFx(altec604RecommendedCrossover);
+    setLpadAttenDB(7.0);
+    setCdHornCornerHz(3500);
+    setCdHornBoostDB(6.0);
     setWooferCurve(altec604WooferCurve);
     setTweeterCurve(altec604TweeterCurve);
     setWooferRefSPL(altec604WooferTS.spl);
@@ -2342,6 +2406,9 @@ export default function App() {
         enableZobelNetwork: enableZobel,
         enableLPadAttenuator: enableLPad,
         userTargetAttenuationdB: lpadAttenDB,
+        enableCDHornCompensation: enableCDHornComp,
+        cdHornCornerFrequency: cdHornCornerHz,
+        cdHornBoostdB: cdHornBoostDB,
         acousticCenterOffsetMM: acousticDelayMM,
         invertTweeterPolarity: invertTweeterPolarity,
         snapToStandardValues: snapToE12,
@@ -2474,6 +2541,9 @@ export default function App() {
         if (doc.crossover.enableZobelNetwork !== undefined) setEnableZobel(doc.crossover.enableZobelNetwork);
         if (doc.crossover.enableLPadAttenuator !== undefined) setEnableLPad(doc.crossover.enableLPadAttenuator);
         if (doc.crossover.userTargetAttenuationdB !== undefined) setLpadAttenDB(doc.crossover.userTargetAttenuationdB);
+        if (doc.crossover.enableCDHornCompensation !== undefined) setEnableCDHornComp(doc.crossover.enableCDHornCompensation);
+        if (doc.crossover.cdHornCornerFrequency !== undefined) setCdHornCornerHz(doc.crossover.cdHornCornerFrequency);
+        if (doc.crossover.cdHornBoostdB !== undefined) setCdHornBoostDB(doc.crossover.cdHornBoostdB);
         if (doc.crossover.acousticCenterOffsetMM !== undefined) setAcousticDelayMM(doc.crossover.acousticCenterOffsetMM);
         if (doc.crossover.invertTweeterPolarity !== undefined) setInvertTweeterPolarity(doc.crossover.invertTweeterPolarity);
         if (doc.crossover.snapToE24Values !== undefined) {
@@ -3892,6 +3962,78 @@ export default function App() {
                     </select>
                   </div>
                 </div>
+                <div className="pt-2 border-t border-slate-800 space-y-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-6">
+                    <label className="flex items-center space-x-2 text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enableZobel}
+                        onChange={(e) => setEnableZobel(e.target.checked)}
+                        className="rounded bg-slate-800 border-slate-700 text-blue-600"
+                      />
+                      <span className="font-medium">Enable Zobel Network (Inductance Compensation)</span>
+                    </label>
+                    <label className="flex items-center space-x-2 text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enableLPad}
+                        onChange={(e) => setEnableLPad(e.target.checked)}
+                        className="rounded bg-slate-800 border-slate-700 text-blue-600"
+                      />
+                      <span className="font-medium">Enable Tweeter L-Pad Attenuator</span>
+                    </label>
+                  </div>
+
+                  {enableLPad && (
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="font-semibold text-slate-400">Tweeter L-Pad Attenuation: {lpadAttenDB.toFixed(1)} dB</label>
+                      </div>
+                      <input type="range" min="0" max="15" step="0.5" value={lpadAttenDB} onChange={(e) => setLpadAttenDB(+e.target.value)} className="w-full mt-1.5" />
+                    </div>
+                  )}
+
+                  <div className="pt-2 border-t border-slate-800/60 space-y-2">
+                    <label className="flex items-center space-x-2 text-slate-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enableCDHornComp}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setEnableCDHornComp(checked);
+                          if (checked && !enableLPad) setEnableLPad(true);
+                        }}
+                        className="rounded bg-slate-800 border-slate-700 text-purple-600"
+                      />
+                      <span className="font-semibold text-purple-300">Enable CD Horn Mass Roll-Off Compensation (+6 dB/oct HF Boost across R1)</span>
+                    </label>
+                    <p className="text-[11px] text-slate-400 pl-5">
+                      Compensates for Constant Directivity (CD) horn compression driver natural 6 dB/oct high-frequency mass roll-off (e.g. Altec 604-8K Mantaray horn above ~3.5 kHz) by placing a bypass capacitor C_eq (and shelf damping resistor R_eq) in parallel with L-Pad series resistor R1.
+                    </p>
+
+                    {enableCDHornComp && (
+                      <div className="p-3 bg-purple-950/25 border border-purple-700/40 rounded-lg space-y-3 mt-1">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <label className="font-semibold text-purple-300">CD Horn Mass Break Corner Frequency (f_eq): {cdHornCornerHz} Hz</label>
+                          </div>
+                          <input type="range" min="2000" max="8000" step="100" value={cdHornCornerHz} onChange={(e) => setCdHornCornerHz(+e.target.value)} className="w-full mt-1.5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <label className="font-semibold text-purple-300">Target High-Frequency Shelf Boost (ΔG_eq): +{cdHornBoostDB.toFixed(1)} dB</label>
+                          </div>
+                          <input type="range" min="1" max="12" step="0.5" value={cdHornBoostDB} onChange={(e) => setCdHornBoostDB(+e.target.value)} className="w-full mt-1.5" />
+                        </div>
+                        <div className="text-[11px] text-purple-200/90 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-purple-800/40">
+                          <span>Bypass Cap C_eq (|| R1): <strong>{crossoverComponents.C_cd ? `${crossoverComponents.C_cd.toFixed(2)} µF` : 'N/A'}</strong></span>
+                          <span>Shelf Damping R_eq: <strong>{crossoverComponents.R_cd ? `${crossoverComponents.R_cd.toFixed(2)} Ω (Series w/ C_eq)` : '0 Ω (Full R1 Bypass)'}</strong></span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div>
                   <label className="text-xs font-semibold text-slate-400">Coaxial Tweeter Depth Offset: {acousticDelayMM} mm</label>
                   <input type="range" min="0" max="100" value={acousticDelayMM} onChange={(e) => setAcousticDelayMM(+e.target.value)} className="w-full mt-2" />
@@ -4022,6 +4164,50 @@ export default function App() {
                   </div>
                 </div>
               )}
+              {/* Electrical Crossover Circuit Schematic Overview */}
+              <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 space-y-4">
+                <h3 className="text-sm font-bold text-white">Electrical Crossover Circuit Schematic</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  <div className="p-4 rounded-lg bg-blue-950/20 border border-blue-800/40 space-y-2">
+                    <div className="font-bold text-blue-400">Woofer Branch (Low-Pass)</div>
+                    <div className="flex justify-between text-slate-300"><span>Topology:</span><span className="font-semibold">{wooferOrder}</span></div>
+                    {crossoverComponents.L1 && <div className="flex justify-between text-slate-300"><span>Series Inductor L1:</span><span className="font-mono font-bold text-white">{crossoverComponents.L1.toFixed(2)} mH</span></div>}
+                    {crossoverComponents.C1 && <div className="flex justify-between text-slate-300"><span>Shunt Capacitor C1:</span><span className="font-mono font-bold text-white">{crossoverComponents.C1.toFixed(2)} µF</span></div>}
+                    {crossoverComponents.L2 && <div className="flex justify-between text-slate-300"><span>Series Inductor L2:</span><span className="font-mono font-bold text-white">{crossoverComponents.L2.toFixed(2)} mH</span></div>}
+                    {crossoverComponents.C2 && <div className="flex justify-between text-slate-300"><span>Shunt Capacitor C2:</span><span className="font-mono font-bold text-white">{crossoverComponents.C2.toFixed(2)} µF</span></div>}
+                    {enableAllpass && crossoverComponents.L_AP && <div className="flex justify-between text-teal-300"><span>All-Pass Inductor L_AP:</span><span className="font-mono font-bold">{crossoverComponents.L_AP.toFixed(2)} mH</span></div>}
+                    {enableAllpass && crossoverComponents.C_AP && <div className="flex justify-between text-teal-300"><span>All-Pass Capacitor C_AP:</span><span className="font-mono font-bold">{crossoverComponents.C_AP.toFixed(2)} µF</span></div>}
+                    {enableZobel && crossoverComponents.R_zobel && crossoverComponents.C_zobel && (
+                      <div className="flex justify-between text-amber-300"><span>Zobel Network:</span><span className="font-mono font-bold">Rz = {crossoverComponents.R_zobel.toFixed(2)} Ω, Cz = {crossoverComponents.C_zobel.toFixed(2)} µF</span></div>
+                    )}
+                    <div className="pt-1 border-t border-blue-800/30 font-semibold text-slate-200">Woofer Voice Coil (Re = {ts.re.toFixed(1)} Ω)</div>
+                  </div>
+
+                  <div className="p-4 rounded-lg bg-red-950/20 border border-red-800/40 space-y-2">
+                    <div className="font-bold text-red-400">Tweeter Branch (High-Pass)</div>
+                    <div className="flex justify-between text-slate-300"><span>Topology:</span><span className="font-semibold">{tweeterOrder}</span></div>
+                    {crossoverComponents.C_HP1 && <div className="flex justify-between text-slate-300"><span>Series Capacitor C_HP1:</span><span className="font-mono font-bold text-white">{crossoverComponents.C_HP1.toFixed(2)} µF</span></div>}
+                    {crossoverComponents.L_HP1 && <div className="flex justify-between text-slate-300"><span>Shunt Inductor L_HP1:</span><span className="font-mono font-bold text-white">{crossoverComponents.L_HP1.toFixed(2)} mH</span></div>}
+                    {crossoverComponents.C_HP2 && <div className="flex justify-between text-slate-300"><span>Series Capacitor C_HP2:</span><span className="font-mono font-bold text-white">{crossoverComponents.C_HP2.toFixed(2)} µF</span></div>}
+                    {crossoverComponents.L_HP2 && <div className="flex justify-between text-slate-300"><span>Shunt Inductor L_HP2:</span><span className="font-mono font-bold text-white">{crossoverComponents.L_HP2.toFixed(2)} mH</span></div>}
+                    {(enableLPad || enableCDHornComp) && crossoverComponents.R1_lpad && crossoverComponents.R2_lpad && (
+                      <div className="flex justify-between text-purple-300"><span>L-Pad Attenuator:</span><span className="font-mono font-bold">R1 = {crossoverComponents.R1_lpad.toFixed(2)} Ω, R2 = {crossoverComponents.R2_lpad.toFixed(2)} Ω</span></div>
+                    )}
+                    {enableCDHornComp && crossoverComponents.C_cd && (
+                      <div className="flex justify-between text-purple-300">
+                        <span>CD Horn Mass Roll-Off EQ (|| R1):</span>
+                        <span className="font-mono font-bold">
+                          C_eq = {crossoverComponents.C_cd.toFixed(2)} µF{crossoverComponents.R_cd ? `, R_eq = ${crossoverComponents.R_cd.toFixed(2)} Ω` : ' (Full R1 Bypass)'} @ {cdHornCornerHz} Hz
+                        </span>
+                      </div>
+                    )}
+                    <div className="pt-1 border-t border-red-800/30 font-semibold text-slate-200">
+                      {invertTweeterPolarity ? `Tweeter Voice Coil (Inverted -180°: Re = ${tweeter.re.toFixed(1)} Ω)` : `Tweeter Voice Coil (Re = ${tweeter.re.toFixed(1)} Ω)`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 space-y-4">
                 <table className="w-full text-xs text-left text-slate-300">
                   <thead className="text-slate-400 border-b border-slate-800 uppercase text-[10px]">
@@ -4029,17 +4215,40 @@ export default function App() {
                       <th className="py-2">Designator</th>
                       <th className="py-2">Component</th>
                       <th className="py-2">Calculated Value</th>
+                      <th className="py-2">Specification / Circuit Placement</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
-                    {crossoverComponents.L1 && <tr><td className="py-2.5 font-bold text-blue-400">L1</td><td>Woofer Series Inductor</td><td>{crossoverComponents.L1.toFixed(2)} mH</td></tr>}
-                    {crossoverComponents.C1 && <tr><td className="py-2.5 font-bold text-blue-400">C1</td><td>Woofer Parallel Capacitor</td><td>{crossoverComponents.C1.toFixed(2)} µF</td></tr>}
-                    {crossoverComponents.C_HP1 && <tr><td className="py-2.5 font-bold text-red-400">C_HP1</td><td>Tweeter Series Capacitor</td><td>{crossoverComponents.C_HP1.toFixed(2)} µF</td></tr>}
-                    {crossoverComponents.L_HP1 && <tr><td className="py-2.5 font-bold text-red-400">L_HP1</td><td>Tweeter Parallel Inductor</td><td>{crossoverComponents.L_HP1.toFixed(2)} mH</td></tr>}
-                    {enableAllpass && crossoverComponents.L_AP && <tr><td className="py-2.5 font-bold text-teal-400">L_AP</td><td>Woofer All-Pass Inductor</td><td>{crossoverComponents.L_AP.toFixed(2)} mH</td></tr>}
-                    {enableAllpass && crossoverComponents.C_AP && <tr><td className="py-2.5 font-bold text-teal-400">C_AP</td><td>Woofer All-Pass Capacitor</td><td>{crossoverComponents.C_AP.toFixed(2)} µF</td></tr>}
-                    {crossoverComponents.R_zobel && <tr><td className="py-2.5 font-bold text-amber-400">R_zobel</td><td>Zobel Resistor</td><td>{crossoverComponents.R_zobel.toFixed(2)} Ω</td></tr>}
-                    {crossoverComponents.C_zobel && <tr><td className="py-2.5 font-bold text-amber-400">C_zobel</td><td>Zobel Capacitor</td><td>{crossoverComponents.C_zobel.toFixed(2)} µF</td></tr>}
+                    {crossoverComponents.L1 && <tr><td className="py-2.5 font-bold text-blue-400">L1</td><td>Woofer Series Inductor</td><td>{crossoverComponents.L1.toFixed(2)} mH</td><td>1.2mm OFC Air-Core Inductor, Low DCR</td></tr>}
+                    {crossoverComponents.C1 && <tr><td className="py-2.5 font-bold text-blue-400">C1</td><td>Woofer Parallel Capacitor</td><td>{crossoverComponents.C1.toFixed(2)} µF</td><td>400V DC Metalized Polypropylene Film Cap</td></tr>}
+                    {crossoverComponents.L2 && <tr><td className="py-2.5 font-bold text-blue-400">L2</td><td>Woofer Series Inductor (Higher Order)</td><td>{crossoverComponents.L2.toFixed(2)} mH</td><td>1.0mm OFC Air-Core Inductor</td></tr>}
+                    {crossoverComponents.C2 && <tr><td className="py-2.5 font-bold text-blue-400">C2</td><td>Woofer Parallel Capacitor (4th Order)</td><td>{crossoverComponents.C2.toFixed(2)} µF</td><td>250V DC Polypropylene Film Cap</td></tr>}
+                    {crossoverComponents.C_HP1 && <tr><td className="py-2.5 font-bold text-red-400">C_HP1</td><td>Tweeter Series Capacitor</td><td>{crossoverComponents.C_HP1.toFixed(2)} µF</td><td>250V DC High-Precision Polypropylene Audio Cap</td></tr>}
+                    {crossoverComponents.L_HP1 && <tr><td className="py-2.5 font-bold text-red-400">L_HP1</td><td>Tweeter Parallel Inductor</td><td>{crossoverComponents.L_HP1.toFixed(2)} mH</td><td>0.8mm OFC Air-Core Inductor</td></tr>}
+                    {crossoverComponents.C_HP2 && <tr><td className="py-2.5 font-bold text-red-400">C_HP2</td><td>Tweeter Series Capacitor (Higher Order)</td><td>{crossoverComponents.C_HP2.toFixed(2)} µF</td><td>250V DC Polypropylene Film Cap</td></tr>}
+                    {crossoverComponents.L_HP2 && <tr><td className="py-2.5 font-bold text-red-400">L_HP2</td><td>Tweeter Parallel Inductor (4th Order)</td><td>{crossoverComponents.L_HP2.toFixed(2)} mH</td><td>0.8mm OFC Air-Core Inductor</td></tr>}
+                    {enableAllpass && crossoverComponents.L_AP && <tr><td className="py-2.5 font-bold text-teal-400">L_AP</td><td>Woofer All-Pass Inductor</td><td>{crossoverComponents.L_AP.toFixed(2)} mH</td><td>OFC Air-Core Delay Inductor</td></tr>}
+                    {enableAllpass && crossoverComponents.C_AP && <tr><td className="py-2.5 font-bold text-teal-400">C_AP</td><td>Woofer All-Pass Capacitor</td><td>{crossoverComponents.C_AP.toFixed(2)} µF</td><td>400V DC Polypropylene Delay Cap</td></tr>}
+                    {crossoverComponents.R_zobel && <tr><td className="py-2.5 font-bold text-amber-400">R_zobel</td><td>Zobel Resistor</td><td>{crossoverComponents.R_zobel.toFixed(2)} Ω</td><td>10W Non-Inductive Ceramic Resistor</td></tr>}
+                    {crossoverComponents.C_zobel && <tr><td className="py-2.5 font-bold text-amber-400">C_zobel</td><td>Zobel Capacitor</td><td>{crossoverComponents.C_zobel.toFixed(2)} µF</td><td>100V DC Film / Bipolar Cap</td></tr>}
+                    {crossoverComponents.R1_lpad && <tr><td className="py-2.5 font-bold text-purple-400">R1 (L-Pad)</td><td>Tweeter L-Pad Series Resistor</td><td>{crossoverComponents.R1_lpad.toFixed(2)} Ω</td><td>10W Non-Inductive Wirewound / Metal Oxide</td></tr>}
+                    {crossoverComponents.R2_lpad && <tr><td className="py-2.5 font-bold text-purple-400">R2 (L-Pad)</td><td>Tweeter L-Pad Shunt Resistor</td><td>{crossoverComponents.R2_lpad.toFixed(2)} Ω</td><td>10W Non-Inductive Wirewound / Metal Oxide</td></tr>}
+                    {enableCDHornComp && crossoverComponents.C_cd && (
+                      <tr>
+                        <td className="py-2.5 font-bold text-purple-400">C_eq (CD Horn)</td>
+                        <td>CD Horn Mass Roll-Off Bypass Capacitor</td>
+                        <td>{crossoverComponents.C_cd.toFixed(2)} µF</td>
+                        <td>250V DC Polypropylene Film Cap, Parallel across R1 (f_eq = {cdHornCornerHz} Hz)</td>
+                      </tr>
+                    )}
+                    {enableCDHornComp && crossoverComponents.R_cd && (
+                      <tr>
+                        <td className="py-2.5 font-bold text-purple-400">R_eq (CD Horn)</td>
+                        <td>CD Horn HF Shelf Damping Resistor</td>
+                        <td>{crossoverComponents.R_cd.toFixed(2)} Ω</td>
+                        <td>5W Non-Inductive Metal Oxide, Series with C_eq across R1 (+{cdHornBoostDB.toFixed(1)} dB Shelf)</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

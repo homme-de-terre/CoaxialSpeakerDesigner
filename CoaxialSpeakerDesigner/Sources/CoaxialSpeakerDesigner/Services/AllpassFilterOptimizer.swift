@@ -104,13 +104,12 @@ public enum AllpassFilterOptimizer {
         pTweeterFixed.reserveCapacity(sampleCount)
         pWooferBase.reserveCapacity(sampleCount)
 
-        let gLpad = crossover.lpadVoltageGain
-
         for f in freqs {
             let pTwRaw = interpolateAcousticPressure(freq: f, curve: tweeterAcousticP)
             let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
+            let hLpadCD = crossover.tweeterLPadAndCDHornTransferFunction(frequency: f, tweeterRe: driver.tweeter.re)
             let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
-            pTweeterFixed.append(pTwRaw * hHP * gLpad * hDelay)
+            pTweeterFixed.append(pTwRaw * hHP * hLpadCD * hDelay)
 
             let pWfRaw = interpolateAcousticPressure(freq: f, curve: wooferAcousticP)
             let hCab = cabinet.transferFunction(frequency: f, ts: driver.wooferTS)

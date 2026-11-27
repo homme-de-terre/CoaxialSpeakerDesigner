@@ -118,8 +118,12 @@ public struct SchematicView: View {
                             if let c1 = comp.C_HP1_uF { CircuitBranchBox(title: "Series Capacitor C_HP1", value: "\(String(format: "%.2f", c1)) µF") }
                             if let l1 = comp.L_HP1_mH { CircuitBranchBox(title: "Shunt Inductor L_HP1", value: "\(String(format: "%.2f", l1)) mH") }
                             if let c2 = comp.C_HP2_uF { CircuitBranchBox(title: "Series Capacitor C_HP2", value: "\(String(format: "%.2f", c2)) µF") }
-                            if viewModel.crossover.enableLPadAttenuator, let r1 = comp.R1_lpad_ohms, let r2 = comp.R2_lpad_ohms {
+                            if (viewModel.crossover.enableLPadAttenuator || viewModel.crossover.enableCDHornCompensation), let r1 = comp.R1_lpad_ohms, let r2 = comp.R2_lpad_ohms {
                                 CircuitBranchBox(title: "L-Pad Attenuator", value: "R1 (Series) = \(String(format: "%.2f", r1)) Ω, R2 (Shunt) = \(String(format: "%.2f", r2)) Ω", color: .purple)
+                            }
+                            if viewModel.crossover.enableCDHornCompensation, let ccd = comp.C_cd_uF {
+                                let rcdStr = comp.R_cd_ohms != nil ? ", R_eq (Series w/ C_eq) = \(String(format: "%.2f", comp.R_cd_ohms!)) Ω" : " (Full R1 Bypass)"
+                                CircuitBranchBox(title: "CD Horn Mass Roll-Off EQ (|| R1)", value: "C_eq = \(String(format: "%.2f", ccd)) µF\(rcdStr) @ \(Int(viewModel.crossover.cdHornCornerFrequency)) Hz", color: .purple)
                             }
                             Text(viewModel.crossover.invertTweeterPolarity ? "Tweeter Voice Coil (Inverted Polarity -180°: \(String(format: "%.1f", viewModel.driver.tweeter.re)) Ω)" : "Tweeter Voice Coil (Re = \(String(format: "%.1f", viewModel.driver.tweeter.re)) Ω)")
                                 .font(.caption)
@@ -195,10 +199,18 @@ public struct SchematicView: View {
             rows.append(BOMRow(designator: "C_zobel", type: "Bipolar Electrolytic / Film Cap", value: "\(String(format: "%.2f", cz)) µF", spec: "100V DC"))
         }
         if let r1 = comp.R1_lpad_ohms {
-            rows.append(BOMRow(designator: "R1 (L-Pad)", type: "Wirewound / Metal Oxide Resistor", value: "\(String(format: "%.2f", r1)) Ω", spec: "10W Non-Inductive"))
+            rows.append(BOMRow(designator: "R1 (L-Pad)", type: "Wirewound / Metal Oxide Resistor", value: "\(String(format: "%.2f", r1)) Ω", spec: "10W Non-Inductive Series Element"))
         }
         if let r2 = comp.R2_lpad_ohms {
-            rows.append(BOMRow(designator: "R2 (L-Pad)", type: "Wirewound / Metal Oxide Resistor", value: "\(String(format: "%.2f", r2)) Ω", spec: "10W Non-Inductive"))
+            rows.append(BOMRow(designator: "R2 (L-Pad)", type: "Wirewound / Metal Oxide Resistor", value: "\(String(format: "%.2f", r2)) Ω", spec: "10W Non-Inductive Shunt Element"))
+        }
+        if viewModel.crossover.enableCDHornCompensation {
+            if let ccd = comp.C_cd_uF {
+                rows.append(BOMRow(designator: "C_eq (CD Horn)", type: "Polypropylene HF Bypass Capacitor", value: "\(String(format: "%.2f", ccd)) µF", spec: "250V DC Film Cap, Parallel across R1 (f_eq = \(Int(viewModel.crossover.cdHornCornerFrequency)) Hz)"))
+            }
+            if let rcd = comp.R_cd_ohms {
+                rows.append(BOMRow(designator: "R_eq (CD Horn)", type: "Metal Oxide HF Shelf Damping Resistor", value: "\(String(format: "%.2f", rcd)) Ω", spec: "5W Non-Inductive, Series with C_eq across R1"))
+            }
         }
 
         if viewModel.cabinet.enclosureType == .vented {

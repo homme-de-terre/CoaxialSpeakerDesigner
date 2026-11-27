@@ -516,12 +516,27 @@ public class SchematicReportRenderer {
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterGroundY))
         }
 
-        // L-Pad Attenuator (Series R1 + Shunt R2)
-        if crossover.enableLPadAttenuator, let r1 = components.R1_lpad_ohms, let r2 = components.R2_lpad_ohms {
+        // L-Pad Attenuator (Series R1 + Shunt R2) & Optional CD Horn Mass Roll-Off Bypass (C_eq || R1)
+        if (crossover.enableLPadAttenuator || crossover.enableCDHornCompensation), let r1 = components.R1_lpad_ohms, let r2 = components.R2_lpad_ohms {
             drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 35, y: tweeterY))
             tCurX += 35
-            drawResistorSymbol(startX: tCurX, endX: tCurX + 55, y: tweeterY, name: "R1 (L-Pad)", valueStr: "\(String(format: "%.2f", r1)) Ω", color: .systemOrange)
-            tCurX += 55
+            let r1StartX = tCurX
+            let r1EndX = tCurX + 55
+            drawResistorSymbol(startX: r1StartX, endX: r1EndX, y: tweeterY, name: "R1 (L-Pad)", valueStr: "\(String(format: "%.2f", r1)) Ω", color: .systemOrange)
+
+            if crossover.enableCDHornCompensation, let ccd = components.C_cd_uF {
+                let bypassY = tweeterY - 38.0
+                drawJunctionDot(point: CGPoint(x: r1StartX - 6, y: tweeterY))
+                drawJunctionDot(point: CGPoint(x: r1EndX + 6, y: tweeterY))
+                drawWire(from: CGPoint(x: r1StartX - 6, y: tweeterY), to: CGPoint(x: r1StartX - 6, y: bypassY))
+                drawWire(from: CGPoint(x: r1EndX + 6, y: tweeterY), to: CGPoint(x: r1EndX + 6, y: bypassY))
+                let eqLabel = components.R_cd_ohms != nil
+                    ? "\(String(format: "%.2f", ccd)) µF + \(String(format: "%.1f", components.R_cd_ohms!)) Ω"
+                    : "\(String(format: "%.2f", ccd)) µF"
+                drawCapacitorSymbol(startX: r1StartX - 6, endX: r1EndX + 6, y: bypassY, name: "C_eq (CD Horn)", valueStr: eqLabel, color: .systemPurple)
+            }
+
+            tCurX = r1EndX
 
             drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 55, y: tweeterY))
             tCurX += 55
@@ -672,6 +687,10 @@ public class SchematicReportRenderer {
         if let cz = components.C_zobel_uF { rows.append(("C_zobel", "Woofer Zobel Impedance Compensation Capacitor", "\(String(format: "%.2f", cz)) µF", "100V DC Bipolar / Film Cap")) }
         if let r1 = components.R1_lpad_ohms { rows.append(("R1 (L-Pad)", "Tweeter L-Pad Attenuator (Series Element)", "\(String(format: "%.2f", r1)) Ω", "10W Power Metal Oxide / Wirewound Resistor")) }
         if let r2 = components.R2_lpad_ohms { rows.append(("R2 (L-Pad)", "Tweeter L-Pad Attenuator (Shunt Element)", "\(String(format: "%.2f", r2)) Ω", "10W Power Metal Oxide / Wirewound Resistor")) }
+        if crossover.enableCDHornCompensation {
+            if let ccd = components.C_cd_uF { rows.append(("C_eq (CD Horn)", "CD Horn Mass Roll-Off Bypass Capacitor (|| R1)", "\(String(format: "%.2f", ccd)) µF", "250V DC Polypropylene Film Cap (f_eq = \(Int(crossover.cdHornCornerFrequency)) Hz)")) }
+            if let rcd = components.R_cd_ohms { rows.append(("R_eq (CD Horn)", "CD Horn HF Shelf Damping Resistor (Series w/ C_eq)", "\(String(format: "%.2f", rcd)) Ω", "5W Non-Inductive Metal Oxide Resistor")) }
+        }
 
         if cabinet.enclosureType == .vented {
             let lv = cabinet.computedPortLengthCm(for: driver.wooferTS)

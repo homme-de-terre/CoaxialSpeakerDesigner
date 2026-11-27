@@ -65,9 +65,9 @@ public enum SimulationEngine {
             let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
             let hAP = crossover.allpassFilterTransferFunction(frequency: f)
             
-            // 4. Acoustic Delay & Polarity & L-Pad Gain Factor
+            // 4. Acoustic Delay & Polarity & L-Pad / CD Horn EQ Transfer Function
             let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
-            let gLpad = crossover.lpadVoltageGain
+            let hLpadCD = crossover.tweeterLPadAndCDHornTransferFunction(frequency: f, tweeterRe: driver.tweeter.re)
             let polarityMultiplier = crossover.invertTweeterPolarity ? -1.0 : 1.0
 
             // 5. Compute Woofer Final Acoustic Pressure
@@ -75,8 +75,8 @@ public enum SimulationEngine {
             let pWooferFinal = pWooferCab * hLP * hAP
 
             // 6. Compute Tweeter Final Acoustic Pressure (and pure delay-compensated pressure)
-            let pTweeterFinal = pTweeterRaw * hHP * gLpad * hDelay
-            let pTweeterDelayComp = pTweeterRaw * hHP * gLpad * polarityMultiplier
+            let pTweeterFinal = pTweeterRaw * hHP * hLpadCD * hDelay
+            let pTweeterDelayComp = pTweeterRaw * hHP * hLpadCD * polarityMultiplier
 
             // 7. Summed Complex Acoustic Pressure Vector
             let pTotal = pWooferFinal + pTweeterFinal
@@ -361,19 +361,20 @@ public enum SimulationEngine {
         let w = 2.0 * .pi * freq
         var zVC = zVoiceCoilRaw
 
-        // Apply L-Pad Attenuator if enabled
-        if crossover.enableLPadAttenuator && crossover.userTargetAttenuationdB > 0 {
-            let k = pow(10.0, -crossover.userTargetAttenuationdB / 20.0)
-            if k < 1.0 {
-                let r1 = tw.nominalImpedance * (1.0 - k)
-                let r2 = tw.nominalImpedance * (k / (1.0 - k))
-                let zR2 = ComplexNumber(real: r2, imag: 0.0)
-                let zParallel = (zVC * zR2) / (zVC + zR2)
-                zVC = ComplexNumber(real: r1, imag: 0.0) + zParallel
-            }
-        }
-
         let comp = crossover.computeComponentValues(wooferRe: 6.0, tweeterRe: tw.re, wooferLe: 0.8)
+
+        // Apply L-Pad Attenuator & optional CD Horn Mass Roll-Off Bypass across R1
+        if let r1 = comp.R1_lpad_ohms, let r2 = comp.R2_lpad_ohms {
+            let zR2 = ComplexNumber(real: r2, imag: 0.0)
+            let zParallel = (zVC * zR2) / (zVC + zR2)
+            var zSeries = ComplexNumber(real: r1, imag: 0.0)
+            if crossover.enableCDHornCompensation, let cCD = comp.C_cd_uF, cCD > 0 {
+                let rCD = comp.R_cd_ohms ?? 0.0
+                let zBypass = ComplexNumber(real: rCD, imag: -1.0 / (w * (cCD / 1e6)))
+                zSeries = (zSeries * zBypass) / (zSeries + zBypass)
+            }
+            zVC = zSeries + zParallel
+        }
 
         switch crossover.tweeterOrder {
         case .firstOrder:
@@ -452,8 +453,6 @@ public enum SimulationEngine {
         let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
         let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)
 
-        let gLpad = crossover.lpadVoltageGain
-
         for k in 1..<(n / 2) {
             let f = Double(k) * fs / Double(n)
 
@@ -463,11 +462,12 @@ public enum SimulationEngine {
             let hCab = cabinet.transferFunction(frequency: f, ts: driver.wooferTS)
             let hLP = crossover.wooferFilterTransferFunction(frequency: f)
             let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
+            let hLpadCD = crossover.tweeterLPadAndCDHornTransferFunction(frequency: f, tweeterRe: driver.tweeter.re)
             let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
             let hAP = crossover.allpassFilterTransferFunction(frequency: f)
 
             let pWooferFinal = pWooferRaw * hCab * hLP * hAP
-            let pTweeterFinal = pTweeterRaw * hHP * gLpad * hDelay
+            let pTweeterFinal = pTweeterRaw * hHP * hLpadCD * hDelay
             let pTotal = pWooferFinal + pTweeterFinal
 
             // Anti-aliasing smooth rolloff near Nyquist to eliminate sinc ringing
