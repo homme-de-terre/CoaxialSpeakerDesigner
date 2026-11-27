@@ -273,7 +273,7 @@ public struct CrossoverNetwork: Codable, Sendable {
         let effectiveAttenDB: Double = {
             if enableCDHornCompensation {
                 let baseAtten = enableLPadAttenuator ? userTargetAttenuationdB : 0.0
-                return max(baseAtten, max(cdHornBoostdB, 0.5))
+                return max(baseAtten, max(cdHornBoostdB, 0.5) + 0.5)
             }
             return enableLPadAttenuator ? userTargetAttenuationdB : 0.0
         }()
@@ -287,23 +287,17 @@ public struct CrossoverNetwork: Codable, Sendable {
                 comp.R2_lpad_ohms = r2
 
                 if enableCDHornCompensation && cdHornBoostdB > 0 && cdHornCornerFrequency > 0 {
-                    let boost = min(max(cdHornBoostdB, 0.5), effectiveAttenDB)
+                    let boost = min(max(cdHornBoostdB, 0.5), effectiveAttenDB - 0.5)
                     let fEq = max(cdHornCornerFrequency, 500.0)
                     let wEq = 2.0 * .pi * fEq
                     let kInf = pow(10.0, -(effectiveAttenDB - boost) / 20.0)
                     let rp = (r2 * Zt) / (r2 + Zt)
 
-                    if kInf >= 0.99 || abs(boost - effectiveAttenDB) < 0.05 {
-                        // Full R1 bypass: pure bypass capacitor C_eq across R1
-                        comp.C_cd_uF = (1.0 / (wEq * max(r1, 0.1))) * 1e6
-                        comp.R_cd_ohms = nil
-                    } else {
-                        // Damped HF shelf: series R_eq + C_eq across R1
-                        let rsInf = rp * ((1.0 / kInf) - 1.0)
-                        let rEq = (r1 * rsInf) / max(r1 - rsInf, 0.05)
-                        comp.R_cd_ohms = rEq
-                        comp.C_cd_uF = (1.0 / (wEq * max(r1 + rEq, 0.1))) * 1e6
-                    }
+                    // Damped HF shelf: series R_eq + C_eq across R1
+                    let rsInf = rp * ((1.0 / kInf) - 1.0)
+                    let rEq = max((r1 * rsInf) / max(r1 - rsInf, 0.05), 0.15)
+                    comp.R_cd_ohms = rEq
+                    comp.C_cd_uF = (1.0 / (wEq * max(r1 + rEq, 0.1))) * 1e6
                 }
             }
         }

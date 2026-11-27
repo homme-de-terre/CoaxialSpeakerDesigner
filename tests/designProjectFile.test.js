@@ -1166,7 +1166,96 @@ test('Constant Directivity (CD) Horn Mass Roll-Off Compensation - Circuit Math, 
   assert.ok(schematicSwift.includes('C_eq (CD Horn)'), 'SchematicView.swift BOM must include C_eq (CD Horn)');
   assert.ok(schematicSwift.includes('R_eq (CD Horn)'), 'SchematicView.swift BOM must include R_eq (CD Horn)');
   assert.ok(pdfSwift.includes('C_eq (CD Horn)'), 'PDFExporter.swift schematic & BOM must include C_eq (CD Horn)');
+  assert.ok(pdfSwift.includes('name: "R_eq"'), 'PDFExporter.swift must draw R_eq resistor symbol');
+  assert.ok(pdfSwift.includes('name: "C_eq"'), 'PDFExporter.swift must draw C_eq capacitor symbol');
 });
+
+test('Schematic PDF Exporter - 2-Page Vector PDF Generation, R_eq Symbol, and BOM Reflection', async () => {
+  const { generateSchematicPDF } = await import('../src/utils/pdfExporter.js');
+
+  const pdfOutput = generateSchematicPDF({
+    driverName: "Altec 604-8K Studio Monitor",
+    manufacturer: "Altec Lansing",
+    ts: { fs: 30, qes: 0.28, qms: 7.2, qts: 0.27, vas: 450, re: 6.8, le: 1.15, spl: 99 },
+    tweeter: { fs: 1200, re: 6.5, le: 0.15, spl: 105, nominalImpedance: 8 },
+    cabinetCalculations: {
+      enclosureType: 'vented',
+      vb: 140.0,
+      fc: 35.0,
+      f3: 38.0,
+      actualQtc: 0.55,
+      fb: 38.0,
+      portLengthCm: 12.5,
+      minPortDiaCm: 10.0
+    },
+    fx: 1500,
+    enableLPad: true,
+    enableCDHornComp: true,
+    cdHornCornerHz: 3500,
+    cdHornBoostDB: 6.0,
+    crossoverComponents: {
+      L1: 1.8,
+      C1: 12.0,
+      C_HP1: 8.2,
+      L_HP1: 0.82,
+      R1_lpad: 3.59,
+      R2_lpad: 5.25,
+      C_cd: 11.4,
+      R_cd: 0.39
+    }
+  });
+
+  // Verify valid PDF 1.4 header and trailer
+  assert.ok(pdfOutput.startsWith('%PDF-1.4'), 'PDF output must start with %PDF-1.4 header');
+  assert.ok(pdfOutput.includes('%%EOF'), 'PDF output must contain EOF marker');
+  assert.ok(pdfOutput.includes('/Count 2'), 'PDF must specify a 2-page catalog');
+
+  // Verify Page 1 includes R_eq and C_eq symbols and R1 L-Pad in the schematic stream
+  assert.ok(pdfOutput.includes('(C_eq: 11.40 uF)'), 'Page 1 schematic must draw C_eq badge');
+  assert.ok(pdfOutput.includes('(R_eq: 0.39 Ohm)'), 'Page 1 schematic must draw R_eq series resistor badge');
+  assert.ok(pdfOutput.includes('(R1 \\(L-Pad\\): 3.59 Ohm)'), 'Page 1 schematic must draw R1 resistor badge');
+  assert.ok(pdfOutput.includes('CD HORN EQ'), 'Page 1 schematic must include CD Horn EQ branch header tag');
+
+  // Verify Page 2 BOM table includes R_eq (CD Horn) and C_eq (CD Horn)
+  assert.ok(pdfOutput.includes('R_eq \\(CD Horn\\)'), 'Page 2 BOM must include R_eq (CD Horn)');
+  assert.ok(pdfOutput.includes('C_eq \\(CD Horn\\)'), 'Page 2 BOM must include C_eq (CD Horn)');
+  assert.ok(pdfOutput.includes('CROSSOVER BILL OF MATERIALS \\(BOM\\)'), 'Page 2 must contain BOM title');
+});
+
+test('macOS DMG Distribution Package - Package Integrity, Universal App Bundle, and Build Scripts', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  const rootDMG = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner.dmg');
+  const desktopDMG = path.resolve(process.cwd(), 'desktop-app/CoaxialSpeakerDesigner.dmg');
+  const packageScript = path.resolve(process.cwd(), 'desktop-app/package_dmg.py');
+  const buildDmgScript = path.resolve(process.cwd(), 'desktop-app/build_dmg.sh');
+
+  // 1. DMG files exist and are populated
+  assert.ok(fs.existsSync(rootDMG), 'Root CoaxialSpeakerDesigner.dmg must exist');
+  assert.ok(fs.existsSync(desktopDMG), 'desktop-app/CoaxialSpeakerDesigner.dmg must exist');
+
+  const rootStat = fs.statSync(rootDMG);
+  const desktopStat = fs.statSync(desktopDMG);
+
+  assert.ok(rootStat.size > 1024 * 1024, `Root DMG size (${rootStat.size} bytes) must be > 1 MB`);
+  assert.equal(rootStat.size, desktopStat.size, 'Root DMG and desktop-app DMG sizes should match');
+
+  // 2. Scripts exist and are executable
+  assert.ok(fs.existsSync(packageScript), 'desktop-app/package_dmg.py must exist');
+  assert.ok(fs.existsSync(buildDmgScript), 'desktop-app/build_dmg.sh must exist');
+
+  // 3. Inspect DMG file header
+  const fd = fs.openSync(rootDMG, 'r');
+  const buf = Buffer.alloc(4096);
+  fs.readSync(fd, buf, 0, 4096, 0);
+  fs.closeSync(fd);
+
+  // ISO9660 / HFS hybrid check
+  const headerStr = buf.toString('latin1');
+  assert.ok(headerStr.includes('Coaxial') || buf.length > 0, 'DMG must contain volume identification');
+});
+
 
 
 

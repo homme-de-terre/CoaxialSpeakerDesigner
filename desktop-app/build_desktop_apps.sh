@@ -64,5 +64,9 @@ EOF
 create_app_bundle "HP35_AppleSilicon" "HP35_mac_arm64"
 create_app_bundle "HP35_Intel" "HP35_mac_amd64"
 
+# 5. Build Coaxial Speaker Designer Universal .app & .dmg Package
+echo "5. Building Coaxial Speaker Designer Universal .app & .dmg Package..."
+python3 package_dmg.py
+
 echo "=== Build Complete! Executable Sizes ==="
-ls -lh HP35_mac_arm64 HP35_mac_amd64 HP35_linux_arm64
+ls -lh HP35_mac_arm64 HP35_mac_amd64 HP35_linux_arm64 CoaxialSpeakerDesigner.dmg

@@ -222,11 +222,14 @@ public class SchematicReportRenderer {
         let apfStatus = crossover.enableAllpassFilter
             ? " | APF Delay: Active (F0 = \(f0Display) Hz, Q = \(String(format: "%.2f", crossover.allpassOptimizedQ ?? 0.70)))"
             : ""
+        let cdStatus = crossover.enableCDHornCompensation
+            ? " | CD Horn EQ: C_eq + R_eq || R1 (f_eq = \(Int(crossover.cdHornCornerFrequency)) Hz, +\(String(format: "%.1f", crossover.cdHornBoostdB)) dB)"
+            : ""
 
         let xoInfo = crossover.enableIndependentFrequencies
             ? "Crossover: Woofer \(Int(crossover.actualWooferFrequency)) Hz (\(crossover.wooferOrder.rawValue)) / Tweeter \(Int(crossover.actualTweeterFrequency)) Hz (\(crossover.tweeterOrder.rawValue))"
             : "Crossover: \(Int(crossover.crossoverFrequency)) Hz (\(crossover.wooferOrder.rawValue) / \(crossover.tweeterOrder.rawValue))"
-        let line1 = "Driver: \(driver.name) (\(driver.manufacturer))  |  \(xoInfo)\(apfStatus)"
+        let line1 = "Driver: \(driver.name) (\(driver.manufacturer))  |  \(xoInfo)\(apfStatus)\(cdStatus)"
         let line2: String
         if cabinet.enclosureType == .vented {
             line2 = "Vented Enclosure (4th-Order): Vb = \(String(format: "%.1f", vb)) L  |  Fb = \(String(format: "%.1f", fb)) Hz  |  f3 = \(String(format: "%.1f", f3)) Hz  |  Port: \(cabinet.numberOfPorts)x Ø\(String(format: "%.1f", cabinet.portDiameterCm))cm  |  \(subtitle)"
@@ -475,23 +478,30 @@ public class SchematicReportRenderer {
             .font: NSFont.boldSystemFont(ofSize: 9.5),
             .foregroundColor: NSColor(calibratedRed: 0.8, green: 0.15, blue: 0.15, alpha: 1.0)
         ]
-        "TWEETER HIGH-PASS (\(crossover.tweeterOrder.rawValue))".draw(
+        let cdHornTag = crossover.enableCDHornCompensation
+            ? " + CD HORN EQ (C_eq + R_eq || R1 @ f_eq = \(Int(crossover.cdHornCornerFrequency)) Hz, +\(String(format: "%.1f", crossover.cdHornBoostdB)) dB)"
+            : ""
+        "TWEETER HIGH-PASS (\(crossover.tweeterOrder.rawValue))\(cdHornTag)".draw(
             at: CGPoint(x: signalDropX + 15, y: tweeterHeaderY),
             withAttributes: tweeterTagAttrs
         )
 
+        let hpWireLead: CGFloat = crossover.enableCDHornCompensation ? 26.0 : 35.0
+        let hpSymW: CGFloat = crossover.enableCDHornCompensation ? 48.0 : 55.0
+        let hpShuntStep: CGFloat = crossover.enableCDHornCompensation ? 44.0 : 55.0
+
         // Series Capacitor C_HP1
         if let c1 = components.C_HP1_uF {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 35, y: tweeterY))
-            tCurX += 35
-            drawCapacitorSymbol(startX: tCurX, endX: tCurX + 55, y: tweeterY, name: "C_HP1", valueStr: "\(String(format: "%.2f", c1)) µF", color: .systemRed)
-            tCurX += 55
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + hpWireLead, y: tweeterY))
+            tCurX += hpWireLead
+            drawCapacitorSymbol(startX: tCurX, endX: tCurX + hpSymW, y: tweeterY, name: "C_HP1", valueStr: "\(String(format: "%.2f", c1)) µF", color: .systemRed)
+            tCurX += hpSymW
         }
 
         // Shunt Inductor L_HP1
         if let l1 = components.L_HP1_mH {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 55, y: tweeterY))
-            tCurX += 55
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + hpShuntStep, y: tweeterY))
+            tCurX += hpShuntStep
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
             drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "L_HP1", valueStr: "\(String(format: "%.2f", l1)) mH", color: .systemRed)
@@ -500,46 +510,87 @@ public class SchematicReportRenderer {
 
         // Series Capacitor C_HP2 (3rd/4th order)
         if let c2 = components.C_HP2_uF {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 35, y: tweeterY))
-            tCurX += 35
-            drawCapacitorSymbol(startX: tCurX, endX: tCurX + 55, y: tweeterY, name: "C_HP2", valueStr: "\(String(format: "%.2f", c2)) µF", color: .systemRed)
-            tCurX += 55
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + hpWireLead, y: tweeterY))
+            tCurX += hpWireLead
+            drawCapacitorSymbol(startX: tCurX, endX: tCurX + hpSymW, y: tweeterY, name: "C_HP2", valueStr: "\(String(format: "%.2f", c2)) µF", color: .systemRed)
+            tCurX += hpSymW
         }
 
         // Shunt Inductor L_HP2 (4th order)
         if let l2 = components.L_HP2_mH {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 55, y: tweeterY))
-            tCurX += 55
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + hpShuntStep, y: tweeterY))
+            tCurX += hpShuntStep
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
             drawShuntInductor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "L_HP2", valueStr: "\(String(format: "%.2f", l2)) mH", color: .systemRed)
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterGroundY))
         }
 
-        // L-Pad Attenuator (Series R1 + Shunt R2) & Optional CD Horn Mass Roll-Off Bypass (C_eq || R1)
+        // L-Pad Attenuator (Series R1 + Shunt R2) & Optional CD Horn Mass Roll-Off Bypass (Series C_eq + R_eq || R1)
         if (crossover.enableLPadAttenuator || crossover.enableCDHornCompensation), let r1 = components.R1_lpad_ohms, let r2 = components.R2_lpad_ohms {
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 35, y: tweeterY))
-            tCurX += 35
-            let r1StartX = tCurX
-            let r1EndX = tCurX + 55
-            drawResistorSymbol(startX: r1StartX, endX: r1EndX, y: tweeterY, name: "R1 (L-Pad)", valueStr: "\(String(format: "%.2f", r1)) Ω", color: .systemOrange)
-
             if crossover.enableCDHornCompensation, let ccd = components.C_cd_uF {
-                let bypassY = tweeterY - 38.0
-                drawJunctionDot(point: CGPoint(x: r1StartX - 6, y: tweeterY))
-                drawJunctionDot(point: CGPoint(x: r1EndX + 6, y: tweeterY))
-                drawWire(from: CGPoint(x: r1StartX - 6, y: tweeterY), to: CGPoint(x: r1StartX - 6, y: bypassY))
-                drawWire(from: CGPoint(x: r1EndX + 6, y: tweeterY), to: CGPoint(x: r1EndX + 6, y: bypassY))
-                let eqLabel = components.R_cd_ohms != nil
-                    ? "\(String(format: "%.2f", ccd)) µF + \(String(format: "%.1f", components.R_cd_ohms!)) Ω"
-                    : "\(String(format: "%.2f", ccd)) µF"
-                drawCapacitorSymbol(startX: r1StartX - 6, endX: r1EndX + 6, y: bypassY, name: "C_eq (CD Horn)", valueStr: eqLabel, color: .systemPurple)
+                let rcd = components.R_cd_ohms ?? 0.39
+                drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 26, y: tweeterY))
+                tCurX += 26
+
+                let loopStartX = tCurX
+                let loopWidth: CGFloat = 136.0
+                let loopEndX = loopStartX + loopWidth
+                let bypassY = tweeterY - 40.0
+
+                // Parallel loop junction dots on main tweeter rail
+                drawJunctionDot(point: CGPoint(x: loopStartX, y: tweeterY))
+                drawJunctionDot(point: CGPoint(x: loopEndX, y: tweeterY))
+
+                // Lower branch: R1 (L-Pad) centered along tweeterY with badge below so it doesn't collide with bypass branch
+                let r1SymStart = loopStartX + 36.0
+                let r1SymEnd = loopEndX - 36.0
+                drawWire(from: CGPoint(x: loopStartX, y: tweeterY), to: CGPoint(x: r1SymStart, y: tweeterY))
+                drawResistorSymbol(
+                    startX: r1SymStart,
+                    endX: r1SymEnd,
+                    y: tweeterY,
+                    name: "R1 (L-Pad)",
+                    valueStr: "\(String(format: "%.2f", r1)) Ω",
+                    color: .systemOrange,
+                    badgeBelow: true
+                )
+                drawWire(from: CGPoint(x: r1SymEnd, y: tweeterY), to: CGPoint(x: loopEndX, y: tweeterY))
+
+                // Upper parallel bypass branch: vertical risers + series C_eq capacitor and R_eq damping resistor
+                drawWire(from: CGPoint(x: loopStartX, y: tweeterY), to: CGPoint(x: loopStartX, y: bypassY))
+                drawWire(from: CGPoint(x: loopEndX, y: tweeterY), to: CGPoint(x: loopEndX, y: bypassY))
+
+                let capEndX = loopStartX + 64.0
+                let resStartX = capEndX + 8.0
+                drawCapacitorSymbol(
+                    startX: loopStartX,
+                    endX: capEndX,
+                    y: bypassY,
+                    name: "C_eq",
+                    valueStr: "\(String(format: "%.2f", ccd)) µF",
+                    color: .systemPurple
+                )
+                drawWire(from: CGPoint(x: capEndX, y: bypassY), to: CGPoint(x: resStartX, y: bypassY))
+                drawResistorSymbol(
+                    startX: resStartX,
+                    endX: loopEndX,
+                    y: bypassY,
+                    name: "R_eq",
+                    valueStr: "\(String(format: "%.2f", rcd)) Ω",
+                    color: .systemPurple
+                )
+
+                tCurX = loopEndX
+            } else {
+                drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 35, y: tweeterY))
+                tCurX += 35
+                drawResistorSymbol(startX: tCurX, endX: tCurX + 55, y: tweeterY, name: "R1 (L-Pad)", valueStr: "\(String(format: "%.2f", r1)) Ω", color: .systemOrange)
+                tCurX += 55
             }
 
-            tCurX = r1EndX
-
-            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + 55, y: tweeterY))
-            tCurX += 55
+            drawWire(from: CGPoint(x: tCurX, y: tweeterY), to: CGPoint(x: tCurX + hpShuntStep, y: tweeterY))
+            tCurX += hpShuntStep
             drawJunctionDot(point: CGPoint(x: tCurX, y: tweeterY))
 
             drawShuntResistor(topX: tCurX, topY: tweeterY, groundY: tweeterGroundY, name: "R2 (L-Pad)", valueStr: "\(String(format: "%.2f", r2)) Ω", color: .systemOrange)
@@ -689,7 +740,8 @@ public class SchematicReportRenderer {
         if let r2 = components.R2_lpad_ohms { rows.append(("R2 (L-Pad)", "Tweeter L-Pad Attenuator (Shunt Element)", "\(String(format: "%.2f", r2)) Ω", "10W Power Metal Oxide / Wirewound Resistor")) }
         if crossover.enableCDHornCompensation {
             if let ccd = components.C_cd_uF { rows.append(("C_eq (CD Horn)", "CD Horn Mass Roll-Off Bypass Capacitor (|| R1)", "\(String(format: "%.2f", ccd)) µF", "250V DC Polypropylene Film Cap (f_eq = \(Int(crossover.cdHornCornerFrequency)) Hz)")) }
-            if let rcd = components.R_cd_ohms { rows.append(("R_eq (CD Horn)", "CD Horn HF Shelf Damping Resistor (Series w/ C_eq)", "\(String(format: "%.2f", rcd)) Ω", "5W Non-Inductive Metal Oxide Resistor")) }
+            let rcd = components.R_cd_ohms ?? 0.39
+            rows.append(("R_eq (CD Horn)", "CD Horn HF Shelf Damping Resistor (Series w/ C_eq)", "\(String(format: "%.2f", rcd)) Ω", "5W Non-Inductive Metal Oxide Resistor (+\(String(format: "%.1f", crossover.cdHornBoostdB)) dB Shelf)"))
         }
 
         if cabinet.enclosureType == .vented {
@@ -993,7 +1045,7 @@ public class SchematicReportRenderer {
         drawBadge(point: CGPoint(x: startX, y: y - 18), text: "\(name): \(valueStr)", textColor: color)
     }
 
-    private func drawResistorSymbol(startX: CGFloat, endX: CGFloat, y: CGFloat, name: String, valueStr: String, color: NSColor) {
+    private func drawResistorSymbol(startX: CGFloat, endX: CGFloat, y: CGFloat, name: String, valueStr: String, color: NSColor, badgeBelow: Bool = false) {
         let midX = (startX + endX) / 2.0
         let resW: CGFloat = 24.0
         let resH: CGFloat = 10.0
@@ -1012,7 +1064,8 @@ public class SchematicReportRenderer {
         path.lineWidth = 1.5
         path.stroke()
 
-        drawBadge(point: CGPoint(x: startX, y: y - 18), text: "\(name): \(valueStr)", textColor: color)
+        let badgeY = badgeBelow ? (y + 10.0) : (y - 18.0)
+        drawBadge(point: CGPoint(x: startX, y: badgeY), text: "\(name): \(valueStr)", textColor: color)
     }
 
     private func drawShuntCapacitor(topX: CGFloat, topY: CGFloat, groundY: CGFloat, name: String, valueStr: String, color: NSColor) {

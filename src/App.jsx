@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { parseDatasheetFromURL, parseDatasheetFromFile } from './utils/datasheetParser';
 import { altec604WooferTS, altec604Tweeter, altec604RecommendedCrossover, altec604WooferCurve, altec604TweeterCurve } from './utils/altec604Data';
+import { generateSchematicPDF } from './utils/pdfExporter';
 import { 
   Speaker, Volume2, Shield, Settings, Sliders, Cpu, FileText, Download, 
   Check, AlertCircle, Copy, RotateCcw, Box, RefreshCw, Zap, Upload, Info,
@@ -594,7 +595,7 @@ export default function App() {
   const lpadAndCDHornParams = useMemo(() => {
     const Zt = Math.max(tweeter.re, 4.0);
     const effectiveAttenDB = enableCDHornComp
-      ? Math.max(enableLPad ? lpadAttenDB : 0.0, Math.max(cdHornBoostDB, 0.5))
+      ? Math.max(enableLPad ? lpadAttenDB : 0.0, Math.max(cdHornBoostDB, 0.5) + 0.5)
       : (enableLPad ? lpadAttenDB : 0.0);
 
     let R1_lpad = null, R2_lpad = null, C_cd = null, R_cd = null;
@@ -604,20 +605,15 @@ export default function App() {
         R1_lpad = Zt * (1.0 - k);
         R2_lpad = Zt * (k / (1.0 - k));
         if (enableCDHornComp && cdHornBoostDB > 0 && cdHornCornerHz > 0) {
-          const boost = Math.min(Math.max(cdHornBoostDB, 0.5), effectiveAttenDB);
+          const boost = Math.min(Math.max(cdHornBoostDB, 0.5), effectiveAttenDB - 0.5);
           const fEq = Math.max(cdHornCornerHz, 500.0);
           const wEq = 2.0 * Math.PI * fEq;
           const kInf = Math.pow(10, -(effectiveAttenDB - boost) / 20.0);
           const rp = (R2_lpad * Zt) / (R2_lpad + Zt);
-          if (kInf >= 0.99 || Math.abs(boost - effectiveAttenDB) < 0.05) {
-            C_cd = (1.0 / (wEq * Math.max(R1_lpad, 0.1))) * 1e6;
-            R_cd = null;
-          } else {
-            const rsInf = rp * ((1.0 / kInf) - 1.0);
-            const rEq = (R1_lpad * rsInf) / Math.max(R1_lpad - rsInf, 0.05);
-            R_cd = rEq;
-            C_cd = (1.0 / (wEq * Math.max(R1_lpad + rEq, 0.1))) * 1e6;
-          }
+          const rsInf = rp * ((1.0 / kInf) - 1.0);
+          const rEq = Math.max((R1_lpad * rsInf) / Math.max(R1_lpad - rsInf, 0.05), 0.15);
+          R_cd = rEq;
+          C_cd = (1.0 / (wEq * Math.max(R1_lpad + rEq, 0.1))) * 1e6;
         }
       }
     }
@@ -2272,6 +2268,73 @@ export default function App() {
     } catch (err) {
       setFrdErrorMsg(`Could not copy to clipboard: ${err.message || 'Permission denied'}`);
     }
+  };
+
+  const handleExportSchematicPDF = async () => {
+    const pdfContent = generateSchematicPDF({
+      driverName,
+      manufacturer,
+      ts,
+      tweeter,
+      cabinetCalculations,
+      alignment,
+      ventedAlignment,
+      portDiameterCm,
+      portCount,
+      fx,
+      enableIndependentFx,
+      wooferFx,
+      tweeterFx,
+      wooferOrder,
+      tweeterOrder,
+      enableZobel,
+      enableLPad,
+      enableCDHornComp,
+      cdHornCornerHz,
+      cdHornBoostDB,
+      enableAllpass,
+      acousticDelayMM,
+      invertTweeterPolarity,
+      apfOptimization,
+      crossoverComponents
+    });
+
+    const sanitizedName = (driverName || "Speaker").trim().replace(/\s+/g, '_');
+    const filename = `Crossover_Schematic_${sanitizedName}.pdf`;
+
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{
+            description: 'PDF Document',
+            accept: { 'application/pdf': ['.pdf'] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(pdfContent);
+        await writable.close();
+        setStatusMsg(`Successfully exported PDF schematic to ${filename}`);
+        return;
+      } catch (pickerErr) {
+        if (pickerErr.name === 'AbortError') return;
+      }
+    }
+
+    const blob = new Blob([pdfContent], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      if (a.parentNode) document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 5000);
+    setStatusMsg(`Successfully exported PDF schematic to ${filename}`);
   };
 
   const handleExportSystemFRDFile = async () => {
@@ -4136,7 +4199,7 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-bold text-white flex items-center space-x-2"><Cpu className="text-blue-400" /><span>Crossover Component Bill of Materials</span></h2>
                 <button
-                  onClick={() => window.print()}
+                  onClick={handleExportSchematicPDF}
                   className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs px-3 py-1.5 rounded-lg flex items-center space-x-2 transition"
                 >
                   <FileText className="w-4 h-4" />

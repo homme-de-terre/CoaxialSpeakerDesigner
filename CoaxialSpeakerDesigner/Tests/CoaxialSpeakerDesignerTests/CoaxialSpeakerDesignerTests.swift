@@ -1409,7 +1409,7 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertGreaterThan(compDamped.C_cd_uF!, 1.0)
         XCTAssertGreaterThan(compDamped.R_cd_ohms!, 0.5)
 
-        // 3. With Full R1 Bypass CD Horn Compensation (+7 dB boost matching 7 dB L-Pad at 3500 Hz)
+        // 3. With CD Horn Compensation at +7 dB boost matching 7 dB L-Pad at 3500 Hz
         let xoFullCD = CrossoverNetwork(
             crossoverFrequency: 1500.0,
             enableLPadAttenuator: true,
@@ -1420,7 +1420,8 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         )
         let compFull = xoFullCD.computeComponentValues(wooferRe: driver.wooferTS.re, tweeterRe: driver.tweeter.re, wooferLe: driver.wooferTS.le)
         XCTAssertNotNil(compFull.C_cd_uF)
-        XCTAssertNil(compFull.R_cd_ohms, "Full R1 bypass should not require a series damping resistor R_eq")
+        XCTAssertNotNil(compFull.R_cd_ohms, "Series damping resistor R_eq must be computed and present in BOM and schematic")
+        XCTAssertGreaterThan(compFull.R_cd_ohms!, 0.1)
 
         // 4. Verify simulation shows significantly higher 10-20 kHz SPL with CD Horn Compensation enabled
         let simNoCD = SimulationEngine.simulate(driver: driver, cabinet: cabinet, crossover: xoNoCD)
@@ -1431,7 +1432,7 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertGreaterThan(simWithCD[idx15k].tweeterFinalSPL, simNoCD[idx15k].tweeterFinalSPL + 4.0, "CD Horn EQ must boost 15 kHz SPL to compensate mass roll-off")
         XCTAssertGreaterThan(simWithCD[idx20k].totalSystemSPL, simNoCD[idx20k].totalSystemSPL + 4.5, "CD Horn EQ must restore 20 kHz total system SPL")
 
-        // 5. Verify PDF generation and JSON roundtrip with CD Horn Compensation
+        // 5. Verify PDF generation and JSON roundtrip with CD Horn Compensation including R_eq & C_eq reflection
         let pdfData = PDFExporter.generateSchematicPDF(driver: driver, cabinet: cabinet, crossover: xoDampedCD, components: compDamped)
         XCTAssertFalse(pdfData.isEmpty)
         XCTAssertEqual(String(data: pdfData.prefix(4), encoding: .ascii), "%PDF")

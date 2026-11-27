@@ -35,9 +35,9 @@ func main() {
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	fmt.Println("==================================================")
-	fmt.Println("   HP-35 RPN Scientific Calculator Desktop App   ")
+	fmt.Println("   Coaxial Speaker Designer Desktop Application   ")
 	fmt.Println("==================================================")
-	fmt.Printf("Serving calculator at: %s\n", url)
+	fmt.Printf("Serving application at: %s\n", url)
 	fmt.Println("Press Ctrl+C to exit.")
 	fmt.Println("==================================================")
 

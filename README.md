@@ -104,6 +104,16 @@ npm run lint
 npm run build
 ```
 
+### 3. macOS .dmg Disk Image & Desktop App Distribution
+Mount `CoaxialSpeakerDesigner.dmg` (available at project root or under `desktop-app/CoaxialSpeakerDesigner.dmg`) to install the universal macOS desktop app:
+```bash
+# Build desktop executables & generate CoaxialSpeakerDesigner.dmg
+cd desktop-app
+./build_dmg.sh
+# or run ./build_desktop_apps.sh to build everything
+```
+Drag `CoaxialSpeakerDesigner.app` into your macOS `/Applications` folder.
+
 ---
 
 ## Quick User Help
