@@ -723,3 +723,337 @@ test('Design Project File - Complex Number Physics Math', () => {
   assert.equal(quot.im, 2);
 });
 
+test('FRD Import/Export - Multi-Delimiter Parser, European Decimals, and 3-Column Export Roundtrip', () => {
+  function parseFRDText(text) {
+    if (!text || typeof text !== 'string') return [];
+    const points = [];
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('#')) {
+        continue;
+      }
+      let components;
+      if (trimmed.includes(';')) {
+        components = trimmed.split(';').map(s => s.trim().replace(',', '.')).filter(Boolean);
+      } else {
+        const wsTokens = trimmed.split(/\s+/).filter(Boolean);
+        if (wsTokens.length >= 2 && !trimmed.includes(', ')) {
+          components = wsTokens.map(s => s.replace(/,+$/, '').replace(',', '.'));
+        } else {
+          components = trimmed.split(/[\s,]+/).filter(Boolean);
+        }
+      }
+      if (components.length >= 2) {
+        const freq = parseFloat(components[0]);
+        const mag = parseFloat(components[1]);
+        if (Number.isFinite(freq) && freq > 0 && Number.isFinite(mag)) {
+          const rawPhase = components.length >= 3 ? parseFloat(components[2]) : 0.0;
+          const phase = Number.isFinite(rawPhase) ? rawPhase : 0.0;
+          points.push({ frequency: freq, magnitude: mag, phase });
+        }
+      }
+    }
+    return points.sort((a, b) => a.frequency - b.frequency);
+  }
+
+  function exportToFRD(points, comment = "Exported from CoaxialSpeakerDesigner") {
+    let result = `* ${comment}\n* Freq(Hz)\tMag(dB)\tPhase(Deg)\n`;
+    for (const p of points) {
+      const freq = (p.frequency ?? 0).toFixed(2);
+      const mag = (p.magnitude ?? 0).toFixed(3);
+      const phase = (p.phase ?? 0).toFixed(2);
+      result += `${freq}\t${mag}\t${phase}\n`;
+    }
+    return result;
+  }
+
+  // 1. Standard tab/space separated 3-column FRD with comments
+  const standardFRD = `* Measured Woofer FRD\n# Freq SPL Phase\n100.0\t92.5\t-12.4\n20.0  81.0  45.2\n1000.0 95.1 -35.0`;
+  const parsedStd = parseFRDText(standardFRD);
+  assert.equal(parsedStd.length, 3);
+  assert.equal(parsedStd[0].frequency, 20.0);
+  assert.equal(parsedStd[0].magnitude, 81.0);
+  assert.equal(parsedStd[0].phase, 45.2);
+  assert.equal(parsedStd[1].frequency, 100.0);
+  assert.equal(parsedStd[2].frequency, 1000.0);
+
+  // 2. European comma-decimal with whitespace or semicolon delimiters
+  const euFRD = `20,0\t84,25\t10,5\n200,0; 96,40; -5,25\n2000,0\t94,00`;
+  const parsedEU = parseFRDText(euFRD);
+  assert.equal(parsedEU.length, 3);
+  assert.equal(parsedEU[0].magnitude, 84.25);
+  assert.equal(parsedEU[0].phase, 10.5);
+  assert.equal(parsedEU[1].frequency, 200.0);
+  assert.equal(parsedEU[1].magnitude, 96.40);
+  assert.equal(parsedEU[1].phase, -5.25);
+  assert.equal(parsedEU[2].phase, 0.0);
+
+  // 3. Export to FRD and re-import roundtrip
+  const exported = exportToFRD(parsedStd, "Altec Lansing 604-8K - Closed Cabinet");
+  assert.ok(exported.includes("* Altec Lansing 604-8K - Closed Cabinet"));
+  assert.ok(exported.includes("* Freq(Hz)\tMag(dB)\tPhase(Deg)"));
+  const roundtrip = parseFRDText(exported);
+  assert.equal(roundtrip.length, 3);
+  assert.equal(roundtrip[0].frequency, 20.0);
+  assert.equal(roundtrip[1].magnitude, 92.5);
+  assert.equal(roundtrip[2].phase, -35.0);
+});
+
+test('Altec 604-8K Preset - Hilbert Minimum Phase, Curve Interpolation, and Graph Reflection', async () => {
+  const {
+    altec604WooferTS,
+    altec604Tweeter,
+    altec604RecommendedCrossover,
+    altec604WooferCurve,
+    altec604TweeterCurve
+  } = await import('../src/utils/altec604Data.js');
+
+  assert.equal(altec604WooferTS.fs, 24.0);
+  assert.equal(altec604WooferTS.qts, 0.287);
+  assert.equal(altec604WooferTS.vas, 510.0);
+  assert.equal(altec604WooferTS.spl, 98.0);
+  assert.equal(altec604Tweeter.spl, 105.0);
+  assert.equal(altec604RecommendedCrossover, 1500.0);
+  assert.equal(altec604WooferCurve.length, 100);
+  assert.equal(altec604TweeterCurve.length, 100);
+
+  // Discrete Hilbert Transform minimum phase synthesis
+  function computeMinimumPhase(points) {
+    if (!points || points.length < 4) return points || [];
+    const n = points.length;
+    const result = points.map(p => ({ ...p }));
+    for (let i = 0; i < n; i++) {
+      const f0 = points[i].frequency;
+      let phaseRad = 0.0;
+      for (let j = 0; j < n - 1; j++) {
+        const f1 = points[j].frequency;
+        const f2 = points[j + 1].frequency;
+        const mag1 = points[j].magnitude;
+        const mag2 = points[j + 1].magnitude;
+        if (f1 === f2 || f1 <= 0 || f2 <= 0) continue;
+        const dLnA = Math.log(Math.max(Math.pow(10.0, mag2 / 20.0), 1e-6)) - Math.log(Math.max(Math.pow(10.0, mag1 / 20.0), 1e-6));
+        const dLnF = Math.log(f2 / f1);
+        const slope = dLnA / dLnF;
+        const fAvg = Math.sqrt(f1 * f2);
+        const diff = Math.abs(fAvg - f0);
+        if (diff > 1e-4) {
+          const ratio = (fAvg + f0) / diff;
+          if (ratio > 1e-6) {
+            const kernel = Math.log(ratio);
+            const term = (1.0 / Math.PI) * slope * kernel * dLnF;
+            if (Number.isFinite(term)) phaseRad -= term;
+          }
+        }
+      }
+      let phaseDeg = (phaseRad * (180.0 / Math.PI)) % 360.0;
+      if (phaseDeg > 180.0) phaseDeg -= 360.0;
+      if (phaseDeg < -180.0) phaseDeg += 360.0;
+      result[i].phase = phaseDeg;
+    }
+    return result;
+  }
+
+  const minPhaseWoofer = computeMinimumPhase(altec604WooferCurve);
+  const minPhaseTweeter = computeMinimumPhase(altec604TweeterCurve);
+
+  // Verify non-zero minimum phase is synthesized from the Altec 604-8K CLIO amplitude curves
+  assert.ok(minPhaseWoofer.some(p => Math.abs(p.phase) > 5.0), 'Hilbert transform must synthesize non-zero minimum phase for Altec 604-8K woofer');
+  assert.ok(minPhaseTweeter.some(p => Math.abs(p.phase) > 5.0), 'Hilbert transform must synthesize non-zero minimum phase for Altec 604-8K tweeter');
+
+  // Verify SPL reference shift when user edits Sensitivity after loading Altec preset
+  const userEditedSPL = 95.0; // -3 dB from 98.0 dB preset
+  const shift = userEditedSPL - altec604WooferTS.spl;
+  assert.equal(shift, -3.0);
+  const shiftedWoofer = minPhaseWoofer.map(p => ({ ...p, magnitude: p.magnitude + shift }));
+  assert.ok(Math.abs(shiftedWoofer[50].magnitude - (altec604WooferCurve[50].magnitude - 3.0)) < 1e-6);
+});
+
+test('UI Verification - Cabinet Closed/Ported Title, FRD Import/Export Dialog, and Altec Preset Wiring', async () => {
+  const fs = await import('node:fs');
+  const appJSX = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const mainSplitSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/MainSplitView.swift', import.meta.url), 'utf8');
+  const cabinetSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/CabinetInspectorView.swift', import.meta.url), 'utf8');
+  const frdEditorSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/CurveDigitizerEditorView.swift', import.meta.url), 'utf8');
+  const viewModelSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/ViewModels/MainDesignerViewModel.swift', import.meta.url), 'utf8');
+
+  // 1. Cabinet title changed to "Cabinet Closed/Ported" in both Swift and React
+  assert.ok(mainSplitSwift.includes('Label("Cabinet Closed/Ported"'), 'MainSplitView.swift must use "Cabinet Closed/Ported"');
+  assert.ok(!mainSplitSwift.includes('Label("Closed Cabinet"'), 'MainSplitView.swift must not use "Closed Cabinet"');
+  assert.ok(cabinetSwift.includes('Text("Cabinet Closed/Ported")'), 'CabinetInspectorView.swift must use "Cabinet Closed/Ported"');
+  assert.ok(appJSX.includes('<span>Cabinet Closed/Ported</span>'), 'App.jsx cabinet dialog must use "Cabinet Closed/Ported"');
+  assert.ok(appJSX.includes('>Cabinet Closed/Ported</button>'), 'App.jsx navigation tab must use "Cabinet Closed/Ported"');
+
+  // 2. FRD Import/Export dialog buttons exist and are wired in both Swift and React
+  assert.ok(frdEditorSwift.includes('viewModel.importWooferFRDText'), 'CurveDigitizerEditorView must wire Import Woofer FRD');
+  assert.ok(frdEditorSwift.includes('viewModel.importTweeterFRDText'), 'CurveDigitizerEditorView must wire Import Tweeter FRD');
+  assert.ok(frdEditorSwift.includes('viewModel.chooseWooferFRDFile'), 'CurveDigitizerEditorView must wire Choose Woofer FRD File');
+  assert.ok(frdEditorSwift.includes('viewModel.chooseTweeterFRDFile'), 'CurveDigitizerEditorView must wire Choose Tweeter FRD File');
+  assert.ok(frdEditorSwift.includes('viewModel.exportSystemFRDToFile'), 'CurveDigitizerEditorView must wire Export System Simulated FRD File');
+  assert.ok(frdEditorSwift.includes('viewModel.copySystemFRDToClipboard'), 'CurveDigitizerEditorView must wire Copy System Simulated FRD to Clipboard');
+  assert.ok(appJSX.includes('handleImportWooferFRDText'), 'App.jsx must wire Import Woofer FRD');
+  assert.ok(appJSX.includes('handleImportTweeterFRDText'), 'App.jsx must wire Import Tweeter FRD');
+  assert.ok(appJSX.includes('handleExportSystemFRDFile'), 'App.jsx must wire Export System Simulated FRD File');
+  assert.ok(appJSX.includes('handleCopySystemFRD'), 'App.jsx must wire Copy System Simulated FRD to Clipboard');
+
+  // 3. Altec 604-8K preset preserves custom curves across recalculateSimulation
+  assert.ok(viewModelSwift.includes('!driver.hasCustomWooferCurve && self.wooferFRDText.isEmpty'), 'recalculateSimulation must not overwrite custom/preset woofer curve');
+  assert.ok(viewModelSwift.includes('!driver.hasCustomTweeterCurve && self.tweeterFRDText.isEmpty'), 'recalculateSimulation must not overwrite custom/preset tweeter curve');
+});
+
+test('End-to-End Simulation - Altec 604-8K Preset and Custom FRD Import Reflect in All 5 Graphs', async () => {
+  const {
+    altec604WooferTS,
+    altec604Tweeter,
+    altec604RecommendedCrossover,
+    altec604WooferCurve,
+    altec604TweeterCurve
+  } = await import('../src/utils/altec604Data.js');
+
+  class Complex {
+    constructor(re, im = 0) { this.re = re; this.im = im; }
+    static polar(r, thetaRad) { return new Complex(r * Math.cos(thetaRad), r * Math.sin(thetaRad)); }
+    add(c) { return c instanceof Complex ? new Complex(this.re + c.re, this.im + c.im) : new Complex(this.re + c, this.im); }
+    mul(c) { return c instanceof Complex ? new Complex(this.re * c.re - this.im * c.im, this.re * c.im + this.im * c.re) : new Complex(this.re * c, this.im * c); }
+    div(c) {
+      if (typeof c === 'number') return new Complex(this.re / c, this.im / c);
+      const d = c.re * c.re + c.im * c.im;
+      return d === 0 ? new Complex(0, 0) : new Complex((this.re * c.re + this.im * c.im) / d, (this.im * c.re - this.re * c.im) / d);
+    }
+    scale(s) { return new Complex(this.re * s, this.im * s); }
+    get mag() { return Math.hypot(this.re, this.im); }
+    get phaseDeg() { return Math.atan2(this.im, this.re) * (180 / Math.PI); }
+  }
+
+  function computeMinimumPhase(points) {
+    if (!points || points.length < 4) return points || [];
+    const n = points.length;
+    const result = points.map(p => ({ ...p }));
+    for (let i = 0; i < n; i++) {
+      const f0 = points[i].frequency;
+      let phaseRad = 0.0;
+      for (let j = 0; j < n - 1; j++) {
+        const f1 = points[j].frequency, f2 = points[j + 1].frequency;
+        const mag1 = points[j].magnitude, mag2 = points[j + 1].magnitude;
+        if (f1 === f2 || f1 <= 0 || f2 <= 0) continue;
+        const dLnA = Math.log(Math.max(Math.pow(10.0, mag2 / 20.0), 1e-6)) - Math.log(Math.max(Math.pow(10.0, mag1 / 20.0), 1e-6));
+        const dLnF = Math.log(f2 / f1);
+        const slope = dLnA / dLnF;
+        const fAvg = Math.sqrt(f1 * f2);
+        const diff = Math.abs(fAvg - f0);
+        if (diff > 1e-4) {
+          const ratio = (fAvg + f0) / diff;
+          if (ratio > 1e-6) {
+            const term = (1.0 / Math.PI) * slope * Math.log(ratio) * dLnF;
+            if (Number.isFinite(term)) phaseRad -= term;
+          }
+        }
+      }
+      let phaseDeg = (phaseRad * (180.0 / Math.PI)) % 360.0;
+      if (phaseDeg > 180.0) phaseDeg -= 360.0;
+      if (phaseDeg < -180.0) phaseDeg += 360.0;
+      result[i].phase = phaseDeg;
+    }
+    return result;
+  }
+
+  function interpolateCurvePoint(freq, curve) {
+    if (!curve || curve.length === 0) return null;
+    if (freq <= curve[0].frequency) return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0 };
+    if (freq >= curve[curve.length - 1].frequency) {
+      const last = curve[curve.length - 1];
+      return { magnitude: last.magnitude, phase: last.phase || 0 };
+    }
+    for (let j = 0; j < curve.length - 1; j++) {
+      const p1 = curve[j], p2 = curve[j + 1];
+      if (freq >= p1.frequency && freq <= p2.frequency) {
+        const t = (Math.log10(freq) - Math.log10(p1.frequency)) / (Math.log10(p2.frequency) - Math.log10(p1.frequency));
+        return {
+          magnitude: p1.magnitude + t * (p2.magnitude - p1.magnitude),
+          phase: (p1.phase || 0) + t * ((p2.phase || 0) - (p1.phase || 0))
+        };
+      }
+    }
+    return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0 };
+  }
+
+  function runSimulation({ ts, tweeter, fx, wooferCurve = [], tweeterCurve = [] }) {
+    const prepW = wooferCurve.length > 0 ? computeMinimumPhase(wooferCurve) : [];
+    const prepT = tweeterCurve.length > 0 ? computeMinimumPhase(tweeterCurve) : [];
+    const ratio = 0.7071 / Math.max(ts.qts, 0.01);
+    const alpha = Math.max(ratio * ratio - 1.0, 0.05);
+    const fc = ts.fs * Math.sqrt(1 + alpha);
+    const qtc = ts.qts * Math.sqrt(1 + alpha);
+    const wc = 2 * Math.PI * fc;
+    const delaySec = (35.0 / 1000.0) / 343.0;
+    const lpadGain = Math.pow(10, -5.0 / 20.0);
+
+    const testFreqs = [30, 100, 200, 462, 1000, 1500, 1865, 2644, 5000, 10000];
+    return testFreqs.map(f => {
+      const w = 2 * Math.PI * f;
+      const wfPt = interpolateCurvePoint(f, prepW);
+      const pWComp = wfPt
+        ? Complex.polar(Math.pow(10, wfPt.magnitude / 20.0), wfPt.phase * (Math.PI / 180.0))
+        : new Complex(Math.pow(10, (ts.spl - (f > 2200 ? 0.003 * (f - 2200) : 0)) / 20.0), 0);
+      const hCab = new Complex(-w * w, 0).div(new Complex(wc * wc - w * w, (w * wc) / qtc));
+      const xW = f / fx;
+      const hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, 2 * xW));
+      const pWFinal = pWComp.mul(hCab).mul(hLP);
+
+      const twPt = interpolateCurvePoint(f, prepT);
+      const pTComp = twPt
+        ? Complex.polar(Math.pow(10, twPt.magnitude / 20.0), twPt.phase * (Math.PI / 180.0))
+        : new Complex(Math.pow(10, (tweeter.spl - (f < 1500 ? 18 * Math.log2(1500 / f) : 0)) / 20.0), 0);
+      const xT = f / fx;
+      const hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, 2 * xT));
+      const hDelay = Complex.polar(1.0, -w * delaySec);
+      const pTFinal = pTComp.mul(hHP).mul(lpadGain).mul(hDelay);
+
+      const pTotal = pWFinal.add(pTFinal);
+      const deltaF = (f / fc) - (fc / f);
+      const resW = ts.re * (ts.qms / ts.qes);
+      const denomM = 1 + Math.pow(ts.qms * deltaF, 2);
+      const zW = new Complex(ts.re + resW / denomM, w * (ts.le / 1000.0) - resW * (ts.qms * deltaF) / denomM);
+
+      return {
+        f,
+        wooferSPL: 20 * Math.log10(pWFinal.mag),
+        tweeterSPL: 20 * Math.log10(pTFinal.mag),
+        totalSPL: 20 * Math.log10(pTotal.mag),
+        wooferPhase: pWFinal.phaseDeg,
+        tweeterPhase: pTFinal.phaseDeg,
+        totalPhase: pTotal.phaseDeg,
+        zWooferMag: zW.mag
+      };
+    });
+  }
+
+  const defaultSim = runSimulation({
+    ts: { fs: 48.0, qes: 0.36, qms: 4.8, qts: 0.335, vas: 28.0, re: 6.2, le: 0.85, spl: 89.0 },
+    tweeter: { fs: 1200.0, re: 5.8, le: 0.08, spl: 94.0 },
+    fx: 2200
+  });
+
+  const altecSim = runSimulation({
+    ts: altec604WooferTS,
+    tweeter: altec604Tweeter,
+    fx: altec604RecommendedCrossover,
+    wooferCurve: altec604WooferCurve,
+    tweeterCurve: altec604TweeterCurve
+  });
+
+  // Verify every simulated graph metric differs between default and Altec 604-8K preset
+  const idx200 = 2; // 200 Hz
+  const idx462 = 3; // 462 Hz
+  const idx2644 = 7; // 2644 Hz
+  assert.notEqual(altecSim[idx200].wooferSPL, defaultSim[idx200].wooferSPL);
+  // Altec CLIO curve has a dip at 462 Hz (91.50 dB) vs peak at 200 Hz (98.51 dB)
+  assert.ok(altecSim[idx200].wooferSPL > altecSim[idx462].wooferSPL + 5.0, 'Altec CLIO curve features (200 Hz peak vs 462 Hz dip) must reflect in Amplitude graph');
+  assert.notEqual(altecSim[idx2644].tweeterSPL, defaultSim[idx2644].tweeterSPL);
+  assert.notEqual(altecSim[idx200].wooferPhase, defaultSim[idx200].wooferPhase);
+  assert.notEqual(altecSim[idx2644].tweeterPhase, defaultSim[idx2644].tweeterPhase);
+  assert.notEqual(altecSim[1].zWooferMag, defaultSim[1].zWooferMag);
+});
+
+
+

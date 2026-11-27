@@ -13,7 +13,7 @@ public struct CabinetInspectorView: View {
                 Image(systemName: "cube.box.fill")
                     .font(.title2)
                     .foregroundColor(.accentColor)
-                Text("Closed (Sealed) Cabinet Designer")
+                Text("Cabinet Closed/Ported")
                     .font(.title2)
                     .bold()
 

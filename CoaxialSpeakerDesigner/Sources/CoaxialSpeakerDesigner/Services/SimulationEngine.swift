@@ -19,8 +19,32 @@ public enum SimulationEngine {
         let logStep = (logMax - logMin) / Double(stepCount)
         
         // Ensure Hilbert minimum phase is present for raw driver acoustic curves
-        let rawWooferCurve = driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve
-        let rawTweeterCurve = driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve
+        let baseWooferCurve = (driver.hasCustomWooferCurve && !driver.wooferAcousticCurve.isEmpty)
+            ? driver.wooferAcousticCurve
+            : (driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve)
+        let baseTweeterCurve = (driver.hasCustomTweeterCurve && !driver.tweeterAcousticCurve.isEmpty)
+            ? driver.tweeterAcousticCurve
+            : (driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve)
+
+        let wooferSPLShift: Double = {
+            if driver.hasCustomWooferCurve, let refSPL = driver.customWooferReferenceSPL, refSPL > 0, driver.wooferTS.spl > 0 {
+                return driver.wooferTS.spl - refSPL
+            }
+            return 0.0
+        }()
+        let tweeterSPLShift: Double = {
+            if driver.hasCustomTweeterCurve, let refSPL = driver.customTweeterReferenceSPL, refSPL > 0, driver.tweeter.spl > 0 {
+                return driver.tweeter.spl - refSPL
+            }
+            return 0.0
+        }()
+
+        let rawWooferCurve = abs(wooferSPLShift) > 1e-4
+            ? baseWooferCurve.map { ResponseDataPoint(id: $0.id, frequency: $0.frequency, magnitude: $0.magnitude + wooferSPLShift, phase: $0.phase) }
+            : baseWooferCurve
+        let rawTweeterCurve = abs(tweeterSPLShift) > 1e-4
+            ? baseTweeterCurve.map { ResponseDataPoint(id: $0.id, frequency: $0.frequency, magnitude: $0.magnitude + tweeterSPLShift, phase: $0.phase) }
+            : baseTweeterCurve
 
         let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
         let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)
@@ -398,8 +422,32 @@ public enum SimulationEngine {
         var rTot = [Double](repeating: 0.0, count: n)
         var iTot = [Double](repeating: 0.0, count: n)
 
-        let rawWooferCurve = driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve
-        let rawTweeterCurve = driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve
+        let baseWooferCurve = (driver.hasCustomWooferCurve && !driver.wooferAcousticCurve.isEmpty)
+            ? driver.wooferAcousticCurve
+            : (driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve)
+        let baseTweeterCurve = (driver.hasCustomTweeterCurve && !driver.tweeterAcousticCurve.isEmpty)
+            ? driver.tweeterAcousticCurve
+            : (driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve)
+
+        let wooferSPLShift: Double = {
+            if driver.hasCustomWooferCurve, let refSPL = driver.customWooferReferenceSPL, refSPL > 0, driver.wooferTS.spl > 0 {
+                return driver.wooferTS.spl - refSPL
+            }
+            return 0.0
+        }()
+        let tweeterSPLShift: Double = {
+            if driver.hasCustomTweeterCurve, let refSPL = driver.customTweeterReferenceSPL, refSPL > 0, driver.tweeter.spl > 0 {
+                return driver.tweeter.spl - refSPL
+            }
+            return 0.0
+        }()
+
+        let rawWooferCurve = abs(wooferSPLShift) > 1e-4
+            ? baseWooferCurve.map { ResponseDataPoint(id: $0.id, frequency: $0.frequency, magnitude: $0.magnitude + wooferSPLShift, phase: $0.phase) }
+            : baseWooferCurve
+        let rawTweeterCurve = abs(tweeterSPLShift) > 1e-4
+            ? baseTweeterCurve.map { ResponseDataPoint(id: $0.id, frequency: $0.frequency, magnitude: $0.magnitude + tweeterSPLShift, phase: $0.phase) }
+            : baseTweeterCurve
 
         let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
         let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)

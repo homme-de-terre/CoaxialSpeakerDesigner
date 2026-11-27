@@ -79,6 +79,7 @@ public class MainDesignerViewModel: ObservableObject {
     @Published public var showTweeterFinal: Bool = true
     @Published public var showTargetReference: Bool = true
     @Published public var targetReferenceSPL: Double = 89.0
+    @Published public var simulationRevision: Int = 0
     @Published public var openDetachedCharts: Set<DetachedChartKind> = []
 
     #if canImport(AppKit)
@@ -94,6 +95,9 @@ public class MainDesignerViewModel: ObservableObject {
         self.driver = driver
         self.cabinet = cabinet
         self.crossover = crossover
+        if driver.wooferTS.spl > 0 {
+            self.targetReferenceSPL = driver.wooferTS.spl
+        }
 
         recalculateSimulation()
     }
@@ -106,15 +110,18 @@ public class MainDesignerViewModel: ObservableObject {
         isRecalculating = true
         defer { isRecalculating = false }
         
-        // If curves are synthetic (no custom FRD imported), keep them in sync with current manual/parsed T/S parameters
-        if self.wooferFRDText.isEmpty {
+        // If curves are synthetic (no custom/preset/digitized FRD active), keep them in sync with current manual/parsed T/S parameters
+        if !driver.hasCustomWooferCurve && self.wooferFRDText.isEmpty {
             driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS)
         }
-        if self.tweeterFRDText.isEmpty {
+        if !driver.hasCustomTweeterCurve && self.tweeterFRDText.isEmpty {
             driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter)
         }
         driver.wooferImpedanceCurve = CoaxialDriver.generateSyntheticWooferImpedance(ts: driver.wooferTS)
         driver.tweeterImpedanceCurve = CoaxialDriver.generateSyntheticTweeterImpedance(tw: driver.tweeter)
+        if driver.wooferTS.spl > 0 {
+            self.targetReferenceSPL = driver.wooferTS.spl
+        }
 
         // Run Nelder-Mead All-Pass Filter Phase Alignment Optimization if APF is enabled
         if crossover.enableAllpassFilter {
@@ -157,6 +164,7 @@ public class MainDesignerViewModel: ObservableObject {
         self.simulationPoints = newPoints
         self.calculatedComponents = newComponents
         self.stepResponsePoints = newStepPoints
+        self.simulationRevision &+= 1
         self.validateParameters()
     }
 
@@ -275,6 +283,9 @@ public class MainDesignerViewModel: ObservableObject {
 
     /// Applies extracted datasheet parameters and synthesizes driver response curves.
     private func applyParsedDatasheet(result: (ts: WooferTSParameters, tweeter: TweeterParameters, name: String, recommendedCrossover: Double, missingParams: [String], warnings: [String], rawText: String, wooferCurve: [ResponseDataPoint], tweeterCurve: [ResponseDataPoint]), sourceName: String) {
+        #if canImport(AppKit)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
         self.driver.name = result.name
         self.driver.datasheetURL = sourceName
         self.driver.wooferTS = result.ts
@@ -282,26 +293,41 @@ public class MainDesignerViewModel: ObservableObject {
 
         if result.recommendedCrossover >= 500.0 && result.recommendedCrossover <= 8000.0 {
             self.crossover.crossoverFrequency = result.recommendedCrossover
+            self.crossover.wooferCrossoverFrequency = result.recommendedCrossover
+            self.crossover.tweeterCrossoverFrequency = result.recommendedCrossover
         }
 
         self.missingParameters = result.missingParams
         self.plausibilityWarnings = result.warnings
 
         if !result.wooferCurve.isEmpty {
+            self.driver.hasCustomWooferCurve = true
+            self.driver.customWooferReferenceSPL = result.ts.spl
             self.driver.wooferAcousticCurve = result.wooferCurve
-        } else if self.wooferFRDText.isEmpty {
+            self.wooferFRDText = DatasheetParser.exportToFRD(points: result.wooferCurve, comment: "\(result.name) - Digitized Woofer Response")
+        } else {
+            self.driver.hasCustomWooferCurve = false
+            self.driver.customWooferReferenceSPL = nil
+            self.wooferFRDText = ""
             self.driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: result.ts)
         }
 
         if !result.tweeterCurve.isEmpty {
+            self.driver.hasCustomTweeterCurve = true
+            self.driver.customTweeterReferenceSPL = result.tweeter.spl
             self.driver.tweeterAcousticCurve = result.tweeterCurve
-        } else if self.tweeterFRDText.isEmpty {
+            self.tweeterFRDText = DatasheetParser.exportToFRD(points: result.tweeterCurve, comment: "\(result.name) - Digitized Tweeter Response")
+        } else {
+            self.driver.hasCustomTweeterCurve = false
+            self.driver.customTweeterReferenceSPL = nil
+            self.tweeterFRDText = ""
             self.driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: result.tweeter)
         }
         self.driver.wooferImpedanceCurve = CoaxialDriver.generateSyntheticWooferImpedance(ts: result.ts)
         self.driver.tweeterImpedanceCurve = CoaxialDriver.generateSyntheticTweeterImpedance(tw: result.tweeter)
 
         self.isLoadingDatasheet = false
+        self.errorMessage = nil
         if !result.warnings.isEmpty {
             self.statusMessage = "Warning: \(result.warnings.joined(separator: " | "))"
         } else if !result.missingParams.isEmpty {
@@ -315,39 +341,228 @@ public class MainDesignerViewModel: ObservableObject {
 
     /// Loads factory preset specifications and digitized CLIO response curves for Altec Lansing 604-8K.
     public func loadAltec604Preset() {
+        #if canImport(AppKit)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+        self.wooferFRDText = DatasheetParser.exportToFRD(
+            points: Altec604Data.wooferCurve,
+            comment: "Altec Lansing 604-8K - Digitized CLIO Woofer Response"
+        )
+        self.tweeterFRDText = DatasheetParser.exportToFRD(
+            points: Altec604Data.tweeterCurve,
+            comment: "Altec Lansing 604-8K - Digitized CLIO Tweeter Response"
+        )
         self.driver = Altec604Data.createDriver()
         self.crossover.crossoverFrequency = Altec604Data.recommendedCrossover
+        self.crossover.wooferCrossoverFrequency = Altec604Data.recommendedCrossover
+        self.crossover.tweeterCrossoverFrequency = Altec604Data.recommendedCrossover
+        self.targetReferenceSPL = Altec604Data.wooferTS.spl
+        self.missingParameters = []
+        self.plausibilityWarnings = []
+        self.errorMessage = nil
         self.statusMessage = "Loaded Altec Lansing 604-8K factory specs & digitized CLIO frequency response curves."
         self.recalculateSimulation()
     }
 
     /// Ingest raw text as FRD data for Woofer acoustic curve.
     public func importWooferFRDText(_ text: String) {
-        let points = DatasheetParser.parseFRDText(text)
+        #if canImport(AppKit)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            #if canImport(AppKit)
+            chooseWooferFRDFile()
+            return
+            #else
+            self.errorMessage = "Please paste Woofer FRD data (Freq, SPL, Phase) or select an FRD file."
+            return
+            #endif
+        }
+        let points = DatasheetParser.parseFRDText(trimmed)
         if !points.isEmpty {
+            self.wooferFRDText = text
+            self.driver.hasCustomWooferCurve = true
+            self.driver.customWooferReferenceSPL = self.driver.wooferTS.spl
             self.driver.wooferAcousticCurve = points
+            self.errorMessage = nil
+            self.statusMessage = "Imported \(points.count) woofer acoustic FRD points."
             self.recalculateSimulation()
-            self.statusMessage = "Imported \(points.count) woofer acoustic points."
+        } else {
+            self.errorMessage = "Could not parse Woofer FRD data. Expected 2 or 3 numeric columns per line: Frequency(Hz) SPL(dB) [Phase(Deg)]."
         }
     }
 
     /// Ingest raw text as FRD data for Tweeter acoustic curve.
     public func importTweeterFRDText(_ text: String) {
-        let points = DatasheetParser.parseFRDText(text)
+        #if canImport(AppKit)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            #if canImport(AppKit)
+            chooseTweeterFRDFile()
+            return
+            #else
+            self.errorMessage = "Please paste Tweeter FRD data (Freq, SPL, Phase) or select an FRD file."
+            return
+            #endif
+        }
+        let points = DatasheetParser.parseFRDText(trimmed)
         if !points.isEmpty {
+            self.tweeterFRDText = text
+            self.driver.hasCustomTweeterCurve = true
+            self.driver.customTweeterReferenceSPL = self.driver.tweeter.spl
             self.driver.tweeterAcousticCurve = points
+            self.errorMessage = nil
+            self.statusMessage = "Imported \(points.count) tweeter acoustic FRD points."
             self.recalculateSimulation()
-            self.statusMessage = "Imported \(points.count) tweeter acoustic points."
+        } else {
+            self.errorMessage = "Could not parse Tweeter FRD data. Expected 2 or 3 numeric columns per line: Frequency(Hz) SPL(dB) [Phase(Deg)]."
         }
     }
+
+    /// Resets Woofer acoustic curve back to T/S synthetic model.
+    public func resetWooferToSyntheticCurve() {
+        #if canImport(AppKit)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+        self.wooferFRDText = ""
+        self.driver.hasCustomWooferCurve = false
+        self.driver.customWooferReferenceSPL = nil
+        self.driver.wooferAcousticCurve = CoaxialDriver.generateSyntheticWooferCurve(ts: self.driver.wooferTS)
+        self.errorMessage = nil
+        self.statusMessage = "Reset woofer response to synthetic T/S curve."
+        self.recalculateSimulation()
+    }
+
+    /// Resets Tweeter acoustic curve back to synthetic model.
+    public func resetTweeterToSyntheticCurve() {
+        #if canImport(AppKit)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+        self.tweeterFRDText = ""
+        self.driver.hasCustomTweeterCurve = false
+        self.driver.customTweeterReferenceSPL = nil
+        self.driver.tweeterAcousticCurve = CoaxialDriver.generateSyntheticTweeterCurve(tw: self.driver.tweeter)
+        self.errorMessage = nil
+        self.statusMessage = "Reset tweeter response to synthetic HF curve."
+        self.recalculateSimulation()
+    }
+
+    #if canImport(AppKit)
+    /// Opens macOS file picker to load a local .frd or .txt file into the Woofer FRD curve.
+    public func chooseWooferFRDFile() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Select Woofer Acoustic Response File (FRD / TXT)"
+        openPanel.message = "Choose a 2- or 3-column frequency response data file (.frd, .txt, .csv)"
+        openPanel.allowedContentTypes = [UTType.plainText, UTType.commaSeparatedText, UTType.data, UTType.item]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+
+        NSApp.activate(ignoringOtherApps: true)
+        if openPanel.runModal() == .OK, let url = openPanel.url {
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let points = DatasheetParser.parseFRDText(content)
+                if !points.isEmpty {
+                    self.wooferFRDText = content
+                    self.driver.hasCustomWooferCurve = true
+                    self.driver.customWooferReferenceSPL = self.driver.wooferTS.spl
+                    self.driver.wooferAcousticCurve = points
+                    self.errorMessage = nil
+                    self.statusMessage = "Imported \(points.count) woofer FRD points from \(url.lastPathComponent)."
+                    self.recalculateSimulation()
+                } else {
+                    self.errorMessage = "No valid FRD points found in \(url.lastPathComponent)."
+                }
+            } catch {
+                self.errorMessage = "Failed to read Woofer FRD file: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Opens macOS file picker to load a local .frd or .txt file into the Tweeter FRD curve.
+    public func chooseTweeterFRDFile() {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Select Tweeter Acoustic Response File (FRD / TXT)"
+        openPanel.message = "Choose a 2- or 3-column frequency response data file (.frd, .txt, .csv)"
+        openPanel.allowedContentTypes = [UTType.plainText, UTType.commaSeparatedText, UTType.data, UTType.item]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+
+        NSApp.activate(ignoringOtherApps: true)
+        if openPanel.runModal() == .OK, let url = openPanel.url {
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let points = DatasheetParser.parseFRDText(content)
+                if !points.isEmpty {
+                    self.tweeterFRDText = content
+                    self.driver.hasCustomTweeterCurve = true
+                    self.driver.customTweeterReferenceSPL = self.driver.tweeter.spl
+                    self.driver.tweeterAcousticCurve = points
+                    self.errorMessage = nil
+                    self.statusMessage = "Imported \(points.count) tweeter FRD points from \(url.lastPathComponent)."
+                    self.recalculateSimulation()
+                } else {
+                    self.errorMessage = "No valid FRD points found in \(url.lastPathComponent)."
+                }
+            } catch {
+                self.errorMessage = "Failed to read Tweeter FRD file: \(error.localizedDescription)"
+            }
+        }
+    }
+    #endif
 
     /// Export simulated system curve as FRD text file.
     public func exportSystemFRD() -> String {
         let exportPoints = simulationPoints.map {
             ResponseDataPoint(frequency: $0.frequency, magnitude: $0.totalSystemSPL, phase: $0.totalSystemPhaseDeg)
         }
-        return DatasheetParser.exportToFRD(points: exportPoints, comment: "\(driver.name) - Sealed Cabinet \(String(format: "%.1f", cabinet.computedVolumeLiters(for: driver.wooferTS)))L - Combined Response")
+        let cabLabel = cabinet.enclosureType == .vented ? "Ported Cabinet" : "Closed Cabinet"
+        return DatasheetParser.exportToFRD(points: exportPoints, comment: "\(driver.name) - \(cabLabel) \(String(format: "%.1f", cabinet.computedVolumeLiters(for: driver.wooferTS)))L - Combined Response")
     }
+
+    #if canImport(AppKit)
+    /// Copies simulated system FRD text to the macOS clipboard and updates status message.
+    public func copySystemFRDToClipboard() {
+        let frdText = exportSystemFRD()
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(frdText, forType: .string)
+        self.errorMessage = nil
+        self.statusMessage = "Copied \(simulationPoints.count)-point simulated system FRD to clipboard."
+    }
+
+    /// Exports simulated system FRD text to a local .frd file via macOS Save Panel.
+    public func exportSystemFRDToFile() {
+        let frdText = exportSystemFRD()
+        let savePanel = NSSavePanel()
+        if let frdType = UTType(filenameExtension: "frd") {
+            savePanel.allowedContentTypes = [frdType, UTType.plainText]
+        } else {
+            savePanel.allowedContentTypes = [UTType.plainText]
+        }
+        savePanel.allowsOtherFileTypes = true
+        let sanitizedName = driver.name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "_")
+        savePanel.nameFieldStringValue = "\(sanitizedName.isEmpty ? "Speaker" : sanitizedName)_System_Simulated.frd"
+        savePanel.title = "Export Simulated System FRD File"
+        savePanel.message = "Save 3-column simulated amplitude and phase response as a standard .frd file"
+
+        NSApp.activate(ignoringOtherApps: true)
+        if savePanel.runModal() == .OK, let url = savePanel.url {
+            do {
+                try frdText.write(to: url, atomically: true, encoding: .utf8)
+                self.errorMessage = nil
+                self.statusMessage = "Successfully exported simulated FRD to \(url.lastPathComponent)."
+            } catch {
+                self.errorMessage = "Failed to save FRD file: \(error.localizedDescription)"
+            }
+        }
+    }
+    #endif
 
     /// Generates vector PDF schematic & BOM document and opens macOS Save Panel dialog.
     public func exportSchematicPDF() {
@@ -397,12 +612,30 @@ public class MainDesignerViewModel: ObservableObject {
 
     /// Ingests a JSON design string and restores all parameters and simulations.
     public func importDesignJSON(_ jsonString: String) throws {
+        #if canImport(AppKit)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
         let doc = try SpeakerDesignDocument.fromJSON(jsonString)
-        self.driver = doc.driver
-        self.cabinet = doc.cabinet
-        self.crossover = doc.crossover
         self.wooferFRDText = doc.wooferFRDText ?? ""
         self.tweeterFRDText = doc.tweeterFRDText ?? ""
+        var loadedDriver = doc.driver
+        if !self.wooferFRDText.isEmpty {
+            let wPts = DatasheetParser.parseFRDText(self.wooferFRDText)
+            if !wPts.isEmpty {
+                loadedDriver.wooferAcousticCurve = wPts
+                loadedDriver.hasCustomWooferCurve = true
+            }
+        }
+        if !self.tweeterFRDText.isEmpty {
+            let tPts = DatasheetParser.parseFRDText(self.tweeterFRDText)
+            if !tPts.isEmpty {
+                loadedDriver.tweeterAcousticCurve = tPts
+                loadedDriver.hasCustomTweeterCurve = true
+            }
+        }
+        self.driver = loadedDriver
+        self.cabinet = doc.cabinet
+        self.crossover = doc.crossover
         self.statusMessage = "Successfully loaded design '\(doc.name)'"
         self.errorMessage = nil
         self.recalculateSimulation()

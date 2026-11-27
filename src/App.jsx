@@ -40,9 +40,107 @@ class Complex {
       (this.im * c.re - this.re * c.im) / denom
     );
   }
+  scale(s) {
+    return new Complex(this.re * s, this.im * s);
+  }
   get mag() { return Math.hypot(this.re, this.im); }
   get phaseRad() { return Math.atan2(this.im, this.re); }
   get phaseDeg() { return Math.atan2(this.im, this.re) * (180 / Math.PI); }
+}
+
+// --- Discrete Hilbert Transform for Minimum Phase Synthesis ---
+function computeMinimumPhase(points) {
+  if (!points || points.length < 4) return points || [];
+  const n = points.length;
+  const result = points.map(p => ({ ...p }));
+  for (let i = 0; i < n; i++) {
+    const f0 = points[i].frequency;
+    let phaseRad = 0.0;
+    for (let j = 0; j < n - 1; j++) {
+      const f1 = points[j].frequency;
+      const f2 = points[j + 1].frequency;
+      const mag1 = points[j].magnitude;
+      const mag2 = points[j + 1].magnitude;
+      if (f1 === f2 || f1 <= 0 || f2 <= 0) continue;
+      const dLnA = Math.log(Math.max(Math.pow(10.0, mag2 / 20.0), 1e-6)) - Math.log(Math.max(Math.pow(10.0, mag1 / 20.0), 1e-6));
+      const dLnF = Math.log(f2 / f1);
+      const slope = dLnA / dLnF;
+      const fAvg = Math.sqrt(f1 * f2);
+      const diff = Math.abs(fAvg - f0);
+      if (diff > 1e-4) {
+        const ratio = (fAvg + f0) / diff;
+        if (ratio > 1e-6) {
+          const kernel = Math.log(ratio);
+          const term = (1.0 / Math.PI) * slope * kernel * dLnF;
+          if (Number.isFinite(term)) {
+            phaseRad -= term;
+          }
+        }
+      }
+    }
+    let phaseDeg = phaseRad * (180.0 / Math.PI);
+    if (!Number.isFinite(phaseDeg)) {
+      phaseDeg = 0.0;
+    } else {
+      phaseDeg = phaseDeg % 360.0;
+      if (phaseDeg > 180.0) phaseDeg -= 360.0;
+      if (phaseDeg < -180.0) phaseDeg += 360.0;
+    }
+    result[i].phase = phaseDeg;
+  }
+  return result;
+}
+
+function ensurePhase(curve) {
+  if (!curve || curve.length === 0) return [];
+  const hasNonZeroPhase = curve.some(p => Math.abs(p.phase || 0) > 0.01);
+  if (hasNonZeroPhase) return curve;
+  return computeMinimumPhase(curve);
+}
+
+// --- FRD Text Parser & Exporter (2 or 3 Columns: Frequency, SPL, [Phase]) ---
+function parseFRDText(text) {
+  if (!text || typeof text !== 'string') return [];
+  const points = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('#')) {
+      continue;
+    }
+    let components;
+    if (trimmed.includes(';')) {
+      components = trimmed.split(';').map(s => s.trim().replace(',', '.')).filter(Boolean);
+    } else {
+      const wsTokens = trimmed.split(/\s+/).filter(Boolean);
+      if (wsTokens.length >= 2 && !trimmed.includes(', ')) {
+        components = wsTokens.map(s => s.replace(/,+$/, '').replace(',', '.'));
+      } else {
+        components = trimmed.split(/[\s,]+/).filter(Boolean);
+      }
+    }
+    if (components.length >= 2) {
+      const freq = parseFloat(components[0]);
+      const mag = parseFloat(components[1]);
+      if (Number.isFinite(freq) && freq > 0 && Number.isFinite(mag)) {
+        const rawPhase = components.length >= 3 ? parseFloat(components[2]) : 0.0;
+        const phase = Number.isFinite(rawPhase) ? rawPhase : 0.0;
+        points.push({ frequency: freq, magnitude: mag, phase });
+      }
+    }
+  }
+  return points.sort((a, b) => a.frequency - b.frequency);
+}
+
+function exportToFRD(points, comment = "Exported from CoaxialSpeakerDesigner") {
+  let result = `* ${comment}\n* Freq(Hz)\tMag(dB)\tPhase(Deg)\n`;
+  for (const p of points) {
+    const freq = (p.frequency ?? 0).toFixed(2);
+    const mag = (p.magnitude ?? 0).toFixed(3);
+    const phase = (p.phase ?? 0).toFixed(2);
+    result += `${freq}\t${mag}\t${phase}\n`;
+  }
+  return result;
 }
 
 // --- E12 & E24 Value Snapping ---
@@ -213,8 +311,15 @@ export default function App() {
   // FRD Custom Data Strings & Digitized Acoustic Curves
   const [wooferCurve, setWooferCurve] = useState([]);
   const [tweeterCurve, setTweeterCurve] = useState([]);
+  const [wooferRefSPL, setWooferRefSPL] = useState(null);
+  const [tweeterRefSPL, setTweeterRefSPL] = useState(null);
   const [wooferFRDText, setWooferFRDText] = useState("");
   const [tweeterFRDText, setTweeterFRDText] = useState("");
+  const [digitizerActiveTab, setDigitizerActiveTab] = useState('woofer'); // 'woofer' | 'tweeter'
+  const [frdStatusMsg, setFrdStatusMsg] = useState("");
+  const [frdErrorMsg, setFrdErrorMsg] = useState("");
+  const wooferFRDFileInputRef = useRef(null);
+  const tweeterFRDFileInputRef = useRef(null);
 
   // Canvas Refs for Bode Plots (Main Tab & Detached Live Monitor Windows)
   const amplitudeCanvasRef = useRef(null);
@@ -435,11 +540,35 @@ export default function App() {
     };
   }, [ts, enclosureType, alignment, ventedAlignment, tuningFb, portDiameterCm, portCount, targetF3, customQtc, stuffingGain, manualVbOverride, manualVbLiters]);
 
-  // --- Interpolate Raw Acoustic SPL from Digitized Curve Points ---
-  function interpolateCurveSPL(freq, curve) {
+  // --- Prepare Acoustic Curves with Minimum Phase & SPL Reference Shift ---
+  const preparedWooferCurve = useMemo(() => {
+    if (!wooferCurve || wooferCurve.length === 0) return [];
+    const shift = (wooferRefSPL && wooferRefSPL > 0 && ts.spl > 0) ? (ts.spl - wooferRefSPL) : 0.0;
+    const shifted = Math.abs(shift) > 1e-4
+      ? wooferCurve.map(p => ({ ...p, magnitude: p.magnitude + shift }))
+      : wooferCurve;
+    return ensurePhase(shifted);
+  }, [wooferCurve, wooferRefSPL, ts.spl]);
+
+  const preparedTweeterCurve = useMemo(() => {
+    if (!tweeterCurve || tweeterCurve.length === 0) return [];
+    const shift = (tweeterRefSPL && tweeterRefSPL > 0 && tweeter.spl > 0) ? (tweeter.spl - tweeterRefSPL) : 0.0;
+    const shifted = Math.abs(shift) > 1e-4
+      ? tweeterCurve.map(p => ({ ...p, magnitude: p.magnitude + shift }))
+      : tweeterCurve;
+    return ensurePhase(shifted);
+  }, [tweeterCurve, tweeterRefSPL, tweeter.spl]);
+
+  // --- Interpolate Raw Acoustic Pressure (SPL & Phase) from Digitized Curve Points ---
+  function interpolateCurvePoint(freq, curve) {
     if (!curve || curve.length === 0) return null;
-    if (freq <= curve[0].frequency) return curve[0].magnitude;
-    if (freq >= curve[curve.length - 1].frequency) return curve[curve.length - 1].magnitude;
+    if (freq <= curve[0].frequency) {
+      return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0.0 };
+    }
+    if (freq >= curve[curve.length - 1].frequency) {
+      const last = curve[curve.length - 1];
+      return { magnitude: last.magnitude, phase: last.phase || 0.0 };
+    }
     for (let j = 0; j < curve.length - 1; j++) {
       const p1 = curve[j];
       const p2 = curve[j + 1];
@@ -448,10 +577,14 @@ export default function App() {
         const logF1 = Math.log10(p1.frequency);
         const logF2 = Math.log10(p2.frequency);
         const t = (logF - logF1) / (logF2 - logF1);
-        return p1.magnitude + t * (p2.magnitude - p1.magnitude);
+        const magnitude = p1.magnitude + t * (p2.magnitude - p1.magnitude);
+        const ph1 = p1.phase || 0.0;
+        const ph2 = p2.phase || 0.0;
+        const phase = ph1 + t * (ph2 - ph1);
+        return { magnitude, phase };
       }
     }
-    return curve[0].magnitude;
+    return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0.0 };
   }
 
   // --- Nelder-Mead All-Pass Filter Phase Alignment Optimizer ---
@@ -489,12 +622,16 @@ export default function App() {
 
     freqs.forEach(f => {
       const w = 2.0 * Math.PI * f;
-      let pTweeterRawSPL = interpolateCurveSPL(f, tweeterCurve);
-      if (pTweeterRawSPL === null) {
+      const twPt = interpolateCurvePoint(f, preparedTweeterCurve);
+      let pTweeterRawSPL, pTweeterRawPhaseRad = 0.0;
+      if (twPt !== null) {
+        pTweeterRawSPL = twPt.magnitude;
+        pTweeterRawPhaseRad = twPt.phase * (Math.PI / 180.0);
+      } else {
         pTweeterRawSPL = tweeter.spl;
         if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
       }
-      const pTweeterRawComp = new Complex(Math.pow(10, pTweeterRawSPL / 20.0), 0);
+      const pTweeterRawComp = Complex.polar(Math.pow(10, pTweeterRawSPL / 20.0), pTweeterRawPhaseRad);
 
       const xT = f / actualTweeterFx;
       let hHP = new Complex(1, 0);
@@ -511,12 +648,16 @@ export default function App() {
       const hDelay = Complex.polar(polarityMult, -w * delaySec);
       pTweeterFixed.push(pTweeterRawComp.mul(hHP).mul(gLpad).mul(hDelay));
 
-      let pWooferRawSPL = interpolateCurveSPL(f, wooferCurve);
-      if (pWooferRawSPL === null) {
+      const wfPt = interpolateCurvePoint(f, preparedWooferCurve);
+      let pWooferRawSPL, pWooferRawPhaseRad = 0.0;
+      if (wfPt !== null) {
+        pWooferRawSPL = wfPt.magnitude;
+        pWooferRawPhaseRad = wfPt.phase * (Math.PI / 180.0);
+      } else {
         pWooferRawSPL = ts.spl;
         if (f < ts.fs) pWooferRawSPL -= 12 * Math.log2(ts.fs / Math.max(f, 10));
       }
-      const pWooferRawComp = new Complex(Math.pow(10, pWooferRawSPL / 20.0), 0);
+      const pWooferRawComp = Complex.polar(Math.pow(10, pWooferRawSPL / 20.0), pWooferRawPhaseRad);
 
       const s = new Complex(0, w);
       const s2 = s.mul(s);
@@ -635,7 +776,7 @@ export default function App() {
       alignmentStatus,
       warnings
     };
-  }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel, wooferCurve, tweeterCurve]);
+  }, [enableAllpass, acousticDelayMM, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableLPad, lpadAttenDB, invertTweeterPolarity, cabinetCalculations, ts, tweeter, enableZobel, preparedWooferCurve, preparedTweeterCurve]);
 
   // --- Passive Crossover Component Calculations ---
   const crossoverComponents = useMemo(() => {
@@ -750,15 +891,19 @@ export default function App() {
       const f = Math.pow(10, logF);
       const w = 2.0 * Math.PI * f;
 
-      // 1. Raw Woofer Passband SPL & Sealed Cabinet Transfer Function H_cab(s)
-      let pWooferRawSPL = interpolateCurveSPL(f, wooferCurve);
-      if (pWooferRawSPL === null) {
+      // 1. Raw Woofer Passband SPL, Phase & Cabinet Transfer Function H_cab(s)
+      const wfPt = interpolateCurvePoint(f, preparedWooferCurve);
+      let pWooferRawSPL, pWooferRawPhaseRad = 0.0;
+      if (wfPt !== null) {
+        pWooferRawSPL = wfPt.magnitude;
+        pWooferRawPhaseRad = wfPt.phase * (Math.PI / 180.0);
+      } else {
         pWooferRawSPL = ts.spl;
         if (f > 2200) pWooferRawSPL -= 0.003 * (f - 2200);
       }
 
       const pWooferRawLinear = Math.pow(10, pWooferRawSPL / 20.0);
-      const pWooferRawComp = new Complex(pWooferRawLinear, 0);
+      const pWooferRawComp = Complex.polar(pWooferRawLinear, pWooferRawPhaseRad);
 
       // Cabinet H_cab(s)
       let hCab;
@@ -815,13 +960,17 @@ export default function App() {
 
       const pWooferFinal = (pWooferCab.mul(hLP)).mul(hAP);
 
-      // 2. Raw Tweeter SPL & High-Pass Electrical Filter
-      let pTweeterRawSPL = interpolateCurveSPL(f, tweeterCurve);
-      if (pTweeterRawSPL === null) {
+      // 2. Raw Tweeter SPL, Phase & High-Pass Electrical Filter
+      const twPt = interpolateCurvePoint(f, preparedTweeterCurve);
+      let pTweeterRawSPL, pTweeterRawPhaseRad = 0.0;
+      if (twPt !== null) {
+        pTweeterRawSPL = twPt.magnitude;
+        pTweeterRawPhaseRad = twPt.phase * (Math.PI / 180.0);
+      } else {
         pTweeterRawSPL = tweeter.spl;
         if (f < 1500) pTweeterRawSPL -= 18 * Math.log2(1500 / Math.max(f, 10));
       }
-      const pTweeterRawComp = new Complex(Math.pow(10, pTweeterRawSPL / 20.0), 0);
+      const pTweeterRawComp = Complex.polar(Math.pow(10, pTweeterRawSPL / 20.0), pTweeterRawPhaseRad);
 
       const xT = f / actualTweeterFx;
       let hHP = new Complex(1, 0);
@@ -1018,7 +1167,7 @@ export default function App() {
     }
 
     return points;
-  }, [ts, tweeter, cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, wooferCurve, tweeterCurve]);
+  }, [ts, tweeter, cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, enableZobel, enableLPad, lpadAttenDB, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, preparedWooferCurve, preparedTweeterCurve]);
 
   // --- Render Bode Amplitude Plot ---
   useEffect(() => {
@@ -1582,21 +1731,28 @@ export default function App() {
         hAPI = (-2.0 * dR * dI) / dM2;
       }
 
-      let pWooferLinear = 1.0;
-      if (wooferCurve && wooferCurve.length > 0) {
-        const spl = interpolateCurveSPL(f, wooferCurve);
-        if (spl !== null) pWooferLinear = Math.pow(10, (spl - 90.0) / 20.0);
-      }
-      let pTweeterLinear = 1.0;
-      if (tweeterCurve && tweeterCurve.length > 0) {
-        const spl = interpolateCurveSPL(f, tweeterCurve);
-        if (spl !== null) pTweeterLinear = Math.pow(10, (spl - 90.0) / 20.0);
+      let pWooferRawComp;
+      const wfPt = interpolateCurvePoint(f, preparedWooferCurve);
+      if (wfPt !== null) {
+        pWooferRawComp = Complex.polar(Math.pow(10, (wfPt.magnitude - 90.0) / 20.0), wfPt.phase * (Math.PI / 180.0));
+      } else {
+        pWooferRawComp = new Complex(Math.pow(10, ((ts.spl || 89.0) - 90.0) / 20.0), 0);
       }
 
-      const pW_raw_R = (hCabR * hLPR - hCabI * hLPI) * pWooferLinear;
-      const pW_raw_I = (hCabR * hLPI + hCabI * hLPR) * pWooferLinear;
-      const pWR = pW_raw_R * hAPR - pW_raw_I * hAPI;
-      const pWI = pW_raw_R * hAPI + pW_raw_I * hAPR;
+      let pTweeterRawComp;
+      const twPt = interpolateCurvePoint(f, preparedTweeterCurve);
+      if (twPt !== null) {
+        pTweeterRawComp = Complex.polar(Math.pow(10, (twPt.magnitude - 90.0) / 20.0), twPt.phase * (Math.PI / 180.0));
+      } else {
+        pTweeterRawComp = new Complex(Math.pow(10, ((tweeter.spl || 94.0) - 90.0) / 20.0), 0);
+      }
+
+      const hCabC = new Complex(hCabR, hCabI);
+      const hLPC = new Complex(hLPR, hLPI);
+      const hAPC = new Complex(hAPR, hAPI);
+      const pWFinal = pWooferRawComp.mul(hCabC).mul(hLPC).mul(hAPC);
+      const pWR = pWFinal.re;
+      const pWI = pWFinal.im;
 
       let hHPR = 1.0, hHPI = 0.0;
       if (tweeterOrder === 'firstOrder') {
@@ -1616,8 +1772,11 @@ export default function App() {
       const cosD = Math.cos(phaseDelay) * polaritySign;
       const sinD = Math.sin(phaseDelay) * polaritySign;
 
-      const pTR = (hHPR * cosD - hHPI * sinD) * lpadGain * pTweeterLinear;
-      const pTI = (hHPR * sinD + hHPI * cosD) * lpadGain * pTweeterLinear;
+      const hHPC = new Complex(hHPR, hHPI);
+      const hDelayC = new Complex(cosD, sinD);
+      const pTFinal = pTweeterRawComp.mul(hHPC).mul(hDelayC).mul(lpadGain);
+      const pTR = pTFinal.re;
+      const pTI = pTFinal.im;
 
       const rollOff = Math.exp(-Math.pow(f / 21000.0, 4.0));
 
@@ -1718,7 +1877,7 @@ export default function App() {
     }
 
     return points;
-  }, [cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, enableLPad, lpadAttenDB, wooferCurve, tweeterCurve, ts.fs]);
+  }, [cabinetCalculations, fx, enableIndependentFx, wooferFx, tweeterFx, wooferOrder, tweeterOrder, acousticDelayMM, invertTweeterPolarity, enableAllpass, apfOptimization, enableLPad, lpadAttenDB, preparedWooferCurve, preparedTweeterCurve, ts.fs, ts.spl, tweeter.spl]);
 
   // --- Render Step Response Plot ---
   useEffect(() => {
@@ -1851,13 +2010,27 @@ export default function App() {
       }
       if (parsed.recommendedCrossover && parsed.recommendedCrossover >= 500 && parsed.recommendedCrossover <= 8000) {
         setFx(parsed.recommendedCrossover);
+        setWooferFx(parsed.recommendedCrossover);
+        setTweeterFx(parsed.recommendedCrossover);
       }
 
       if (parsed.wooferCurve && parsed.wooferCurve.length > 0) {
         setWooferCurve(parsed.wooferCurve);
+        setWooferRefSPL(parsed.ts.spl || ts.spl);
+        setWooferFRDText(exportToFRD(parsed.wooferCurve, `${parsed.driverName || sourceName} - Digitized Woofer Response`));
+      } else {
+        setWooferCurve([]);
+        setWooferRefSPL(null);
+        setWooferFRDText("");
       }
       if (parsed.tweeterCurve && parsed.tweeterCurve.length > 0) {
         setTweeterCurve(parsed.tweeterCurve);
+        setTweeterRefSPL(parsed.tweeter?.spl || tweeter.spl);
+        setTweeterFRDText(exportToFRD(parsed.tweeterCurve, `${parsed.driverName || sourceName} - Digitized Tweeter Response`));
+      } else {
+        setTweeterCurve([]);
+        setTweeterRefSPL(null);
+        setTweeterFRDText("");
       }
 
       setMissingParams(parsed.missingParams || []);
@@ -1878,14 +2051,209 @@ export default function App() {
 
   const loadAltec604Preset = () => {
     setDriverName('Altec Lansing 604-8K');
+    setManufacturer('Altec Lansing');
     setTs({ ...altec604WooferTS });
     setTweeter({ ...altec604Tweeter });
     setFx(altec604RecommendedCrossover);
+    setWooferFx(altec604RecommendedCrossover);
+    setTweeterFx(altec604RecommendedCrossover);
     setWooferCurve(altec604WooferCurve);
     setTweeterCurve(altec604TweeterCurve);
+    setWooferRefSPL(altec604WooferTS.spl);
+    setTweeterRefSPL(altec604Tweeter.spl);
+    setWooferFRDText(exportToFRD(altec604WooferCurve, "Altec Lansing 604-8K - Digitized CLIO Woofer Response"));
+    setTweeterFRDText(exportToFRD(altec604TweeterCurve, "Altec Lansing 604-8K - Digitized CLIO Tweeter Response"));
     setMissingParams([]);
     setPlausibilityWarnings([]);
+    setFrdErrorMsg("");
+    setFrdStatusMsg("Loaded Altec Lansing 604-8K digitized CLIO FRD curves (100 points each).");
     setStatusMsg('Loaded Altec Lansing 604-8K factory specs & digitized CLIO frequency response curves.');
+  };
+
+  // --- FRD Import / Export Handlers ---
+  const handleImportWooferFRDText = (textToParse = wooferFRDText) => {
+    const trimmed = (textToParse || "").trim();
+    if (!trimmed) {
+      if (wooferFRDFileInputRef.current) {
+        wooferFRDFileInputRef.current.click();
+        return;
+      }
+      setFrdErrorMsg("Please paste Woofer FRD data (Freq, SPL, Phase) or select an FRD file.");
+      return;
+    }
+    const points = parseFRDText(trimmed);
+    if (points.length > 0) {
+      setWooferFRDText(textToParse);
+      setWooferCurve(points);
+      setWooferRefSPL(ts.spl);
+      setFrdErrorMsg("");
+      const msg = `Imported ${points.length} woofer acoustic FRD points.`;
+      setFrdStatusMsg(msg);
+      setStatusMsg(msg);
+    } else {
+      setFrdErrorMsg("Could not parse Woofer FRD data. Expected 2 or 3 numeric columns per line: Frequency(Hz) SPL(dB) [Phase(Deg)].");
+    }
+  };
+
+  const handleImportTweeterFRDText = (textToParse = tweeterFRDText) => {
+    const trimmed = (textToParse || "").trim();
+    if (!trimmed) {
+      if (tweeterFRDFileInputRef.current) {
+        tweeterFRDFileInputRef.current.click();
+        return;
+      }
+      setFrdErrorMsg("Please paste Tweeter FRD data (Freq, SPL, Phase) or select an FRD file.");
+      return;
+    }
+    const points = parseFRDText(trimmed);
+    if (points.length > 0) {
+      setTweeterFRDText(textToParse);
+      setTweeterCurve(points);
+      setTweeterRefSPL(tweeter.spl);
+      setFrdErrorMsg("");
+      const msg = `Imported ${points.length} tweeter acoustic FRD points.`;
+      setFrdStatusMsg(msg);
+      setStatusMsg(msg);
+    } else {
+      setFrdErrorMsg("Could not parse Tweeter FRD data. Expected 2 or 3 numeric columns per line: Frequency(Hz) SPL(dB) [Phase(Deg)].");
+    }
+  };
+
+  const handleWooferFRDFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      setWooferFRDText(content);
+      const points = parseFRDText(content);
+      if (points.length > 0) {
+        setWooferCurve(points);
+        setWooferRefSPL(ts.spl);
+        setFrdErrorMsg("");
+        const msg = `Imported ${points.length} woofer FRD points from ${file.name}.`;
+        setFrdStatusMsg(msg);
+        setStatusMsg(msg);
+      } else {
+        setFrdErrorMsg(`No valid FRD points found in ${file.name}.`);
+      }
+    } catch (err) {
+      setFrdErrorMsg(`Failed to read Woofer FRD file: ${err.message || 'Invalid file'}`);
+    }
+    if (wooferFRDFileInputRef.current) wooferFRDFileInputRef.current.value = '';
+  };
+
+  const handleTweeterFRDFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      setTweeterFRDText(content);
+      const points = parseFRDText(content);
+      if (points.length > 0) {
+        setTweeterCurve(points);
+        setTweeterRefSPL(tweeter.spl);
+        setFrdErrorMsg("");
+        const msg = `Imported ${points.length} tweeter FRD points from ${file.name}.`;
+        setFrdStatusMsg(msg);
+        setStatusMsg(msg);
+      } else {
+        setFrdErrorMsg(`No valid FRD points found in ${file.name}.`);
+      }
+    } catch (err) {
+      setFrdErrorMsg(`Failed to read Tweeter FRD file: ${err.message || 'Invalid file'}`);
+    }
+    if (tweeterFRDFileInputRef.current) tweeterFRDFileInputRef.current.value = '';
+  };
+
+  const handleResetWooferCurve = () => {
+    setWooferFRDText("");
+    setWooferCurve([]);
+    setWooferRefSPL(null);
+    setFrdErrorMsg("");
+    const msg = "Reset woofer response to synthetic T/S curve.";
+    setFrdStatusMsg(msg);
+    setStatusMsg(msg);
+  };
+
+  const handleResetTweeterCurve = () => {
+    setTweeterFRDText("");
+    setTweeterCurve([]);
+    setTweeterRefSPL(null);
+    setFrdErrorMsg("");
+    const msg = "Reset tweeter response to synthetic HF curve.";
+    setFrdStatusMsg(msg);
+    setStatusMsg(msg);
+  };
+
+  const generateSystemFRDString = () => {
+    const exportPoints = simulationData.map(p => ({
+      frequency: p.frequency,
+      magnitude: p.totalSPL,
+      phase: p.totalPhase
+    }));
+    const cabLabel = enclosureType === 'vented' ? 'Ported Cabinet' : 'Closed Cabinet';
+    return exportToFRD(exportPoints, `${driverName} - ${cabLabel} ${cabinetCalculations.vb.toFixed(1)}L - Combined Response`);
+  };
+
+  const handleCopySystemFRD = async () => {
+    const frdText = generateSystemFRDString();
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(frdText);
+      }
+      setFrdErrorMsg("");
+      const msg = `Copied ${simulationData.length}-point simulated system FRD to clipboard.`;
+      setFrdStatusMsg(msg);
+      setStatusMsg(msg);
+    } catch (err) {
+      setFrdErrorMsg(`Could not copy to clipboard: ${err.message || 'Permission denied'}`);
+    }
+  };
+
+  const handleExportSystemFRDFile = async () => {
+    const frdText = generateSystemFRDString();
+    const sanitizedName = (driverName || "Speaker").trim().replace(/\s+/g, '_');
+    const filename = `${sanitizedName}_System_Simulated.frd`;
+
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{
+            description: 'FRD Frequency Response File',
+            accept: { 'text/plain': ['.frd', '.txt'] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(frdText);
+        await writable.close();
+        setFrdErrorMsg("");
+        const msg = `Successfully exported simulated FRD to ${filename}.`;
+        setFrdStatusMsg(msg);
+        setStatusMsg(msg);
+        return;
+      } catch (pickerErr) {
+        if (pickerErr.name === 'AbortError') return;
+      }
+    }
+
+    const blob = new Blob([frdText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      if (a.parentNode) document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 5000);
+    setFrdErrorMsg("");
+    const msg = `Successfully exported simulated FRD to ${filename}.`;
+    setFrdStatusMsg(msg);
+    setStatusMsg(msg);
   };
 
   const validateManualField = (paramName, value) => {
@@ -2063,9 +2431,17 @@ export default function App() {
         }
         if (Array.isArray(doc.driver.wooferAcousticCurve) && doc.driver.wooferAcousticCurve.length > 0) {
           setWooferCurve(doc.driver.wooferAcousticCurve);
+          setWooferRefSPL(doc.driver.wooferTS?.spl || ts.spl);
+        } else {
+          setWooferCurve([]);
+          setWooferRefSPL(null);
         }
         if (Array.isArray(doc.driver.tweeterAcousticCurve) && doc.driver.tweeterAcousticCurve.length > 0) {
           setTweeterCurve(doc.driver.tweeterAcousticCurve);
+          setTweeterRefSPL(doc.driver.tweeter?.spl || tweeter.spl);
+        } else {
+          setTweeterCurve([]);
+          setTweeterRefSPL(null);
         }
       }
 
@@ -2114,8 +2490,22 @@ export default function App() {
         if (doc.crossover.enableAllpassFilter !== undefined) setEnableAllpass(doc.crossover.enableAllpassFilter);
       }
 
-      if (doc.wooferFRDText) setWooferFRDText(doc.wooferFRDText);
-      if (doc.tweeterFRDText) setTweeterFRDText(doc.tweeterFRDText);
+      if (doc.wooferFRDText) {
+        setWooferFRDText(doc.wooferFRDText);
+        const wPts = parseFRDText(doc.wooferFRDText);
+        if (wPts.length > 0) {
+          setWooferCurve(wPts);
+          setWooferRefSPL(doc.driver?.wooferTS?.spl || ts.spl);
+        }
+      }
+      if (doc.tweeterFRDText) {
+        setTweeterFRDText(doc.tweeterFRDText);
+        const tPts = parseFRDText(doc.tweeterFRDText);
+        if (tPts.length > 0) {
+          setTweeterCurve(tPts);
+          setTweeterRefSPL(doc.driver?.tweeter?.spl || tweeter.spl);
+        }
+      }
 
       setMissingParams([]);
       setPlausibilityWarnings([]);
@@ -2425,7 +2815,16 @@ export default function App() {
                   setTs({ fs: 48.0, qes: 0.36, qms: 4.8, qts: 0.335, vas: 28.0, re: 6.2, le: 0.85, sd: 210.0, xmax: 5.5, spl: 89.0 });
                   setTweeter({ fs: 1200.0, re: 5.8, le: 0.08, spl: 94.0 });
                   setFx(2200);
+                  setWooferFx(2200);
+                  setTweeterFx(2200);
                   setDriverName("8CX21 Coaxial 8-inch Driver");
+                  setManufacturer("AudioPro Coaxial");
+                  setWooferCurve([]);
+                  setTweeterCurve([]);
+                  setWooferRefSPL(null);
+                  setTweeterRefSPL(null);
+                  setWooferFRDText("");
+                  setTweeterFRDText("");
                   setMissingParams([]);
                   setPlausibilityWarnings([]);
                   setStatusMsg("Reset specifications to standard defaults.");
@@ -2668,9 +3067,10 @@ export default function App() {
             <button onClick={() => setActiveTab('delay')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'delay' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Group Delay</button>
             <button onClick={() => setActiveTab('step')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'step' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Step Response</button>
             <button onClick={() => setActiveTab('impedance')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'impedance' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>System Impedance</button>
-            <button onClick={() => setActiveTab('cabinet')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'cabinet' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Sealed Cabinet</button>
+            <button onClick={() => setActiveTab('cabinet')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'cabinet' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Cabinet Closed/Ported</button>
             <button onClick={() => setActiveTab('crossover')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'crossover' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Crossover Designer</button>
             <button onClick={() => setActiveTab('bom')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'bom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Schematic & BOM</button>
+            <button onClick={() => setActiveTab('frd')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'frd' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>FRD Import/Export</button>
           </div>
           <div className="flex items-center space-x-2">
             <button
@@ -2990,7 +3390,7 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-bold text-white flex items-center space-x-2">
                   <Box className="text-blue-400" />
-                  <span>{enclosureType === 'sealed' ? 'Closed (Sealed) Cabinet Designer' : '4th-Order Vented (Bass-Reflex) Designer'}</span>
+                  <span>Cabinet Closed/Ported</span>
                 </h2>
                 <button
                   type="button"
@@ -3642,6 +4042,200 @@ export default function App() {
                     {crossoverComponents.C_zobel && <tr><td className="py-2.5 font-bold text-amber-400">C_zobel</td><td>Zobel Capacitor</td><td>{crossoverComponents.C_zobel.toFixed(2)} µF</td></tr>}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'frd' && (
+            <div className="max-w-3xl space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-white flex items-center space-x-2">
+                  <FileText className="text-blue-400" />
+                  <span>FRD Response Curve Import & Digitizer</span>
+                </h2>
+              </div>
+
+              {frdErrorMsg && (
+                <div className="p-3 bg-red-950/40 border border-red-500/50 rounded-xl text-xs text-red-200 flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <span>{frdErrorMsg}</span>
+                </div>
+              )}
+
+              {!frdErrorMsg && frdStatusMsg && (
+                <div className="p-3 bg-emerald-950/40 border border-emerald-500/50 rounded-xl text-xs text-emerald-200 flex items-center space-x-2">
+                  <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{frdStatusMsg}</span>
+                </div>
+              )}
+
+              {/* Driver Section Switcher */}
+              <div className="flex items-center space-x-2 p-1.5 bg-slate-900 border border-slate-800 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setDigitizerActiveTab('woofer')}
+                  className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${digitizerActiveTab === 'woofer' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Woofer Acoustic Response FRD
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDigitizerActiveTab('tweeter')}
+                  className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${digitizerActiveTab === 'tweeter' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Tweeter Acoustic Response FRD
+                </button>
+              </div>
+
+              {/* Hidden FRD File Inputs */}
+              <input
+                type="file"
+                ref={wooferFRDFileInputRef}
+                onChange={handleWooferFRDFileUpload}
+                accept=".frd,.txt,.csv,.dat,text/plain"
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+              <input
+                type="file"
+                ref={tweeterFRDFileInputRef}
+                onChange={handleTweeterFRDFileUpload}
+                accept=".frd,.txt,.csv,.dat,text/plain"
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+
+              {digitizerActiveTab === 'woofer' ? (
+                <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-200">
+                      Paste Woofer FRD Text Data (Freq, SPL, Phase):
+                    </label>
+                    <span className="text-xs text-slate-400">
+                      Current points loaded: {wooferCurve.length > 0 ? `${wooferCurve.length} (Custom/Measured)` : '201 (Synthetic T/S)'}
+                    </span>
+                  </div>
+
+                  <textarea
+                    value={wooferFRDText}
+                    onChange={(e) => setWooferFRDText(e.target.value)}
+                    placeholder={"* Freq(Hz)\tMag(dB)\tPhase(Deg)\n20.00\t88.50\t0.00\n100.00\t94.20\t0.00\n1000.00\t96.00\t0.00"}
+                    rows={9}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500"
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleImportWooferFRDText(wooferFRDText)}
+                      className="bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Import Woofer FRD</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => wooferFRDFileInputRef.current?.click()}
+                      className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-medium text-xs px-3 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Choose FRD File...</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleResetWooferCurve}
+                      className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-medium text-xs px-3 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Reset to Synthetic</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-200">
+                      Paste Tweeter FRD Text Data (Freq, SPL, Phase):
+                    </label>
+                    <span className="text-xs text-slate-400">
+                      Current points loaded: {tweeterCurve.length > 0 ? `${tweeterCurve.length} (Custom/Measured)` : '201 (Synthetic T/S)'}
+                    </span>
+                  </div>
+
+                  <textarea
+                    value={tweeterFRDText}
+                    onChange={(e) => setTweeterFRDText(e.target.value)}
+                    placeholder={"* Freq(Hz)\tMag(dB)\tPhase(Deg)\n1000.00\t95.00\t0.00\n3000.00\t104.20\t0.00\n15000.00\t98.50\t0.00"}
+                    rows={9}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500"
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleImportTweeterFRDText(tweeterFRDText)}
+                      className="bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Import Tweeter FRD</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => tweeterFRDFileInputRef.current?.click()}
+                      className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-medium text-xs px-3 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5 text-red-400" />
+                      <span>Choose FRD File...</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleResetTweeterCurve}
+                      className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-medium text-xs px-3 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Reset to Synthetic</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Export Simulated FRD File Section */}
+              <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 space-y-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                    <Upload className="w-4 h-4 text-emerald-400" />
+                    <span>Export Simulated FRD File</span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Generates a standard 3-column FRD text file containing the total combined amplitude and phase response suitable for CAD speaker simulation software (VituixCAD, BoxSim, LOUDSOFT).
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExportSystemFRDFile}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export System Simulated FRD File...</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCopySystemFRD}
+                    className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-medium text-xs px-3.5 py-2 rounded-lg transition flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Copy System Simulated FRD to Clipboard</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}

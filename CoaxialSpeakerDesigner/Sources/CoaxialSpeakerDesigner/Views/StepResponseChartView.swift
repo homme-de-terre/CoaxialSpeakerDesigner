@@ -82,11 +82,15 @@ public struct StepResponseChartView: View {
             }
             .padding(.horizontal)
 
+            let _ = viewModel.simulationRevision
+            let _ = viewModel.stepResponsePoints.count
+
             // Step Response Canvas Plot
             Canvas { context, size in
                 drawGrid(context: context, size: size)
                 drawStepCurves(context: context, size: size)
             }
+            .id(viewModel.simulationRevision)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))

@@ -14,7 +14,7 @@ This guide covers the step-by-step workflow for designing a coaxial loudspeaker 
 
 ---
 
-## 2. Cabinet Design (Closed Cabinet Tab)
+## 2. Cabinet Design (Cabinet Closed/Ported Tab)
 1. **Choose Enclosure Architecture:**
    * **Sealed (Closed Box, 2nd-Order, $12\text{ dB/oct}$):** Best for drivers with $Q_{ts} \ge 0.40$ or compact studio monitors with subwoofer support. Choose **Butterworth B2** ($Q_{tc}=0.707$, maximally flat), **Bessel** ($Q_{tc}=0.577$, best transient response), **Critically Damped** ($Q_{tc}=0.500$), or **Target Cut-off Frequency ($f_3$)**.
    * **Vented (Bass-Reflex, 4th-Order, $24\text{ dB/oct}$):** Recommended for high-efficiency pro-audio coaxial drivers with low $Q_{ts}$ ($0.25–0.38$). Choose **QB3**, **B4**, or **SC4**, adjust port tuning ($F_b$), and set port duct diameter ($D_v$) above the **Min Recommended Dia** to prevent port chuffing.

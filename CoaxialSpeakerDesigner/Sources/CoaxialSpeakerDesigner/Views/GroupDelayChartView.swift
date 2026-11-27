@@ -78,6 +78,9 @@ public struct GroupDelayChartView: View {
             }
             .padding(.horizontal)
 
+            let _ = viewModel.simulationRevision
+            let _ = viewModel.simulationPoints.count
+
             // Group Delay Canvas Plot
             Canvas { context, size in
                 let (minMs, maxMs, stepMs) = Self.determineGroupDelayRange(
@@ -89,6 +92,7 @@ public struct GroupDelayChartView: View {
                 drawLogGrid(context: context, size: size, minMs: minMs, maxMs: maxMs, stepMs: stepMs)
                 drawGroupDelayCurves(context: context, size: size, minMs: minMs, maxMs: maxMs)
             }
+            .id(viewModel.simulationRevision)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))

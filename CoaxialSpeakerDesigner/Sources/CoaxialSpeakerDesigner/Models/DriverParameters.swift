@@ -104,6 +104,10 @@ public struct CoaxialDriver: Codable, Sendable {
     // Raw acoustic frequency response curves
     public var wooferAcousticCurve: [ResponseDataPoint]
     public var tweeterAcousticCurve: [ResponseDataPoint]
+    public var hasCustomWooferCurve: Bool = false
+    public var hasCustomTweeterCurve: Bool = false
+    public var customWooferReferenceSPL: Double? = nil
+    public var customTweeterReferenceSPL: Double? = nil
     
     // Raw electrical impedance curves
     public var wooferImpedanceCurve: [ResponseDataPoint]
@@ -118,17 +122,68 @@ public struct CoaxialDriver: Codable, Sendable {
         wooferAcousticCurve: [ResponseDataPoint] = [],
         tweeterAcousticCurve: [ResponseDataPoint] = [],
         wooferImpedanceCurve: [ResponseDataPoint] = [],
-        tweeterImpedanceCurve: [ResponseDataPoint] = []
+        tweeterImpedanceCurve: [ResponseDataPoint] = [],
+        hasCustomWooferCurve: Bool? = nil,
+        hasCustomTweeterCurve: Bool? = nil,
+        customWooferReferenceSPL: Double? = nil,
+        customTweeterReferenceSPL: Double? = nil
     ) {
         self.name = name
         self.manufacturer = manufacturer
         self.datasheetURL = datasheetURL
         self.wooferTS = wooferTS
         self.tweeter = tweeter
+        let isCustomWoofer = hasCustomWooferCurve ?? !wooferAcousticCurve.isEmpty
+        let isCustomTweeter = hasCustomTweeterCurve ?? !tweeterAcousticCurve.isEmpty
+        self.hasCustomWooferCurve = isCustomWoofer
+        self.hasCustomTweeterCurve = isCustomTweeter
+        self.customWooferReferenceSPL = customWooferReferenceSPL ?? (isCustomWoofer ? wooferTS.spl : nil)
+        self.customTweeterReferenceSPL = customTweeterReferenceSPL ?? (isCustomTweeter ? tweeter.spl : nil)
         self.wooferAcousticCurve = wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: wooferTS) : wooferAcousticCurve
         self.tweeterAcousticCurve = tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: tweeter) : tweeterAcousticCurve
         self.wooferImpedanceCurve = wooferImpedanceCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferImpedance(ts: wooferTS) : wooferImpedanceCurve
         self.tweeterImpedanceCurve = tweeterImpedanceCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterImpedance(tw: tweeter) : tweeterImpedanceCurve
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case manufacturer
+        case datasheetURL
+        case wooferTS
+        case tweeter
+        case wooferAcousticCurve
+        case tweeterAcousticCurve
+        case hasCustomWooferCurve
+        case hasCustomTweeterCurve
+        case customWooferReferenceSPL
+        case customTweeterReferenceSPL
+        case wooferImpedanceCurve
+        case tweeterImpedanceCurve
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? "8CX21 Coaxial 8-inch Driver"
+        self.manufacturer = try container.decodeIfPresent(String.self, forKey: .manufacturer) ?? "AudioPro"
+        self.datasheetURL = try container.decodeIfPresent(String.self, forKey: .datasheetURL)
+        let decodedTS = try container.decodeIfPresent(WooferTSParameters.self, forKey: .wooferTS) ?? WooferTSParameters()
+        let decodedTw = try container.decodeIfPresent(TweeterParameters.self, forKey: .tweeter) ?? TweeterParameters()
+        self.wooferTS = decodedTS
+        self.tweeter = decodedTw
+        let decodedWC = try container.decodeIfPresent([ResponseDataPoint].self, forKey: .wooferAcousticCurve) ?? []
+        let decodedTC = try container.decodeIfPresent([ResponseDataPoint].self, forKey: .tweeterAcousticCurve) ?? []
+        let isCustomW = try container.decodeIfPresent(Bool.self, forKey: .hasCustomWooferCurve) ?? (!decodedWC.isEmpty && decodedWC.count != 201)
+        let isCustomT = try container.decodeIfPresent(Bool.self, forKey: .hasCustomTweeterCurve) ?? (!decodedTC.isEmpty && decodedTC.count != 201)
+        self.hasCustomWooferCurve = isCustomW
+        self.hasCustomTweeterCurve = isCustomT
+        self.customWooferReferenceSPL = try container.decodeIfPresent(Double.self, forKey: .customWooferReferenceSPL) ?? (isCustomW ? decodedTS.spl : nil)
+        self.customTweeterReferenceSPL = try container.decodeIfPresent(Double.self, forKey: .customTweeterReferenceSPL) ?? (isCustomT ? decodedTw.spl : nil)
+        self.wooferAcousticCurve = decodedWC.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: decodedTS) : decodedWC
+        self.tweeterAcousticCurve = decodedTC.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: decodedTw) : decodedTC
+        let decodedWImp = try container.decodeIfPresent([ResponseDataPoint].self, forKey: .wooferImpedanceCurve) ?? []
+        let decodedTImp = try container.decodeIfPresent([ResponseDataPoint].self, forKey: .tweeterImpedanceCurve) ?? []
+        self.wooferImpedanceCurve = decodedWImp.isEmpty ? CoaxialDriver.generateSyntheticWooferImpedance(ts: decodedTS) : decodedWImp
+        self.tweeterImpedanceCurve = decodedTImp.isEmpty ? CoaxialDriver.generateSyntheticTweeterImpedance(tw: decodedTw) : decodedTImp
     }
     
     /// Default realistic template driver for initial application state.

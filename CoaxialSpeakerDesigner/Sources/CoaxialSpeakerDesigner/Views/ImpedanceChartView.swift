@@ -65,6 +65,9 @@ public struct ImpedanceChartView: View {
             }
             .padding(.horizontal)
 
+            let _ = viewModel.simulationRevision
+            let _ = viewModel.simulationPoints.count
+
             Canvas { context, size in
                 let (minZ, maxZ, stepZ) = Self.determineImpedanceRange(
                     points: viewModel.simulationPoints,
@@ -75,6 +78,7 @@ public struct ImpedanceChartView: View {
                 drawLogGrid(context: context, size: size, minZ: minZ, maxZ: maxZ, stepZ: stepZ)
                 drawImpedanceCurves(context: context, size: size, minZ: minZ, maxZ: maxZ)
             }
+            .id(viewModel.simulationRevision)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))

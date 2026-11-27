@@ -106,11 +106,15 @@ public struct PhaseBodeChartView: View {
             }
             .padding(.horizontal)
 
+            let _ = viewModel.simulationRevision
+            let _ = viewModel.simulationPoints.count
+
             Canvas { context, size in
                 let (minDeg, maxDeg) = determinePhaseRange()
                 drawLogGrid(context: context, size: size, minDeg: minDeg, maxDeg: maxDeg)
                 drawPhaseCurves(context: context, size: size, minDeg: minDeg, maxDeg: maxDeg)
             }
+            .id(viewModel.simulationRevision)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))

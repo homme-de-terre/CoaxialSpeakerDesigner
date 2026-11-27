@@ -8,26 +8,40 @@ public class DatasheetParser: ObservableObject, @unchecked Sendable {
     
     public init() {}
     
-    /// Parse FRD or ZMA text data (3 columns: Frequency, Magnitude, Phase).
+    /// Parse FRD or ZMA text data (2 or 3 columns: Frequency, Magnitude, [Phase]).
     public static func parseFRDText(_ text: String) -> [ResponseDataPoint] {
         var points: [ResponseDataPoint] = []
         let lines = text.components(separatedBy: .newlines)
         
         for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty || trimmed.hasPrefix("*") || trimmed.hasPrefix("//") || trimmed.hasPrefix("#") {
                 continue
             }
             
-            // Split by tabs, spaces, or commas
-            let components = trimmed.components(separatedBy: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-                .filter { !$0.isEmpty }
+            let components: [String]
+            if trimmed.contains(";") {
+                components = trimmed.components(separatedBy: ";")
+                    .map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".") }
+                    .filter { !$0.isEmpty }
+            } else {
+                let wsTokens = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if wsTokens.count >= 2 && !trimmed.contains(", ") {
+                    components = wsTokens.map {
+                        $0.trimmingCharacters(in: CharacterSet(charactersIn: ",")).replacingOccurrences(of: ",", with: ".")
+                    }
+                } else {
+                    components = trimmed.components(separatedBy: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
+                        .filter { !$0.isEmpty }
+                }
+            }
             
             if components.count >= 2 {
                 if let freq = Double(components[0]),
-                   let mag = Double(components[1]) {
+                   let mag = Double(components[1]),
+                   freq > 0, freq.isFinite, mag.isFinite {
                     let phase = components.count >= 3 ? (Double(components[2]) ?? 0.0) : 0.0
-                    points.append(ResponseDataPoint(frequency: freq, magnitude: mag, phase: phase))
+                    points.append(ResponseDataPoint(frequency: freq, magnitude: mag, phase: phase.isFinite ? phase : 0.0))
                 }
             }
         }

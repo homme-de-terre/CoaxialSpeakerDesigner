@@ -82,11 +82,15 @@ public struct AmplitudeBodeChartView: View {
             }
             .padding(.horizontal)
 
+            let _ = viewModel.simulationRevision
+            let _ = viewModel.simulationPoints.count
+
             // Canvas Logarithmic Plot Render
             Canvas { context, size in
                 drawLogGrid(context: context, size: size)
                 drawCurves(context: context, size: size)
             }
+            .id(viewModel.simulationRevision)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 380)
             .background(Color(NSColor.textBackgroundColor))

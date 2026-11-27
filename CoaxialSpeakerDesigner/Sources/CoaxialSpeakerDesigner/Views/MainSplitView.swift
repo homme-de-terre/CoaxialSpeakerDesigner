@@ -19,7 +19,7 @@ public struct MainSplitView: View {
                         Label("Group Delay", systemImage: "clock").tag(8)
                         Label("Step Response", systemImage: "waveform.path.ecg").tag(7)
                         Label("System Impedance", systemImage: "bolt.horizontal").tag(2)
-                        Label("Closed Cabinet", systemImage: "cube.box").tag(3)
+                        Label("Cabinet Closed/Ported", systemImage: "cube.box").tag(3)
                         Label("Crossover Network", systemImage: "line.horizontal.3.decrease.circle").tag(4)
                         Label("Schematic & BOM", systemImage: "cpu").tag(5)
                         Label("FRD Import/Export", systemImage: "pencil.and.outline").tag(6)

@@ -1270,4 +1270,112 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertLessThan(gdRangeTweeterOnly.stepMs, 1.0, "Tweeter-only group delay should use sub-millisecond grid steps (0.2 or 0.5 ms)")
         XCTAssertLessThan(gdRangeTweeterOnly.maxMs, gdRangeAll.maxMs, "Tweeter-only maxMs must be smaller than full-system maxMs")
     }
+
+    @MainActor
+    func testAltec604PresetValuesReflectInAllGraphs() {
+        let vm = MainDesignerViewModel()
+        let defaultPoints = vm.simulationPoints
+        let defaultStep = vm.stepResponsePoints
+        let defaultRevision = vm.simulationRevision
+
+        // Load Altec 604-8K Preset via ViewModel action
+        vm.loadAltec604Preset()
+
+        XCTAssertGreaterThan(vm.simulationRevision, defaultRevision)
+        XCTAssertEqual(vm.driver.name, "Altec Lansing 604-8K")
+        XCTAssertEqual(vm.driver.manufacturer, "Altec Lansing")
+        XCTAssertEqual(vm.crossover.crossoverFrequency, 1500.0)
+        XCTAssertEqual(vm.targetReferenceSPL, 98.0)
+
+        // Must preserve the 100-point digitized CLIO curves (NOT overwrite with 201-point synthetic curve)
+        XCTAssertTrue(vm.driver.hasCustomWooferCurve)
+        XCTAssertTrue(vm.driver.hasCustomTweeterCurve)
+        XCTAssertEqual(vm.driver.wooferAcousticCurve.count, 100)
+        XCTAssertEqual(vm.driver.tweeterAcousticCurve.count, 100)
+        XCTAssertFalse(vm.wooferFRDText.isEmpty)
+        XCTAssertFalse(vm.tweeterFRDText.isEmpty)
+
+        // Verify reflection across all 5 graphs (Amplitude, Phase, Group Delay, Step Response, Impedance)
+        let altecPoints = vm.simulationPoints
+        let altecStep = vm.stepResponsePoints
+        XCTAssertEqual(altecPoints.count, 201)
+        XCTAssertEqual(altecStep.count, 201)
+
+        // 1. Amplitude plot reflection (Altec ~98-105 dB vs default ~89-94 dB)
+        let idx1k = altecPoints.firstIndex(where: { abs($0.frequency - 1000.0) < 50.0 })!
+        let idx2600 = altecPoints.firstIndex(where: { abs($0.frequency - 2640.0) < 100.0 })!
+        XCTAssertNotEqual(altecPoints[idx1k].wooferFinalSPL, defaultPoints[idx1k].wooferFinalSPL)
+        XCTAssertNotEqual(altecPoints[idx2600].tweeterFinalSPL, defaultPoints[idx2600].tweeterFinalSPL)
+        XCTAssertNotEqual(altecPoints[idx1k].totalSystemSPL, defaultPoints[idx1k].totalSystemSPL)
+
+        // 2. Phase & Group Delay reflection (includes Hilbert minimum phase of CLIO curves)
+        XCTAssertNotEqual(altecPoints[idx1k].wooferUnwrappedPhaseDeg, defaultPoints[idx1k].wooferUnwrappedPhaseDeg)
+        XCTAssertNotEqual(altecPoints[idx2600].tweeterUnwrappedPhaseDeg, defaultPoints[idx2600].tweeterUnwrappedPhaseDeg)
+        XCTAssertNotEqual(altecPoints[idx1k].totalSystemGroupDelayMs, defaultPoints[idx1k].totalSystemGroupDelayMs)
+
+        // 3. System Impedance reflection
+        let idx100 = altecPoints.firstIndex(where: { abs($0.frequency - 100.0) < 10.0 })!
+        XCTAssertNotEqual(altecPoints[idx100].wooferImpedanceMag, defaultPoints[idx100].wooferImpedanceMag)
+        XCTAssertNotEqual(altecPoints[idx1k].totalSystemImpedanceMag, defaultPoints[idx1k].totalSystemImpedanceMag)
+
+        // 4. Step Response reflection
+        let stepDiff = zip(altecStep, defaultStep).map { abs($0.0.total - $0.1.total) }.reduce(0.0, +)
+        XCTAssertGreaterThan(stepDiff, 0.5, "Step response must reflect Altec 604-8K preset curves and T/S parameters")
+
+        // 5. Verify manual SPL edit after loading Altec preset shifts curve in graphs
+        let splBefore = vm.simulationPoints[idx1k].wooferFinalSPL
+        vm.driver.wooferTS.spl = 95.0 // -3 dB from 98.0 dB preset
+        let splAfter = vm.simulationPoints[idx1k].wooferFinalSPL
+        XCTAssertEqual(splAfter, splBefore - 3.0, accuracy: 0.1, "Manual sensitivity edit on Altec preset must shift graph curve")
+    }
+
+    @MainActor
+    func testFRDImportExportDialogActions() {
+        let vm = MainDesignerViewModel()
+
+        // 1. Import custom Woofer FRD text (3-column)
+        let customWooferFRD = """
+        * Custom Woofer Measurement
+        20.0\t82.0\t15.0
+        100.0\t91.5\t5.0
+        1000.0\t93.0\t-10.0
+        5000.0\t75.0\t-85.0
+        20000.0\t60.0\t-140.0
+        """
+        vm.importWooferFRDText(customWooferFRD)
+        XCTAssertTrue(vm.driver.hasCustomWooferCurve)
+        XCTAssertEqual(vm.driver.wooferAcousticCurve.count, 5)
+        XCTAssertEqual(vm.wooferFRDText, customWooferFRD)
+        XCTAssertNil(vm.errorMessage)
+
+        // 2. Import custom Tweeter FRD text with European comma decimals & semicolon delimiter
+        let customTweeterFRD = """
+        1000,0; 88,0; 40,0
+        3000,0; 99,5; 0,0
+        10000,0; 97,0; -15,0
+        20000,0; 94,0; -35,0
+        """
+        vm.importTweeterFRDText(customTweeterFRD)
+        XCTAssertTrue(vm.driver.hasCustomTweeterCurve)
+        XCTAssertEqual(vm.driver.tweeterAcousticCurve.count, 4)
+        XCTAssertEqual(vm.driver.tweeterAcousticCurve[1].magnitude, 99.5, accuracy: 0.01)
+        XCTAssertNil(vm.errorMessage)
+
+        // 3. Export simulated system FRD and verify roundtrip parsing
+        let exportedFRD = vm.exportSystemFRD()
+        XCTAssertTrue(exportedFRD.contains("* Freq(Hz)\tMag(dB)\tPhase(Deg)"))
+        let parsedExport = DatasheetParser.parseFRDText(exportedFRD)
+        XCTAssertEqual(parsedExport.count, vm.simulationPoints.count)
+
+        // 4. Reset Woofer and Tweeter back to synthetic T/S curves
+        vm.resetWooferToSyntheticCurve()
+        XCTAssertFalse(vm.driver.hasCustomWooferCurve)
+        XCTAssertTrue(vm.wooferFRDText.isEmpty)
+        XCTAssertEqual(vm.driver.wooferAcousticCurve.count, 201)
+
+        vm.resetTweeterToSyntheticCurve()
+        XCTAssertFalse(vm.driver.hasCustomTweeterCurve)
+        XCTAssertTrue(vm.tweeterFRDText.isEmpty)
+        XCTAssertEqual(vm.driver.tweeterAcousticCurve.count, 201)
+    }
 }
