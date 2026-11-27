@@ -12,20 +12,34 @@ public struct GroupDelayChartView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header with legend and delay alignment summary
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Acoustic & Electrical Group Delay (Milliseconds vs Log Hz)")
-                        .font(.headline)
-                    let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
-                    let apfStatus = viewModel.crossover.enableAllpassFilter
-                        ? " • APF Delay: Active (\(Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)) Hz, Q=\(String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.70)))"
-                        : ""
-                    Text("Tweeter Depth Delay: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) • Polarity: \(viewModel.crossover.invertTweeterPolarity ? "Inverted (-)" : "Normal (+)")\(apfStatus)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Acoustic & Electrical Group Delay (Milliseconds vs Log Hz)")
+                            .font(.headline)
+                            .lineLimit(1)
+                        let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
+                        let apfStatus = viewModel.crossover.enableAllpassFilter
+                            ? " • APF Delay: Active (\(Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)) Hz, Q=\(String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.70)))"
+                            : ""
+                        Text("Tweeter Depth Delay: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) • Polarity: \(viewModel.crossover.invertTweeterPolarity ? "Inverted (-)" : "Normal (+)")\(apfStatus)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
 
-                Spacer()
+                    Spacer()
+
+                    if !isDetachedWindow {
+                        Button(action: { viewModel.openDetachedChart(.groupDelay) }) {
+                            Label("Detach", systemImage: "arrow.up.forward.square")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Open Group Delay in a floating live window")
+                    }
+                }
 
                 HStack(spacing: 12) {
                     Button(action: { viewModel.showWoofer.toggle() }) {
@@ -64,16 +78,7 @@ public struct GroupDelayChartView: View {
                     }
                     .buttonStyle(.plain)
 
-                    if !isDetachedWindow {
-                        Divider().frame(height: 16)
-                        Button(action: { viewModel.openDetachedChart(.groupDelay) }) {
-                            Label("Detach", systemImage: "arrow.up.forward.square")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Open Group Delay in a floating live window")
-                    }
+                    Spacer()
                 }
             }
             .padding(.horizontal)

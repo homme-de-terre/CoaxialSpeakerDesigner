@@ -12,18 +12,32 @@ public struct StepResponseChartView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header with legend and transient alignment controls
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Acoustic Transient Step Response (Amplitude vs Time)")
-                        .font(.headline)
-                    let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
-                    let apfStatus = viewModel.crossover.enableAllpassFilter ? " • All-Pass Delay: Active (\(Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)) Hz, Q=\(String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.7)))" : ""
-                    Text("Tweeter Depth Delay: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) • Polarity: \(viewModel.crossover.invertTweeterPolarity ? "Inverted (-)" : "Normal (+)")\(apfStatus)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Acoustic Transient Step Response (Amplitude vs Time)")
+                            .font(.headline)
+                            .lineLimit(1)
+                        let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
+                        let apfStatus = viewModel.crossover.enableAllpassFilter ? " • All-Pass Delay: Active (\(Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)) Hz, Q=\(String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.7)))" : ""
+                        Text("Tweeter Depth Delay: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) • Polarity: \(viewModel.crossover.invertTweeterPolarity ? "Inverted (-)" : "Normal (+)")\(apfStatus)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
 
-                Spacer()
+                    Spacer()
+
+                    if !isDetachedWindow {
+                        Button(action: { viewModel.openDetachedChart(.stepResponse) }) {
+                            Label("Detach", systemImage: "arrow.up.forward.square")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Open Step Response in a floating live window")
+                    }
+                }
 
                 HStack(spacing: 12) {
                     Button(action: { viewModel.showWoofer.toggle() }) {
@@ -61,23 +75,14 @@ public struct StepResponseChartView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                }
 
-                Divider().frame(height: 18)
-
-                Toggle("Invert Polarity", isOn: $viewModel.crossover.invertTweeterPolarity)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-
-                if !isDetachedWindow {
                     Divider().frame(height: 16)
-                    Button(action: { viewModel.openDetachedChart(.stepResponse) }) {
-                        Label("Detach", systemImage: "arrow.up.forward.square")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Open Step Response in a floating live window")
+
+                    Toggle("Invert Polarity", isOn: $viewModel.crossover.invertTweeterPolarity)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+
+                    Spacer()
                 }
             }
             .padding(.horizontal)

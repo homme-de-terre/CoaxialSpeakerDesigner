@@ -8,57 +8,66 @@ public struct MainSplitView: View {
     public var body: some View {
         NavigationSplitView {
             SidebarView(viewModel: viewModel)
-                .navigationSplitViewColumnWidth(min: 300, ideal: 350, max: 400)
+                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
         } detail: {
             VStack(spacing: 0) {
-                // Top Tab Switcher & About Info
-                HStack(spacing: 12) {
-                    Picker("View Mode", selection: $viewModel.selectedTab) {
-                        Label("Amplitude Response", systemImage: "chart.xyaxis.line").tag(0)
-                        Label("Phase & Delay", systemImage: "waveform").tag(1)
-                        Label("Group Delay", systemImage: "clock").tag(8)
-                        Label("Step Response", systemImage: "waveform.path.ecg").tag(7)
-                        Label("System Impedance", systemImage: "bolt.horizontal").tag(2)
-                        Label("Cabinet Closed/Ported", systemImage: "cube.box").tag(3)
-                        Label("Crossover Network", systemImage: "line.horizontal.3.decrease.circle").tag(4)
-                        Label("Schematic & BOM", systemImage: "cpu").tag(5)
-                        Label("FRD Import/Export", systemImage: "pencil.and.outline").tag(6)
+                // Top Tab Switcher & About Info (Horizontally scrollable & compact so it never pushes window beyond screen bounds)
+                HStack(spacing: 8) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Picker("View Mode", selection: $viewModel.selectedTab) {
+                            Label("Amplitude Response", systemImage: "chart.xyaxis.line").tag(0)
+                            Label("Phase & Delay", systemImage: "waveform").tag(1)
+                            Label("Group Delay", systemImage: "clock").tag(8)
+                            Label("Step Response", systemImage: "waveform.path.ecg").tag(7)
+                            Label("System Impedance", systemImage: "bolt.horizontal").tag(2)
+                            Label("Cabinet Closed/Ported", systemImage: "cube.box").tag(3)
+                            Label("Crossover Network", systemImage: "line.horizontal.3.decrease.circle").tag(4)
+                            Label("Schematic & BOM", systemImage: "cpu").tag(5)
+                            Label("FRD Import/Export", systemImage: "pencil.and.outline").tag(6)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .controlSize(.small)
                     }
-                    .pickerStyle(.segmented)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Button(action: { viewModel.saveDesignToFile() }) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 15))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Save Design to File (⌘S)")
+                    HStack(spacing: 10) {
+                        Button(action: { viewModel.saveDesignToFile() }) {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Save Design to File (⌘S)")
 
-                    Button(action: { viewModel.loadDesignFromFile() }) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 15))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open Design File (⌘O)")
+                        Button(action: { viewModel.loadDesignFromFile() }) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open Design File (⌘O)")
 
-                    Button(action: { viewModel.showHelpDialog = true }) {
-                        Image(systemName: "questionmark.circle")
-                            .font(.system(size: 15))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Quick User & Engineering Help Guide")
+                        Button(action: { viewModel.showHelpDialog = true }) {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Quick User & Engineering Help Guide")
 
-                    Button(action: { viewModel.showAboutDialog = true }) {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 15))
-                            .foregroundColor(.secondary)
+                        Button(action: { viewModel.showAboutDialog = true }) {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("About Coaxial Speaker Designer")
                     }
-                    .buttonStyle(.plain)
-                    .help("About Coaxial Speaker Designer")
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .padding()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .background(Color(NSColor.windowBackgroundColor))
 
                 Divider()

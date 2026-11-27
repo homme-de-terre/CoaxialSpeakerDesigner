@@ -76,16 +76,16 @@ public enum AllpassFilterOptimizer {
         let fLow = max(20.0, min(crossover.actualWooferFrequency, crossover.actualTweeterFrequency) / 2.0)
         let fHigh = min(20000.0, max(crossover.actualWooferFrequency, crossover.actualTweeterFrequency) * 2.0)
 
-        // Ensure phase is available for driver curves
-        let rawWooferCurve = driver.wooferAcousticCurve.isEmpty
-            ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS)
-            : driver.wooferAcousticCurve
-        let rawTweeterCurve = driver.tweeterAcousticCurve.isEmpty
-            ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter)
-            : driver.tweeterAcousticCurve
+        // Ensure phase is available for custom/digitized driver curves
+        let rawWooferCurve = (driver.hasCustomWooferCurve && !driver.wooferAcousticCurve.isEmpty)
+            ? driver.wooferAcousticCurve
+            : (driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve)
+        let rawTweeterCurve = (driver.hasCustomTweeterCurve && !driver.tweeterAcousticCurve.isEmpty)
+            ? driver.tweeterAcousticCurve
+            : (driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve)
 
-        let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
-        let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)
+        let wooferAcousticP = driver.hasCustomWooferCurve ? ensurePhase(curve: rawWooferCurve) : rawWooferCurve
+        let tweeterAcousticP = driver.hasCustomTweeterCurve ? ensurePhase(curve: rawTweeterCurve) : rawTweeterCurve
 
         // Generate logarithmic frequency test grid in [fLow, fHigh]
         var freqs: [Double] = []
@@ -117,14 +117,14 @@ public enum AllpassFilterOptimizer {
             pWooferBase.append(pWfRaw * hCab * hLP)
         }
 
-        // Cost function: sum of squared deviations from mean phase difference (Option A: Parallel Phase Traces)
+        // Cost function: sum of squared in-phase alignment errors (wrapped to [-180°, +180°] around 0° coherent target)
+        // Directly reflects tweeter polarity (+180° inversion) as well as acoustic delay and filter phase slopes.
         func evaluateCost(f0: Double, q: Double) -> Double {
             if f0 < 0.1 * fx || f0 > 10.0 * fx || q < 0.05 || q > 25.0 {
                 return 1e8
             }
 
-            var deltas: [Double] = []
-            deltas.reserveCapacity(sampleCount)
+            var sse = 0.0
 
             for i in 0..<sampleCount {
                 let f = freqs[i]
@@ -136,30 +136,16 @@ public enum AllpassFilterOptimizer {
                 let pWooferFinal = pWooferBase[i] * hAP
                 let wPhase = pWooferFinal.phaseDegrees
                 let tPhase = pTweeterFixed[i].phaseDegrees
-                deltas.append(wPhase - tPhase)
-            }
-
-            // Unwrap phase differences across the crossover octave band
-            for i in 1..<sampleCount {
-                while deltas[i] - deltas[i - 1] > 180.0 { deltas[i] -= 360.0 }
-                while deltas[i] - deltas[i - 1] < -180.0 { deltas[i] += 360.0 }
-            }
-
-            // Mean phase difference
-            let sumDelta = deltas.reduce(0.0, +)
-            let meanDelta = sumDelta / Double(sampleCount)
-
-            // Sum of squared errors (SSE) from the mean: evaluates how strictly parallel the curves are
-            var sse = 0.0
-            for d in deltas {
-                let diff = d - meanDelta
-                sse += diff * diff
+                var delta = wPhase - tPhase
+                while delta > 180.0 { delta -= 360.0 }
+                while delta < -180.0 { delta += 360.0 }
+                sse += delta * delta
             }
 
             return sse
         }
 
-        // Initial guesses for F0 and Q
+        // Initial guesses for F0 and Q (multi-start Nelder-Mead simplex across crossover region)
         let tau = (crossover.acousticCenterOffsetMM / 1000.0) / 343.0
         let qInit = max(0.5, min(2.5, 2.0 / (2.0 * .pi * fx * max(tau, 1e-6))))
         let f0Init = fx
@@ -171,10 +157,12 @@ public enum AllpassFilterOptimizer {
             var cost: Double
         }
 
-        var s: [SimplexPoint] = [
-            SimplexPoint(f0: f0Init, q: qInit, cost: evaluateCost(f0: f0Init, q: qInit)),
-            SimplexPoint(f0: f0Init * 1.2, q: qInit, cost: evaluateCost(f0: f0Init * 1.2, q: qInit)),
-            SimplexPoint(f0: f0Init, q: qInit * 1.25, cost: evaluateCost(f0: f0Init, q: qInit * 1.25))
+        let seedCandidates: [(f0: Double, q: Double)] = [
+            (fx * 0.4, 0.35),
+            (fx * 0.7, qInit),
+            (f0Init, qInit),
+            (fx * 1.5, qInit),
+            (fx * 2.4, 0.6)
         ]
 
         let alpha = 1.0  // Reflection
@@ -182,83 +170,109 @@ public enum AllpassFilterOptimizer {
         let rho = 0.5    // Contraction
         let sigma = 0.5  // Shrink
 
-        for _ in 0..<maxIterations {
-            s.sort { $0.cost < $1.cost }
+        var globalOptimal = SimplexPoint(f0: f0Init, q: qInit, cost: evaluateCost(f0: f0Init, q: qInit))
 
-            let best = s[0]
-            let worst = s[2]
+        for seed in seedCandidates {
+            var s: [SimplexPoint] = [
+                SimplexPoint(f0: seed.f0, q: seed.q, cost: evaluateCost(f0: seed.f0, q: seed.q)),
+                SimplexPoint(f0: seed.f0 * 1.2, q: seed.q, cost: evaluateCost(f0: seed.f0 * 1.2, q: seed.q)),
+                SimplexPoint(f0: seed.f0, q: seed.q * 1.25, cost: evaluateCost(f0: seed.f0, q: seed.q * 1.25))
+            ]
 
-            // Check convergence
-            let costDiff = abs(worst.cost - best.cost)
-            let f0Span = abs(worst.f0 - best.f0) / max(best.f0, 1.0)
-            let qSpan = abs(worst.q - best.q) / max(best.q, 0.1)
+            for _ in 0..<maxIterations {
+                s.sort { $0.cost < $1.cost }
 
-            if costDiff < 1e-5 && f0Span < 1e-4 && qSpan < 1e-4 {
-                break
-            }
+                let best = s[0]
+                let worst = s[2]
 
-            // Centroid of best two points
-            let cF0 = (s[0].f0 + s[1].f0) / 2.0
-            let cQ = (s[0].q + s[1].q) / 2.0
+                // Check convergence
+                let costDiff = abs(worst.cost - best.cost)
+                let f0Span = abs(worst.f0 - best.f0) / max(best.f0, 1.0)
+                let qSpan = abs(worst.q - best.q) / max(best.q, 0.1)
 
-            // 1. Reflection
-            let xrF0 = cF0 + alpha * (cF0 - worst.f0)
-            let xrQ = cQ + alpha * (cQ - worst.q)
-            let xrCost = evaluateCost(f0: xrF0, q: xrQ)
+                if costDiff < 1e-5 && f0Span < 1e-4 && qSpan < 1e-4 {
+                    break
+                }
 
-            if xrCost < s[1].cost && xrCost >= s[0].cost {
-                s[2] = SimplexPoint(f0: xrF0, q: xrQ, cost: xrCost)
-                continue
-            }
+                // Centroid of best two points
+                let cF0 = (s[0].f0 + s[1].f0) / 2.0
+                let cQ = (s[0].q + s[1].q) / 2.0
 
-            // 2. Expansion
-            if xrCost < s[0].cost {
-                let xeF0 = cF0 + gamma * (xrF0 - cF0)
-                let xeQ = cQ + gamma * (xrQ - cQ)
-                let xeCost = evaluateCost(f0: xeF0, q: xeQ)
+                // 1. Reflection
+                let xrF0 = cF0 + alpha * (cF0 - worst.f0)
+                let xrQ = cQ + alpha * (cQ - worst.q)
+                let xrCost = evaluateCost(f0: xrF0, q: xrQ)
 
-                if xeCost < xrCost {
-                    s[2] = SimplexPoint(f0: xeF0, q: xeQ, cost: xeCost)
-                } else {
+                if xrCost < s[1].cost && xrCost >= s[0].cost {
                     s[2] = SimplexPoint(f0: xrF0, q: xrQ, cost: xrCost)
-                }
-                continue
-            }
-
-            // 3. Contraction
-            if xrCost < worst.cost {
-                // Outside contraction
-                let xcF0 = cF0 + rho * (xrF0 - cF0)
-                let xcQ = cQ + rho * (xrQ - cQ)
-                let xcCost = evaluateCost(f0: xcF0, q: xcQ)
-                if xcCost < xrCost {
-                    s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
                     continue
                 }
-            } else {
-                // Inside contraction
-                let xcF0 = cF0 - rho * (cF0 - worst.f0)
-                let xcQ = cQ - rho * (cQ - worst.q)
-                let xcCost = evaluateCost(f0: xcF0, q: xcQ)
-                if xcCost < worst.cost {
-                    s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
+
+                // 2. Expansion
+                if xrCost < s[0].cost {
+                    let xeF0 = cF0 + gamma * (xrF0 - cF0)
+                    let xeQ = cQ + gamma * (xrQ - cQ)
+                    let xeCost = evaluateCost(f0: xeF0, q: xeQ)
+
+                    if xeCost < xrCost {
+                        s[2] = SimplexPoint(f0: xeF0, q: xeQ, cost: xeCost)
+                    } else {
+                        s[2] = SimplexPoint(f0: xrF0, q: xrQ, cost: xrCost)
+                    }
                     continue
+                }
+
+                // 3. Contraction
+                if xrCost < worst.cost {
+                    // Outside contraction
+                    let xcF0 = cF0 + rho * (xrF0 - cF0)
+                    let xcQ = cQ + rho * (xrQ - cQ)
+                    let xcCost = evaluateCost(f0: xcF0, q: xcQ)
+                    if xcCost < xrCost {
+                        s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
+                        continue
+                    }
+                } else {
+                    // Inside contraction
+                    let xcF0 = cF0 - rho * (cF0 - worst.f0)
+                    let xcQ = cQ - rho * (cQ - worst.q)
+                    let xcCost = evaluateCost(f0: xcF0, q: xcQ)
+                    if xcCost < worst.cost {
+                        s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
+                        continue
+                    }
+                }
+
+                // 4. Shrink
+                for i in 1...2 {
+                    let sf0 = s[0].f0 + sigma * (s[i].f0 - s[0].f0)
+                    let sq = s[0].q + sigma * (s[i].q - s[0].q)
+                    s[i] = SimplexPoint(f0: sf0, q: sq, cost: evaluateCost(f0: sf0, q: sq))
                 }
             }
 
-            // 4. Shrink
-            for i in 1...2 {
-                let sf0 = s[0].f0 + sigma * (s[i].f0 - s[0].f0)
-                let sq = s[0].q + sigma * (s[i].q - s[0].q)
-                s[i] = SimplexPoint(f0: sf0, q: sq, cost: evaluateCost(f0: sf0, q: sq))
+            s.sort { $0.cost < $1.cost }
+            if s[0].cost < globalOptimal.cost {
+                globalOptimal = s[0]
             }
         }
 
-        s.sort { $0.cost < $1.cost }
-        let optimal = s[0]
+        let optimal = globalOptimal
 
-        // Compute final statistics across window
-        let finalSSE = optimal.cost
+        // Compute final statistics across window (if acoustic delay is 0, no all-pass delay filter is applied)
+        let finalSSE: Double
+        if crossover.acousticCenterOffsetMM <= 0 {
+            var uncompSSE = 0.0
+            for i in 0..<sampleCount {
+                var d = pWooferBase[i].phaseDegrees - pTweeterFixed[i].phaseDegrees
+                while d > 180.0 { d -= 360.0 }
+                while d < -180.0 { d += 360.0 }
+                uncompSSE += d * d
+            }
+            finalSSE = uncompSSE
+        } else {
+            finalSSE = optimal.cost
+        }
         let rmsErrorDeg = sqrt(finalSSE / Double(sampleCount))
 
         // Compute peak-to-peak phase delta error across window
@@ -334,7 +348,12 @@ public enum AllpassFilterOptimizer {
                 let logF2 = log10(p2.frequency)
                 let t = (logF - logF1) / (logF2 - logF1)
                 let spl = p1.magnitude + t * (p2.magnitude - p1.magnitude)
-                let phaseDeg = p1.phase + t * (p2.phase - p1.phase)
+                var dPhase = p2.phase - p1.phase
+                while dPhase > 180.0 { dPhase -= 360.0 }
+                while dPhase < -180.0 { dPhase += 360.0 }
+                var phaseDeg = p1.phase + t * dPhase
+                while phaseDeg > 180.0 { phaseDeg -= 360.0 }
+                while phaseDeg < -180.0 { phaseDeg += 360.0 }
                 let magLinear = pow(10.0, spl / 20.0)
                 let phaseRad = phaseDeg * (.pi / 180.0)
                 return ComplexNumber(r: magLinear, theta: phaseRad)
@@ -342,5 +361,53 @@ public enum AllpassFilterOptimizer {
         }
         let magLinear = pow(10.0, curve.first!.magnitude / 20.0)
         return ComplexNumber(real: magLinear, imag: 0)
+    }
+
+    /// Evaluates the uncompensated RMS phase alignment error (in degrees) across the 2-octave crossover handover band
+    /// when the All-Pass filter is disabled (`H_AP(f) = 1.0`).
+    public static func evaluateUncompensatedRMSError(
+        driver: CoaxialDriver,
+        cabinet: SealedCabinet,
+        crossover: CrossoverNetwork,
+        sampleCount: Int = 31
+    ) -> Double {
+        let fLow = max(20.0, min(crossover.actualWooferFrequency, crossover.actualTweeterFrequency) / 2.0)
+        let fHigh = min(20000.0, max(crossover.actualWooferFrequency, crossover.actualTweeterFrequency) * 2.0)
+
+        let rawWooferCurve = (driver.hasCustomWooferCurve && !driver.wooferAcousticCurve.isEmpty)
+            ? driver.wooferAcousticCurve
+            : (driver.wooferAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticWooferCurve(ts: driver.wooferTS) : driver.wooferAcousticCurve)
+        let rawTweeterCurve = (driver.hasCustomTweeterCurve && !driver.tweeterAcousticCurve.isEmpty)
+            ? driver.tweeterAcousticCurve
+            : (driver.tweeterAcousticCurve.isEmpty ? CoaxialDriver.generateSyntheticTweeterCurve(tw: driver.tweeter) : driver.tweeterAcousticCurve)
+
+        let wooferAcousticP = driver.hasCustomWooferCurve ? ensurePhase(curve: rawWooferCurve) : rawWooferCurve
+        let tweeterAcousticP = driver.hasCustomTweeterCurve ? ensurePhase(curve: rawTweeterCurve) : rawTweeterCurve
+
+        let logLow = log(fLow)
+        let logHigh = log(fHigh)
+        let logStep = (logHigh - logLow) / Double(max(sampleCount - 1, 1))
+
+        var sse = 0.0
+        for i in 0..<sampleCount {
+            let f = exp(logLow + Double(i) * logStep)
+            let pTwRaw = interpolateAcousticPressure(freq: f, curve: tweeterAcousticP)
+            let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
+            let hLpadCD = crossover.tweeterLPadAndCDHornTransferFunction(frequency: f, tweeterRe: driver.tweeter.re)
+            let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
+            let pTweeter = pTwRaw * hHP * hLpadCD * hDelay
+
+            let pWfRaw = interpolateAcousticPressure(freq: f, curve: wooferAcousticP)
+            let hCab = cabinet.transferFunction(frequency: f, ts: driver.wooferTS)
+            let hLP = crossover.wooferFilterTransferFunction(frequency: f)
+            let pWoofer = pWfRaw * hCab * hLP
+
+            var delta = pWoofer.phaseDegrees - pTweeter.phaseDegrees
+            while delta > 180.0 { delta -= 360.0 }
+            while delta < -180.0 { delta += 360.0 }
+            sse += delta * delta
+        }
+
+        return sqrt(sse / Double(max(sampleCount, 1)))
     }
 }

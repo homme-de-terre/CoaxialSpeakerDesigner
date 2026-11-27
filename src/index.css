@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 @layer base {
+  html, body, #root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    box-sizing: border-box;
+  }
   body {
     background-color: #0d0e12;
     color: #e2e8f0;

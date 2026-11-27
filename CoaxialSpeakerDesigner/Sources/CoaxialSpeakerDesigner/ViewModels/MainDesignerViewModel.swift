@@ -123,7 +123,8 @@ public class MainDesignerViewModel: ObservableObject {
             self.targetReferenceSPL = driver.wooferTS.spl
         }
 
-        // Run Nelder-Mead All-Pass Filter Phase Alignment Optimization if APF is enabled
+        // Run Nelder-Mead All-Pass Filter Phase Alignment Optimization if APF is enabled,
+        // or evaluate uncompensated crossover RMS phase alignment error when APF is disabled.
         if crossover.enableAllpassFilter {
             let opt = AllpassFilterOptimizer.optimize(
                 driver: driver,
@@ -136,10 +137,15 @@ public class MainDesignerViewModel: ObservableObject {
             crossover.allpassOptimizationAchieved = opt.isGoalAchieved
             crossover.allpassWarnings = opt.warnings
         } else {
+            let uncompRMSError = AllpassFilterOptimizer.evaluateUncompensatedRMSError(
+                driver: driver,
+                cabinet: cabinet,
+                crossover: crossover
+            )
             crossover.allpassOptimizedF0 = nil
             crossover.allpassOptimizedQ = nil
-            crossover.allpassOptimizationErrorDeg = nil
-            crossover.allpassOptimizationAchieved = true
+            crossover.allpassOptimizationErrorDeg = uncompRMSError
+            crossover.allpassOptimizationAchieved = uncompRMSError <= 10.0
             crossover.allpassWarnings = []
         }
 
@@ -797,8 +803,8 @@ public class MainDesignerViewModel: ObservableObject {
     public func openLiveMonitorGrid(includeStepResponse: Bool = false) {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 40, y: 40, width: 1440, height: 900)
         let gap: CGFloat = 12.0
-        let cellW = max(480.0, (screenFrame.width - gap * 3.0) / 2.0)
-        let cellH = max(340.0, (screenFrame.height - gap * 3.0) / 2.0)
+        let cellW = max(320.0, (screenFrame.width - gap * 3.0) / 2.0)
+        let cellH = max(260.0, (screenFrame.height - gap * 3.0) / 2.0)
 
         let leftX = screenFrame.minX + gap
         let rightX = leftX + cellW + gap

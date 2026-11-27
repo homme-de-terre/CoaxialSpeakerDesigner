@@ -13,95 +13,102 @@ public struct PhaseBodeChartView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Acoustic Phase & Driver Delay Alignment (Degrees vs Log Hz)")
-                        .font(.headline)
-                    if viewModel.crossover.enableAllpassFilter {
-                        let f0 = Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)
-                        let qVal = String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.70)
-                        let errVal = String(format: "%.1f°", viewModel.crossover.allpassOptimizationErrorDeg ?? 0.0)
-                        let status = viewModel.crossover.allpassAlignmentStatus
-                        let statusColor: Color = status == .optimal ? .green : (status == .acceptable ? .yellow : .red)
-                        Text("All-Pass Nelder-Mead Optimization: F0 = \(f0) Hz, Q = \(qVal) • Residual RMS: \(errVal) • \(status.label)")
-                            .font(.caption2)
-                            .foregroundColor(statusColor)
-                    } else if viewModel.compensateTweeterDelay {
-                        let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
-                        Text("Tweeter Acoustic Center Delay Compensated: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) removed from tweeter phase")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Acoustic Phase & Driver Delay Alignment (Degrees vs Log Hz)")
+                            .font(.headline)
+                            .lineLimit(1)
+                        if viewModel.crossover.enableAllpassFilter {
+                            let f0 = Int(viewModel.crossover.allpassOptimizedF0 ?? viewModel.crossover.crossoverFrequency)
+                            let qVal = String(format: "%.2f", viewModel.crossover.allpassOptimizedQ ?? 0.70)
+                            let errVal = String(format: "%.1f°", viewModel.crossover.allpassOptimizationErrorDeg ?? 0.0)
+                            let status = viewModel.crossover.allpassAlignmentStatus
+                            let statusColor: Color = status == .optimal ? .green : (status == .acceptable ? .yellow : .red)
+                            Text("All-Pass Nelder-Mead Optimization: F0 = \(f0) Hz, Q = \(qVal) • Residual RMS: \(errVal) • \(status.label)")
+                                .font(.caption2)
+                                .foregroundColor(statusColor)
+                                .lineLimit(1)
+                        } else if viewModel.compensateTweeterDelay {
+                            let delayMs = (viewModel.crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
+                            Text("Tweeter Acoustic Center Delay Compensated: \(String(format: "%.1f mm (%.2f ms)", viewModel.crossover.acousticCenterOffsetMM, delayMs)) removed from tweeter phase")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    if !isDetachedWindow {
+                        Button(action: { viewModel.openDetachedChart(.phase) }) {
+                            Label("Detach", systemImage: "arrow.up.forward.square")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Open Phase & Delay in a floating live window")
                     }
                 }
-                Spacer()
 
-                Button(action: { viewModel.showWoofer.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Woofer Phase")
-                            .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
-                            .font(.caption).bold()
+                HStack(spacing: 12) {
+                    Button(action: { viewModel.showWoofer.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Woofer Phase")
+                                .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                Button(action: { viewModel.showTweeter.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Tweeter Phase")
-                            .foregroundColor(viewModel.showTweeter ? .red : .secondary)
-                            .font(.caption).bold()
+                    Button(action: { viewModel.showTweeter.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Tweeter Phase")
+                                .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                Button(action: { viewModel.showTotalSystem.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("System Phase")
-                            .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
-                            .font(.caption).bold()
+                    Button(action: { viewModel.showTotalSystem.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("System Phase")
+                                .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                Button(action: { viewModel.showPhaseDiff.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showPhaseDiff ? Color.orange : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Phase Diff (ΔΦ)")
-                            .foregroundColor(viewModel.showPhaseDiff ? .orange : .secondary)
-                            .font(.caption).bold()
+                    Button(action: { viewModel.showPhaseDiff.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showPhaseDiff ? Color.orange : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Phase Diff (ΔΦ)")
+                                .foregroundColor(viewModel.showPhaseDiff ? .orange : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                Divider().frame(height: 16)
-
-                Toggle("Unwrap Phase", isOn: $viewModel.unwrapPhase)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-
-                Toggle("Compensate Delay", isOn: $viewModel.compensateTweeterDelay)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-
-                if !isDetachedWindow {
                     Divider().frame(height: 16)
-                    Button(action: { viewModel.openDetachedChart(.phase) }) {
-                        Label("Detach", systemImage: "arrow.up.forward.square")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Open Phase & Delay in a floating live window")
+
+                    Toggle("Unwrap Phase", isOn: $viewModel.unwrapPhase)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+
+                    Toggle("Compensate Delay", isOn: $viewModel.compensateTweeterDelay)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+
+                    Spacer()
                 }
             }
             .padding(.horizontal)

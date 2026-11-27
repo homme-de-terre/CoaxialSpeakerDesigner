@@ -43,6 +43,15 @@ swift build -c release
 .build/release/CoaxialSpeakerDesigner
 ```
 
+### Method 3: Install or Rebuild Native `.dmg` Disk Image (Apple Silicon)
+Mount `CoaxialSpeakerDesigner_Native.dmg` (available at project root or inside `CoaxialSpeakerDesigner/CoaxialSpeakerDesigner_Native.dmg`) and drag `CoaxialSpeakerDesigner.app` into `/Applications`.
+
+To rebuild the `.dmg` package:
+```bash
+cd CoaxialSpeakerDesigner
+./build_native_dmg.sh
+```
+
 ---
 
 ## Project Architecture

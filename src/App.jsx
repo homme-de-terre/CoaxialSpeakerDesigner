@@ -584,7 +584,12 @@ export default function App() {
         const magnitude = p1.magnitude + t * (p2.magnitude - p1.magnitude);
         const ph1 = p1.phase || 0.0;
         const ph2 = p2.phase || 0.0;
-        const phase = ph1 + t * (ph2 - ph1);
+        let dPh = ph2 - ph1;
+        while (dPh > 180.0) dPh -= 360.0;
+        while (dPh < -180.0) dPh += 360.0;
+        let phase = ph1 + t * dPh;
+        while (phase > 180.0) phase -= 360.0;
+        while (phase < -180.0) phase += 360.0;
         return { magnitude, phase };
       }
     }
@@ -652,10 +657,6 @@ export default function App() {
     const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
     const centerFx = Math.round(Math.sqrt(actualWooferFx * actualTweeterFx));
 
-    if (!enableAllpass || acousticDelayMM <= 0) {
-      return { f0: centerFx, q: 0.707, rmsErrorDeg: 0, isGoalAchieved: true, alignmentStatus: getPhaseAlignmentStatus(0), warnings: [] };
-    }
-
     const fLow = Math.max(20.0, Math.min(actualWooferFx, actualTweeterFx) / 2.0);
     const fHigh = Math.min(20000.0, Math.max(actualWooferFx, actualTweeterFx) * 2.0);
     const sampleCount = 31;
@@ -714,14 +715,32 @@ export default function App() {
         pWooferRawPhaseRad = wfPt.phase * (Math.PI / 180.0);
       } else {
         pWooferRawSPL = ts.spl;
-        if (f < ts.fs) pWooferRawSPL -= 12 * Math.log2(ts.fs / Math.max(f, 10));
+        if (f > 2200) pWooferRawSPL -= 0.003 * (f - 2200);
       }
       const pWooferRawComp = Complex.polar(Math.pow(10, pWooferRawSPL / 20.0), pWooferRawPhaseRad);
 
-      const s = new Complex(0, w);
-      const s2 = s.mul(s);
-      const denomCab = s2.add(s.mul(wc / qtc)).add(wc * wc);
-      const hCab = s2.div(denomCab);
+      let hCab;
+      if (cabinetCalculations.enclosureType === 'vented') {
+        const fs = Math.max(ts.fs, 1.0);
+        const fb = cabinetCalculations.fb;
+        const fn = f / fs;
+        const h = fb / fs;
+        const ql = 15.0;
+        const qts = Math.max(cabinetCalculations.effectiveQts, 0.05);
+        const alpha = Math.max(cabinetCalculations.alpha, 0.01);
+        const c0 = h * h;
+        const c1 = (h * h) / qts + h / ql;
+        const c2 = 1.0 + h * h + alpha + h / (qts * ql);
+        const c3 = 1.0 / qts + h / ql;
+        const reD = Math.pow(fn, 4) - c2 * Math.pow(fn, 2) + c0;
+        const imD = -c3 * Math.pow(fn, 3) + c1 * fn;
+        hCab = new Complex(Math.pow(fn, 4), 0).div(new Complex(reD, imD));
+      } else {
+        const s = new Complex(0, w);
+        const s2 = s.mul(s);
+        const denomCab = s2.add(s.mul(wc / qtc)).add(wc * wc);
+        hCab = s2.div(denomCab);
+      }
 
       const xW = f / actualWooferFx;
       let hLP = new Complex(1, 0);
@@ -738,9 +757,28 @@ export default function App() {
       pWooferBase.push(pWooferRawComp.mul(hCab).mul(hLP));
     });
 
+    if (!enableAllpass || acousticDelayMM <= 0) {
+      let uncompSSE = 0;
+      for (let i = 0; i < sampleCount; i++) {
+        let delta = pWooferBase[i].phaseDeg - pTweeterFixed[i].phaseDeg;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        uncompSSE += delta * delta;
+      }
+      const uncompRMS = Math.sqrt(uncompSSE / sampleCount);
+      return {
+        f0: centerFx,
+        q: 0.707,
+        rmsErrorDeg: uncompRMS,
+        isGoalAchieved: uncompRMS <= 10.0,
+        alignmentStatus: getPhaseAlignmentStatus(uncompRMS),
+        warnings: []
+      };
+    }
+
     function evalCost(f0, q) {
       if (f0 < 0.1 * centerFx || f0 > 10.0 * centerFx || q < 0.05 || q > 25.0) return 1e8;
-      const deltas = [];
+      let sse = 0;
       for (let i = 0; i < sampleCount; i++) {
         const f = freqs[i];
         const x = f / f0;
@@ -748,76 +786,85 @@ export default function App() {
         const denom = new Complex(1.0 - x * x, x / q);
         const hAP = num.div(denom);
         const pWooferFinal = pWooferBase[i].mul(hAP);
-        deltas.push(pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg);
-      }
-      for (let i = 1; i < sampleCount; i++) {
-        while (deltas[i] - deltas[i - 1] > 180.0) deltas[i] -= 360.0;
-        while (deltas[i] - deltas[i - 1] < -180.0) deltas[i] += 360.0;
-      }
-      const mean = deltas.reduce((a, b) => a + b, 0) / sampleCount;
-      let sse = 0;
-      for (let i = 0; i < sampleCount; i++) {
-        const diff = deltas[i] - mean;
-        sse += diff * diff;
+        let delta = pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        sse += delta * delta;
       }
       return sse;
     }
 
     const tau = delaySec;
     const qInit = Math.max(0.5, Math.min(2.5, 2.0 / (2.0 * Math.PI * centerFx * Math.max(tau, 1e-6))));
-    let simplex = [
-      { f0: centerFx, q: qInit, cost: evalCost(centerFx, qInit) },
-      { f0: centerFx * 1.2, q: qInit, cost: evalCost(centerFx * 1.2, qInit) },
-      { f0: centerFx, q: qInit * 1.25, cost: evalCost(centerFx, qInit * 1.25) }
+    const seedCandidates = [
+      { f0: centerFx * 0.4, q: 0.35 },
+      { f0: centerFx * 0.7, q: qInit },
+      { f0: centerFx, q: qInit },
+      { f0: centerFx * 1.5, q: qInit },
+      { f0: centerFx * 2.4, q: 0.6 }
     ];
 
-    for (let it = 0; it < 120; it++) {
+    let globalOptimal = { f0: centerFx, q: qInit, cost: evalCost(centerFx, qInit) };
+
+    for (const seed of seedCandidates) {
+      let simplex = [
+        { f0: seed.f0, q: seed.q, cost: evalCost(seed.f0, seed.q) },
+        { f0: seed.f0 * 1.2, q: seed.q, cost: evalCost(seed.f0 * 1.2, seed.q) },
+        { f0: seed.f0, q: seed.q * 1.25, cost: evalCost(seed.f0, seed.q * 1.25) }
+      ];
+
+      for (let it = 0; it < 120; it++) {
+        simplex.sort((a, b) => a.cost - b.cost);
+        if (Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5) break;
+        const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
+        const cQ = (simplex[0].q + simplex[1].q) / 2.0;
+
+        const xrF0 = cF0 + (cF0 - simplex[2].f0);
+        const xrQ = cQ + (cQ - simplex[2].q);
+        const xrCost = evalCost(xrF0, xrQ);
+
+        if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) {
+          simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost };
+          continue;
+        }
+        if (xrCost < simplex[0].cost) {
+          const xeF0 = cF0 + 2.0 * (xrF0 - cF0);
+          const xeQ = cQ + 2.0 * (xrQ - cQ);
+          const xeCost = evalCost(xeF0, xeQ);
+          simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost };
+          continue;
+        }
+        if (xrCost < simplex[2].cost) {
+          const xcF0 = cF0 + 0.5 * (xrF0 - cF0);
+          const xcQ = cQ + 0.5 * (xrQ - cQ);
+          const xcCost = evalCost(xcF0, xcQ);
+          if (xcCost < xrCost) {
+            simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
+            continue;
+          }
+        } else {
+          const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0);
+          const xcQ = cQ - 0.5 * (cQ - simplex[2].q);
+          const xcCost = evalCost(xcF0, xcQ);
+          if (xcCost < simplex[2].cost) {
+            simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
+            continue;
+          }
+        }
+        for (let i = 1; i <= 2; i++) {
+          const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
+          const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
+          simplex[i] = { f0: sf0, q: sq, cost: evalCost(sf0, sq) };
+        }
+      }
+
       simplex.sort((a, b) => a.cost - b.cost);
-      if (Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5) break;
-      const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
-      const cQ = (simplex[0].q + simplex[1].q) / 2.0;
-
-      const xrF0 = cF0 + (cF0 - simplex[2].f0);
-      const xrQ = cQ + (cQ - simplex[2].q);
-      const xrCost = evalCost(xrF0, xrQ);
-
-      if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) {
-        simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost };
-        continue;
-      }
-      if (xrCost < simplex[0].cost) {
-        const xeF0 = cF0 + 2.0 * (xrF0 - cF0);
-        const xeQ = cQ + 2.0 * (xrQ - cQ);
-        const xeCost = evalCost(xeF0, xeQ);
-        simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost };
-        continue;
-      }
-      if (xrCost < simplex[2].cost) {
-        const xcF0 = cF0 + 0.5 * (xrF0 - cF0);
-        const xcQ = cQ + 0.5 * (xrQ - cQ);
-        const xcCost = evalCost(xcF0, xcQ);
-        if (xcCost < xrCost) {
-          simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
-          continue;
-        }
-      } else {
-        const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0);
-        const xcQ = cQ - 0.5 * (cQ - simplex[2].q);
-        const xcCost = evalCost(xcF0, xcQ);
-        if (xcCost < simplex[2].cost) {
-          simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
-          continue;
-        }
-      }
-      for (let i = 1; i <= 2; i++) {
-        const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
-        const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
-        simplex[i] = { f0: sf0, q: sq, cost: evalCost(sf0, sq) };
+      if (simplex[0].cost < globalOptimal.cost) {
+        globalOptimal = simplex[0];
       }
     }
 
-    simplex.sort((a, b) => a.cost - b.cost);
-    const opt = simplex[0];
+    const opt = globalOptimal;
     const rmsErrorDeg = Math.sqrt(opt.cost / sampleCount);
     const alignmentStatus = getPhaseAlignmentStatus(rmsErrorDeg);
     const isGoalAchieved = rmsErrorDeg <= 10.0;
@@ -2709,9 +2756,9 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-slate-900 text-slate-100 font-sans overflow-hidden">
+    <div className="flex h-screen w-full max-w-[100vw] bg-slate-900 text-slate-100 font-sans overflow-hidden box-border">
       {/* --- Sidebar Inspector Panel --- */}
-      <aside className="w-96 bg-slate-800 border-r border-slate-700 flex flex-col h-full overflow-y-auto p-4 space-y-6">
+      <aside className="w-80 xl:w-96 shrink-0 bg-slate-800 border-r border-slate-700 flex flex-col h-full overflow-y-auto p-4 space-y-6">
         <div className="flex items-center space-x-3 border-b border-slate-700 pb-4">
           <Speaker className="w-8 h-8 text-blue-400" />
           <div>
@@ -3191,10 +3238,10 @@ export default function App() {
       </aside>
 
       {/* --- Main Content View Workspace --- */}
-      <main className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden">
+      <main className="flex-1 min-w-0 flex flex-col h-full bg-slate-950 overflow-hidden">
         {/* Navigation Bar */}
-        <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-6">
-          <div className="flex items-center space-x-1">
+        <header className="min-h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between gap-2 px-4 py-1.5 min-w-0">
+          <div className="flex items-center space-x-1 overflow-x-auto min-w-0 whitespace-nowrap">
             <button onClick={() => setActiveTab('amplitude')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'amplitude' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Amplitude Plot</button>
             <button onClick={() => setActiveTab('phase')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'phase' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Phase & Delay</button>
             <button onClick={() => setActiveTab('delay')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'delay' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Group Delay</button>
@@ -3205,7 +3252,7 @@ export default function App() {
             <button onClick={() => setActiveTab('bom')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'bom' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>Schematic & BOM</button>
             <button onClick={() => setActiveTab('frd')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'frd' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>FRD Import/Export</button>
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 shrink-0">
             <button
               onClick={() => setShowHelpDialog(true)}
               className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-md transition cursor-pointer"
@@ -3224,7 +3271,7 @@ export default function App() {
         </header>
 
         {/* View Workspace Content */}
-        <div className="flex-1 p-6 overflow-y-auto">
+        <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0">
           {activeTab === 'amplitude' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -4152,43 +4199,43 @@ export default function App() {
                     Inserts an optional 2nd-order all-pass delay network on the woofer branch to acoustically align phase with the physically recessed tweeter at {fx} Hz.
                   </p>
 
-                  {enableAllpass && (
-                    <div className="p-3 bg-teal-950/30 border border-teal-800/50 rounded-lg space-y-2 text-xs mt-2">
-                      <div className="flex items-center justify-between text-teal-300 font-semibold">
-                        <span>Nelder-Mead Phase Optimization</span>
-                        <span className={
-                          apfOptimization.alignmentStatus.level === 'green'
-                            ? "text-emerald-400"
-                            : (apfOptimization.alignmentStatus.level === 'yellow' ? "text-amber-400" : "text-red-400")
-                        }>
-                          RMS Phase Error: {apfOptimization.rmsErrorDeg.toFixed(2)}°
-                        </span>
-                      </div>
+                  <div className="p-3 bg-teal-950/30 border border-teal-800/50 rounded-lg space-y-2 text-xs mt-2">
+                    <div className="flex items-center justify-between text-teal-300 font-semibold">
+                      <span>{enableAllpass ? 'Nelder-Mead Phase Optimization' : 'Crossover Phase Alignment'}</span>
+                      <span className={
+                        apfOptimization.alignmentStatus.level === 'green'
+                          ? "text-emerald-400"
+                          : (apfOptimization.alignmentStatus.level === 'yellow' ? "text-amber-400" : "text-red-400")
+                      }>
+                        RMS Phase Error: {apfOptimization.rmsErrorDeg.toFixed(2)}°
+                      </span>
+                    </div>
+                    {enableAllpass && (
                       <div className="text-[11px] text-slate-400">
                         Optimal F0: {Math.round(apfOptimization.f0)} Hz • Optimal Q: {apfOptimization.q.toFixed(2)} • Alignment Window: [{Math.round(fx / 2)} Hz – {Math.round(fx * 2)} Hz]
                       </div>
-                      <div className={`flex items-center space-x-2 p-2 rounded border text-[11px] font-semibold ${
-                        apfOptimization.alignmentStatus.level === 'green'
-                          ? 'bg-emerald-950/40 border-emerald-700/50 text-emerald-300'
-                          : (apfOptimization.alignmentStatus.level === 'yellow'
-                              ? 'bg-amber-950/40 border-amber-700/50 text-amber-300'
-                              : 'bg-red-950/40 border-red-700/50 text-red-300')
-                      }`}>
-                        {apfOptimization.alignmentStatus.level === 'green' ? (
-                          <Check className="w-4 h-4 shrink-0 text-emerald-400" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 shrink-0" />
-                        )}
-                        <span>{apfOptimization.alignmentStatus.label}</span>
-                      </div>
-                      {apfOptimization.warnings.map((warn, i) => (
-                        <div key={i} className="flex items-start space-x-2 p-2 bg-amber-950/40 border border-amber-800/40 rounded text-amber-300 text-[11px]">
-                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                          <span>{warn}</span>
-                        </div>
-                      ))}
+                    )}
+                    <div className={`flex items-center space-x-2 p-2 rounded border text-[11px] font-semibold ${
+                      apfOptimization.alignmentStatus.level === 'green'
+                        ? 'bg-emerald-950/40 border-emerald-700/50 text-emerald-300'
+                        : (apfOptimization.alignmentStatus.level === 'yellow'
+                            ? 'bg-amber-950/40 border-amber-700/50 text-amber-300'
+                            : 'bg-red-950/40 border-red-700/50 text-red-300')
+                    }`}>
+                      {apfOptimization.alignmentStatus.level === 'green' ? (
+                        <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                      )}
+                      <span>{apfOptimization.alignmentStatus.label}</span>
                     </div>
-                  )}
+                    {enableAllpass && apfOptimization.warnings.map((warn, i) => (
+                      <div key={i} className="flex items-start space-x-2 p-2 bg-amber-950/40 border border-amber-800/40 rounded text-amber-300 text-[11px]">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>{warn}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>

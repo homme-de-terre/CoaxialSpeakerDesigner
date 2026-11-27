@@ -12,72 +12,78 @@ public struct AmplitudeBodeChartView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Chart Legend Header with interactive toggles
-            HStack(spacing: 14) {
-                Text("Amplitude Frequency Response (dB SPL vs Log Hz)")
-                    .font(.headline)
-                Spacer()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text("Amplitude Frequency Response (dB SPL vs Log Hz)")
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer()
 
-                Button(action: { viewModel.showWoofer.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Woofer (LP)")
-                            .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
-                            .font(.caption).bold()
+                    if !isDetachedWindow {
+                        Button(action: { viewModel.openDetachedChart(.amplitude) }) {
+                            Label("Detach", systemImage: "arrow.up.forward.square")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Open Amplitude Response in a floating live window")
                     }
                 }
-                .buttonStyle(.plain)
-                .help("Toggle Woofer response curve")
 
-                Button(action: { viewModel.showTweeter.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Tweeter (HP)")
-                            .foregroundColor(viewModel.showTweeter ? .red : .secondary)
-                            .font(.caption).bold()
+                HStack(spacing: 14) {
+                    Button(action: { viewModel.showWoofer.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Woofer (LP)")
+                                .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
-                .help("Toggle Tweeter response curve")
+                    .buttonStyle(.plain)
+                    .help("Toggle Woofer response curve")
 
-                Button(action: { viewModel.showTotalSystem.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Total System")
-                            .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
-                            .font(.caption).bold()
+                    Button(action: { viewModel.showTweeter.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Tweeter (HP)")
+                                .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
-                .help("Toggle Combined System response curve")
+                    .buttonStyle(.plain)
+                    .help("Toggle Tweeter response curve")
 
-                Button(action: { viewModel.showTargetReference.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showTargetReference ? Color.gray : Color.gray.opacity(0.2))
-                            .frame(width: 8, height: 8)
-                        Text("Target Line")
-                            .foregroundColor(viewModel.showTargetReference ? .secondary : Color.gray.opacity(0.5))
-                            .font(.caption).bold()
+                    Button(action: { viewModel.showTotalSystem.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTotalSystem ? Color.green : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Total System")
+                                .foregroundColor(viewModel.showTotalSystem ? .green : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
-                .help("Toggle target reference line")
+                    .buttonStyle(.plain)
+                    .help("Toggle Combined System response curve")
 
-                if !isDetachedWindow {
-                    Divider().frame(height: 16)
-                    Button(action: { viewModel.openDetachedChart(.amplitude) }) {
-                        Label("Detach", systemImage: "arrow.up.forward.square")
-                            .font(.caption)
+                    Button(action: { viewModel.showTargetReference.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTargetReference ? Color.gray : Color.gray.opacity(0.2))
+                                .frame(width: 8, height: 8)
+                            Text("Target Line")
+                                .foregroundColor(viewModel.showTargetReference ? .secondary : Color.gray.opacity(0.5))
+                                .font(.caption).bold()
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Open Amplitude Response in a floating live window")
+                    .buttonStyle(.plain)
+                    .help("Toggle target reference line")
+
+                    Spacer()
                 }
             }
             .padding(.horizontal)

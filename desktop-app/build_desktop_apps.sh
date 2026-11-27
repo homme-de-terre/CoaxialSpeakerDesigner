@@ -6,3 +6,4 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "${SCRIPT_DIR}"
 
 python3 package_dmg.py
+python3 ../CoaxialSpeakerDesigner/package_native_dmg.py

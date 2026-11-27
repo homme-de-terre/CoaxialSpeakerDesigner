@@ -57,8 +57,14 @@ public struct CurveDigitizerEditorView: View {
 
             if viewModel.digitizerActiveTab == 0 {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Paste Woofer FRD Text Data (Freq, SPL, Phase):")
-                        .font(.headline)
+                    HStack {
+                        Text("Paste Woofer FRD Text Data (Freq, SPL, Phase):")
+                            .font(.headline)
+                        Spacer()
+                        Text("Current points loaded: \(viewModel.driver.wooferAcousticCurve.count) (\(viewModel.driver.hasCustomWooferCurve ? "Custom/Measured" : "Synthetic T/S"))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
 
                     TextEditor(text: $viewModel.wooferFRDText)
                         .font(.monospaced(.body)())
@@ -103,16 +109,18 @@ public struct CurveDigitizerEditorView: View {
                         .buttonStyle(.bordered)
 
                         Spacer()
-
-                        Text("Current points loaded: \(viewModel.driver.wooferAcousticCurve.count) (\(viewModel.driver.hasCustomWooferCurve ? "Custom/Measured" : "Synthetic T/S"))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Paste Tweeter FRD Text Data (Freq, SPL, Phase):")
-                        .font(.headline)
+                    HStack {
+                        Text("Paste Tweeter FRD Text Data (Freq, SPL, Phase):")
+                            .font(.headline)
+                        Spacer()
+                        Text("Current points loaded: \(viewModel.driver.tweeterAcousticCurve.count) (\(viewModel.driver.hasCustomTweeterCurve ? "Custom/Measured" : "Synthetic T/S"))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
 
                     TextEditor(text: $viewModel.tweeterFRDText)
                         .font(.monospaced(.body)())
@@ -157,10 +165,6 @@ public struct CurveDigitizerEditorView: View {
                         .buttonStyle(.bordered)
 
                         Spacer()
-
-                        Text("Current points loaded: \(viewModel.driver.tweeterAcousticCurve.count) (\(viewModel.driver.hasCustomTweeterCurve ? "Custom/Measured" : "Synthetic T/S"))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     }
                 }
             }

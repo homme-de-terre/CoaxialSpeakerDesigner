@@ -12,9 +12,19 @@ public struct CoaxialSpeakerDesignerApp: App {
     public var body: some Scene {
         WindowGroup {
             MainSplitView()
-                .frame(minWidth: 1050, minHeight: 700)
+                .frame(minWidth: 900, minHeight: 620)
                 .onAppear {
                     NSApplication.shared.activate(ignoringOtherApps: true)
+                    Self.constrainWindowsToScreenBounds()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+                    Self.constrainWindowsToScreenBounds()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
+                    Self.constrainWindowsToScreenBounds()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { _ in
+                    Self.constrainWindowsToScreenBounds()
                 }
         }
         .windowStyle(.titleBar)
@@ -69,6 +79,48 @@ public struct CoaxialSpeakerDesignerApp: App {
                 Button("Select All") {
                     NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
                 }.keyboardShortcut("a")
+            }
+        }
+    }
+
+    /// Ensures application windows never exceed the left and right boundaries of their screen,
+    /// especially when entering or resizing in macOS Full Screen mode.
+    @MainActor
+    public static func constrainWindowsToScreenBounds() {
+        for window in NSApplication.shared.windows {
+            guard let screen = window.screen ?? NSScreen.main else { continue }
+            let screenFrame = screen.frame
+            let visibleFrame = screen.visibleFrame
+
+            if window.minSize.width > screenFrame.width {
+                window.minSize.width = min(900.0, screenFrame.width)
+            }
+            if window.contentMinSize.width > screenFrame.width {
+                window.contentMinSize.width = min(900.0, screenFrame.width)
+            }
+            window.maxSize.width = screenFrame.width
+            window.contentMaxSize.width = screenFrame.width
+
+            let isFullScreen = window.styleMask.contains(.fullScreen)
+            let allowedBounds = isFullScreen ? screenFrame : visibleFrame
+            var currentFrame = window.frame
+
+            var needsAdjust = false
+            if currentFrame.width > allowedBounds.width {
+                currentFrame.size.width = allowedBounds.width
+                needsAdjust = true
+            }
+            if currentFrame.minX < allowedBounds.minX {
+                currentFrame.origin.x = allowedBounds.minX
+                needsAdjust = true
+            }
+            if currentFrame.maxX > allowedBounds.maxX {
+                currentFrame.origin.x = max(allowedBounds.minX, allowedBounds.maxX - currentFrame.width)
+                needsAdjust = true
+            }
+
+            if needsAdjust {
+                window.setFrame(currentFrame, display: true, animate: false)
             }
         }
     }

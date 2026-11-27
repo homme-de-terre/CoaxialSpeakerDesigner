@@ -11,56 +11,62 @@ public struct ImpedanceChartView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 14) {
-                Text("System Electrical Load Impedance (|Z| in Ohms vs Log Hz)")
-                    .font(.headline)
-                Spacer()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text("System Electrical Load Impedance (|Z| in Ohms vs Log Hz)")
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer()
 
-                Button(action: { viewModel.showWoofer.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Woofer |Z|")
-                            .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
-                            .font(.caption).bold()
+                    if !isDetachedWindow {
+                        Button(action: { viewModel.openDetachedChart(.impedance) }) {
+                            Label("Detach", systemImage: "arrow.up.forward.square")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Open System Impedance in a floating live window")
                     }
                 }
-                .buttonStyle(.plain)
 
-                Button(action: { viewModel.showTweeter.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Tweeter |Z|")
-                            .foregroundColor(viewModel.showTweeter ? .red : .secondary)
-                            .font(.caption).bold()
+                HStack(spacing: 14) {
+                    Button(action: { viewModel.showWoofer.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showWoofer ? Color.blue : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Woofer |Z|")
+                                .foregroundColor(viewModel.showWoofer ? .blue : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                Button(action: { viewModel.showTotalSystem.toggle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(viewModel.showTotalSystem ? Color.purple : Color.gray.opacity(0.35))
-                            .frame(width: 8, height: 8)
-                        Text("Amplifier System Load |Z|")
-                            .foregroundColor(viewModel.showTotalSystem ? .purple : .secondary)
-                            .font(.caption).bold()
+                    Button(action: { viewModel.showTweeter.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTweeter ? Color.red : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Tweeter |Z|")
+                                .foregroundColor(viewModel.showTweeter ? .red : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                if !isDetachedWindow {
-                    Divider().frame(height: 16)
-                    Button(action: { viewModel.openDetachedChart(.impedance) }) {
-                        Label("Detach", systemImage: "arrow.up.forward.square")
-                            .font(.caption)
+                    Button(action: { viewModel.showTotalSystem.toggle() }) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(viewModel.showTotalSystem ? Color.purple : Color.gray.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            Text("Amplifier System Load |Z|")
+                                .foregroundColor(viewModel.showTotalSystem ? .purple : .secondary)
+                                .font(.caption).bold()
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Open System Impedance in a floating live window")
+                    .buttonStyle(.plain)
+
+                    Spacer()
                 }
             }
             .padding(.horizontal)

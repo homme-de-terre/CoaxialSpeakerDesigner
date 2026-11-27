@@ -57,25 +57,26 @@ public struct CrossoverInspectorView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
 
-                    HStack(spacing: 8) {
-                        ForEach(DetachedChartKind.allCases) { kind in
-                            let isOpen = viewModel.isChartDetached(kind)
-                            Button(action: {
-                                viewModel.toggleDetachedChart(kind)
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: isOpen ? "checkmark.rectangle.stack.fill" : "arrow.up.forward.square")
-                                    Text(kind.shortTitle)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(DetachedChartKind.allCases) { kind in
+                                let isOpen = viewModel.isChartDetached(kind)
+                                Button(action: {
+                                    viewModel.toggleDetachedChart(kind)
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: isOpen ? "checkmark.rectangle.stack.fill" : "arrow.up.forward.square")
+                                        Text(kind.shortTitle)
+                                    }
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
                                 }
-                                .font(.caption.bold())
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
+                                .buttonStyle(.bordered)
+                                .tint(isOpen ? .accentColor : .secondary)
+                                .help(isOpen ? "Close detached \(kind.rawValue) window" : "Open \(kind.rawValue) in a floating live window")
                             }
-                            .buttonStyle(.bordered)
-                            .tint(isOpen ? .accentColor : .secondary)
-                            .help(isOpen ? "Close detached \(kind.rawValue) window" : "Open \(kind.rawValue) in a floating live window")
                         }
-                        Spacer()
                     }
                 }
                 .padding(6)
@@ -247,60 +248,63 @@ public struct CrossoverInspectorView: View {
                         Slider(value: $viewModel.crossover.acousticCenterOffsetMM, in: 0.0...100.0, step: 1.0)
                     }
 
-                    HStack {
+                    VStack(alignment: .leading, spacing: 8) {
                         Toggle("Invert Tweeter Polarity (+180°)", isOn: $viewModel.crossover.invertTweeterPolarity)
-                        Spacer()
-                        Toggle("Snap Components to Commercial E12 Series", isOn: $viewModel.crossover.snapToStandardValues)
-                        Spacer()
-                        Toggle("Snap Components to Commercial E24 Series", isOn: $viewModel.crossover.snapToE24Values)
+                        HStack(spacing: 16) {
+                            Toggle("Snap Components to Commercial E12 Series", isOn: $viewModel.crossover.snapToStandardValues)
+                            Toggle("Snap Components to Commercial E24 Series", isOn: $viewModel.crossover.snapToE24Values)
+                            Spacer()
+                        }
                     }
 
                     Toggle("Enable All-Pass Woofer Delay Compensation Network", isOn: $viewModel.crossover.enableAllpassFilter)
 
-                    if viewModel.crossover.enableAllpassFilter {
-                        let status = viewModel.crossover.allpassAlignmentStatus
-                        let statusColor: Color = status == .optimal ? .green : (status == .acceptable ? .yellow : .red)
-                        let statusIcon = status == .optimal ? "checkmark.circle.fill" : (status == .acceptable ? "exclamationmark.triangle.fill" : "exclamationmark.octagon.fill")
+                    let status = viewModel.crossover.allpassAlignmentStatus
+                    let statusColor: Color = status == .optimal ? .green : (status == .acceptable ? .yellow : .red)
+                    let statusIcon = status == .optimal ? "checkmark.circle.fill" : (status == .acceptable ? "exclamationmark.triangle.fill" : "exclamationmark.octagon.fill")
 
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Image(systemName: "wand.and.stars")
-                                    .foregroundColor(.teal)
-                                Text("Nelder-Mead Phase Optimization:")
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: viewModel.crossover.enableAllpassFilter ? "wand.and.stars" : "waveform")
+                                .foregroundColor(.teal)
+                            Text(viewModel.crossover.enableAllpassFilter ? "Nelder-Mead Phase Optimization:" : "Crossover Phase Alignment:")
+                                .font(.caption)
+                                .bold()
+                                .foregroundColor(.teal)
+                            Spacer()
+                            if let err = viewModel.crossover.allpassOptimizationErrorDeg {
+                                Text("RMS Error: \(String(format: "%.2f°", err))")
                                     .font(.caption)
-                                    .bold()
-                                    .foregroundColor(.teal)
-                                Spacer()
-                                if let err = viewModel.crossover.allpassOptimizationErrorDeg {
-                                    Text("RMS Error: \(String(format: "%.2f°", err))")
-                                        .font(.caption)
-                                        .bold()
-                                        .foregroundColor(statusColor)
-                                }
-                            }
-
-                            if let f0 = viewModel.crossover.allpassOptimizedF0, let q = viewModel.crossover.allpassOptimizedQ {
-                                Text("Optimal Resonance (F0): \(Int(f0)) Hz  •  Damping (Q): \(String(format: "%.2f", q))")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            // 3-Tier Phase Alignment Status Banner (Green / Yellow / Red)
-                            HStack(alignment: .center, spacing: 6) {
-                                Image(systemName: statusIcon)
-                                    .foregroundColor(statusColor)
-                                    .font(.caption)
-                                Text(status.label)
-                                    .font(.caption2)
                                     .bold()
                                     .foregroundColor(statusColor)
                             }
-                            .padding(6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(statusColor.opacity(0.12))
-                            .cornerRadius(6)
+                        }
 
-                            // Show additional APF setup warnings (e.g., Zobel disabled)
+                        if viewModel.crossover.enableAllpassFilter,
+                           let f0 = viewModel.crossover.allpassOptimizedF0,
+                           let q = viewModel.crossover.allpassOptimizedQ {
+                            Text("Optimal Resonance (F0): \(Int(f0)) Hz  •  Damping (Q): \(String(format: "%.2f", q))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        // 3-Tier Phase Alignment Status Banner (Green / Yellow / Red)
+                        HStack(alignment: .center, spacing: 6) {
+                            Image(systemName: statusIcon)
+                                .foregroundColor(statusColor)
+                                .font(.caption)
+                            Text(status.label)
+                                .font(.caption2)
+                                .bold()
+                                .foregroundColor(statusColor)
+                        }
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(statusColor.opacity(0.12))
+                        .cornerRadius(6)
+
+                        // Show additional APF setup warnings (e.g., Zobel disabled)
+                        if viewModel.crossover.enableAllpassFilter {
                             ForEach(viewModel.crossover.allpassWarnings, id: \.self) { warn in
                                 HStack(alignment: .top, spacing: 6) {
                                     Image(systemName: "exclamationmark.triangle.fill")
@@ -315,10 +319,11 @@ public struct CrossoverInspectorView: View {
                                 .cornerRadius(6)
                             }
                         }
-                        .padding(8)
-                        .background(Color.teal.opacity(0.06))
-                        .cornerRadius(8)
                     }
+                    .id(viewModel.simulationRevision)
+                    .padding(8)
+                    .background(Color.teal.opacity(0.06))
+                    .cornerRadius(8)
                 }
                 .padding(8)
             }

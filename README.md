@@ -105,10 +105,18 @@ npm run build
 ```
 
 ### 3. macOS .dmg Disk Image & Desktop App Distribution
-Mount `CoaxialSpeakerDesigner.dmg` (available at project root or under `desktop-app/CoaxialSpeakerDesigner.dmg`) to install the native Apple Silicon macOS desktop app:
+Two mountable Apple Silicon HFS+ UDIF `.dmg` packages are provided at the project root:
+* **`CoaxialSpeakerDesigner_Native.dmg`** (also in `CoaxialSpeakerDesigner/CoaxialSpeakerDesigner_Native.dmg`): **Pure Native SwiftUI + AppKit + Swift Charts macOS app** (`macOS 13.0+`).
+* **`CoaxialSpeakerDesigner.dmg`** (also in `desktop-app/CoaxialSpeakerDesigner.dmg`): **Standalone Cross-Platform Web/Desktop app** (`macOS 11.0+`).
+
+To rebuild the `.dmg` packages:
 ```bash
-# Build desktop executables & generate CoaxialSpeakerDesigner.dmg
-cd desktop-app
+# Build Pure Native SwiftUI macOS .dmg (CoaxialSpeakerDesigner_Native.dmg)
+cd CoaxialSpeakerDesigner
+./build_native_dmg.sh
+
+# Build Web/Desktop .dmg (CoaxialSpeakerDesigner.dmg) or both packages
+cd ../desktop-app
 ./build_dmg.sh
 # or run ./build_desktop_apps.sh to build everything
 ```

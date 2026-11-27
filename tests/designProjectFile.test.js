@@ -1328,6 +1328,494 @@ test('macOS DMG Distribution Package - Apple Silicon Bundle, HFS+ UDIF Mountabil
   assert.ok(fs.existsSync(buildDmgScript), 'desktop-app/build_dmg.sh must exist');
 });
 
+test('Full Screen Mode & Screen Boundary Layout Constraints - Window Clamping Math and SwiftUI/React Responsive Headers', async () => {
+  const fs = await import('node:fs');
+
+  // 1. Verify window frame screen-boundary clamping algorithm (matching CoaxialSpeakerDesignerApp.constrainWindowsToScreenBounds)
+  function constrainWindowFrame(windowFrame, minSize, screenFrame, visibleFrame, isFullScreen) {
+    const clampedMinW = minSize.width > screenFrame.width ? Math.min(900.0, screenFrame.width) : minSize.width;
+    const maxW = screenFrame.width;
+    const allowed = isFullScreen ? screenFrame : visibleFrame;
+
+    let x = windowFrame.x;
+    let y = windowFrame.y;
+    let width = windowFrame.width;
+    let height = windowFrame.height;
+
+    if (width > allowed.width) {
+      width = allowed.width;
+    }
+    if (x < allowed.x) {
+      x = allowed.x;
+    }
+    if (x + width > allowed.x + allowed.width) {
+      x = Math.max(allowed.x, allowed.x + allowed.width - width);
+    }
+
+    return {
+      frame: { x, y, width, height },
+      minWidth: clampedMinW,
+      maxWidth: maxW
+    };
+  }
+
+  // Case A: Full screen window exceeding both left (-125) and right (1565) boundaries on a 1440px MacBook Pro display
+  const macScreen = { x: 0, y: 0, width: 1440, height: 900 };
+  const macVisible = { x: 0, y: 25, width: 1440, height: 875 };
+  const overflowingWindow = { x: -125, y: 0, width: 1690, height: 900 };
+  const clampedFS = constrainWindowFrame(overflowingWindow, { width: 1690, height: 700 }, macScreen, macVisible, true);
+
+  assert.equal(clampedFS.frame.x, 0, 'Full screen window left edge must not exceed left screen boundary (0)');
+  assert.equal(clampedFS.frame.width, 1440, 'Full screen window width must be clamped to screen width (1440)');
+  assert.equal(clampedFS.frame.x + clampedFS.frame.width, 1440, 'Full screen window right edge must not exceed right screen boundary (1440)');
+  assert.equal(clampedFS.minWidth, 900, 'Minimum width exceeding screen must be clamped so AppKit never expands past screen edges');
+  assert.equal(clampedFS.maxWidth, 1440);
+
+  // Case B: Secondary monitor at negative X coordinate (-1920..0) in full screen mode
+  const secondaryScreen = { x: -1920, y: 0, width: 1920, height: 1080 };
+  const secondaryOverflow = { x: -2050, y: 0, width: 2180, height: 1080 };
+  const clampedSecondary = constrainWindowFrame(secondaryOverflow, { width: 900, height: 620 }, secondaryScreen, secondaryScreen, true);
+  assert.equal(clampedSecondary.frame.x, -1920);
+  assert.equal(clampedSecondary.frame.width, 1920);
+  assert.equal(clampedSecondary.frame.x + clampedSecondary.frame.width, 0);
+
+  // Case C: Window shifted past right boundary without exceeding total width
+  const rightShifted = { x: 300, y: 40, width: 1280, height: 800 };
+  const clampedRight = constrainWindowFrame(rightShifted, { width: 900, height: 620 }, macScreen, macVisible, false);
+  assert.equal(clampedRight.frame.x + clampedRight.frame.width, 1440, 'Window right edge must be pulled back inside screen boundary');
+  assert.ok(clampedRight.frame.x >= 0);
+
+  // 2. Verify SwiftUI views eliminate wide rigid intrinsic horizontal layouts and attach screen-boundary observers
+  const appSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/CoaxialSpeakerDesignerApp.swift', import.meta.url), 'utf8');
+  const mainSplitSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/MainSplitView.swift', import.meta.url), 'utf8');
+  const crossoverSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/CrossoverInspectorView.swift', import.meta.url), 'utf8');
+  const indexCSS = fs.readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+  const appJSX = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+
+  assert.ok(appSwift.includes('constrainWindowsToScreenBounds'), 'CoaxialSpeakerDesignerApp must enforce constrainWindowsToScreenBounds');
+  assert.ok(appSwift.includes('didEnterFullScreenNotification'), 'CoaxialSpeakerDesignerApp must listen for didEnterFullScreenNotification');
+  assert.ok(appSwift.includes('willEnterFullScreenNotification'), 'CoaxialSpeakerDesignerApp must listen for willEnterFullScreenNotification');
+  assert.ok(mainSplitSwift.includes('ScrollView(.horizontal, showsIndicators: false)'), 'MainSplitView 9-tab Picker must be wrapped in horizontal ScrollView so it has zero minimum width push');
+  assert.ok(mainSplitSwift.includes('.labelsHidden()'), 'MainSplitView Picker must hide duplicate View Mode label');
+  assert.ok(crossoverSwift.includes('ScrollView(.horizontal, showsIndicators: false)'), 'CrossoverInspectorView detached buttons must be horizontally scrollable');
+
+  // 3. Verify React / Web / Desktop app CSS viewport boundary constraints
+  assert.ok(indexCSS.includes('max-width: 100vw'), 'index.css must constrain root/body max-width to 100vw');
+  assert.ok(indexCSS.includes('overflow-x: hidden'), 'index.css must prevent horizontal viewport overflow');
+  assert.ok(appJSX.includes('max-w-[100vw]'), 'App.jsx root container must enforce max-w-[100vw]');
+  assert.ok(appJSX.includes('min-w-0'), 'App.jsx flex main and header containers must include min-w-0 to prevent flex blowout');
+});
+
+test('Crossover Network Dialog - Tweeter Polarity Inversion Reflects in RMS Phase Error Value & Status Tiers', async () => {
+  const fs = await import('node:fs');
+  const {
+    altec604WooferTS,
+    altec604Tweeter,
+    altec604RecommendedCrossover,
+    altec604WooferCurve,
+    altec604TweeterCurve
+  } = await import('../src/utils/altec604Data.js');
+
+  class Complex {
+    constructor(re, im = 0) { this.re = re; this.im = im; }
+    static polar(r, thetaRad) { return new Complex(r * Math.cos(thetaRad), r * Math.sin(thetaRad)); }
+    add(c) { return c instanceof Complex ? new Complex(this.re + c.re, this.im + c.im) : new Complex(this.re + c, this.im); }
+    mul(c) { return c instanceof Complex ? new Complex(this.re * c.re - this.im * c.im, this.re * c.im + this.im * c.re) : new Complex(this.re * c, this.im * c); }
+    div(c) {
+      if (typeof c === 'number') return new Complex(this.re / c, this.im / c);
+      const d = c.re * c.re + c.im * c.im;
+      return d === 0 ? new Complex(0, 0) : new Complex((this.re * c.re + this.im * c.im) / d, (this.im * c.re - this.re * c.im) / d);
+    }
+    get phaseDeg() { return Math.atan2(this.im, this.re) * (180 / Math.PI); }
+  }
+
+  function computeMinimumPhase(points) {
+    if (!points || points.length < 4) return points || [];
+    const n = points.length;
+    const result = points.map(p => ({ ...p }));
+    for (let i = 0; i < n; i++) {
+      const f0 = points[i].frequency;
+      let phaseRad = 0.0;
+      for (let j = 0; j < n - 1; j++) {
+        const f1 = points[j].frequency, f2 = points[j + 1].frequency;
+        const mag1 = points[j].magnitude, mag2 = points[j + 1].magnitude;
+        if (f1 === f2 || f1 <= 0 || f2 <= 0) continue;
+        const dLnA = Math.log(Math.max(Math.pow(10.0, mag2 / 20.0), 1e-6)) - Math.log(Math.max(Math.pow(10.0, mag1 / 20.0), 1e-6));
+        const dLnF = Math.log(f2 / f1);
+        const slope = dLnA / dLnF;
+        const fAvg = Math.sqrt(f1 * f2);
+        const diff = Math.abs(fAvg - f0);
+        if (diff > 1e-4) {
+          const ratio = (fAvg + f0) / diff;
+          if (ratio > 1e-6) {
+            const term = (1.0 / Math.PI) * slope * Math.log(ratio) * dLnF;
+            if (Number.isFinite(term)) phaseRad -= term;
+          }
+        }
+      }
+      let phaseDeg = (phaseRad * (180.0 / Math.PI)) % 360.0;
+      if (phaseDeg > 180.0) phaseDeg -= 360.0;
+      if (phaseDeg < -180.0) phaseDeg += 360.0;
+      result[i].phase = phaseDeg;
+    }
+    return result;
+  }
+
+  function interpolateCurvePoint(freq, curve) {
+    if (!curve || curve.length === 0) return null;
+    if (freq <= curve[0].frequency) return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0.0 };
+    if (freq >= curve[curve.length - 1].frequency) {
+      const last = curve[curve.length - 1];
+      return { magnitude: last.magnitude, phase: last.phase || 0.0 };
+    }
+    for (let j = 0; j < curve.length - 1; j++) {
+      const p1 = curve[j], p2 = curve[j + 1];
+      if (freq >= p1.frequency && freq <= p2.frequency) {
+        const t = (Math.log10(freq) - Math.log10(p1.frequency)) / (Math.log10(p2.frequency) - Math.log10(p1.frequency));
+        let dPh = (p2.phase || 0) - (p1.phase || 0);
+        while (dPh > 180.0) dPh -= 360.0;
+        while (dPh < -180.0) dPh += 360.0;
+        let ph = (p1.phase || 0) + t * dPh;
+        while (ph > 180.0) ph -= 360.0;
+        while (ph < -180.0) ph += 360.0;
+        return {
+          magnitude: p1.magnitude + t * (p2.magnitude - p1.magnitude),
+          phase: ph
+        };
+      }
+    }
+    return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0.0 };
+  }
+
+  function getPhaseAlignmentStatus(rmsErrorDeg) {
+    if (rmsErrorDeg <= 10.0) return { level: 'green', label: 'Phase Aligned (Optimal)' };
+    if (rmsErrorDeg <= 20.0) return { level: 'yellow', label: 'Acceptable Alignment - Minor Phase Offset' };
+    return { level: 'red', label: 'Large Phase Offset - Try Inverting Tweeter Polarity or Adjusting Fx' };
+  }
+
+  function evaluatePhaseOptimization({
+    ts = { fs: 48.0, qts: 0.335, spl: 89.0 },
+    wooferCurve = [],
+    tweeterCurve = [],
+    fxW = 2200,
+    fxT = 2200,
+    wooferOrder = 'secondOrderLR',
+    tweeterOrder = 'secondOrderLR',
+    enclosureType = 'sealed',
+    fb = 38.0,
+    acousticDelayMM = 35.0,
+    invertTweeterPolarity = false,
+    enableAllpass = true
+  }) {
+    const centerFx = Math.round(Math.sqrt(fxW * fxT));
+    const fLow = Math.max(20.0, Math.min(fxW, fxT) / 2.0);
+    const fHigh = Math.min(20000.0, Math.max(fxW, fxT) * 2.0);
+    const sampleCount = 31;
+    const freqs = [];
+    for (let i = 0; i < sampleCount; i++) {
+      freqs.push(Math.exp(Math.log(fLow) + i * (Math.log(fHigh) - Math.log(fLow)) / (sampleCount - 1)));
+    }
+    const delaySec = (acousticDelayMM / 1000.0) / 343.0;
+    const polarityMult = invertTweeterPolarity ? -1.0 : 1.0;
+    const ratio = 0.7071 / Math.max(ts.qts, 0.01);
+    const alpha = Math.max(ratio * ratio - 1.0, 0.05);
+    const fc = ts.fs * Math.sqrt(1 + alpha);
+    const qtc = ts.qts * Math.sqrt(1 + alpha);
+    const wc = 2.0 * Math.PI * fc;
+
+    const pTweeterFixed = [];
+    const pWooferBase = [];
+
+    for (const f of freqs) {
+      const w = 2.0 * Math.PI * f;
+      const twPt = interpolateCurvePoint(f, tweeterCurve);
+      const pTwRaw = twPt
+        ? Complex.polar(Math.pow(10, twPt.magnitude / 20.0), twPt.phase * (Math.PI / 180.0))
+        : new Complex(1.0, 0.0);
+      const xT = f / fxT;
+      let hHP = new Complex(1, 0);
+      if (tweeterOrder === 'firstOrder') hHP = new Complex(0, xT).div(new Complex(1, xT));
+      else if (tweeterOrder === 'secondOrderLR') hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, 2 * xT));
+      else if (tweeterOrder === 'fourthOrderLR') {
+        const h2 = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
+        hHP = h2.mul(h2);
+      }
+      const hDelay = Complex.polar(polarityMult, -w * delaySec);
+      pTweeterFixed.push(pTwRaw.mul(hHP).mul(hDelay));
+
+      const wfPt = interpolateCurvePoint(f, wooferCurve);
+      const pWfRaw = wfPt
+        ? Complex.polar(Math.pow(10, wfPt.magnitude / 20.0), wfPt.phase * (Math.PI / 180.0))
+        : new Complex(1.0, 0.0);
+      let hCab;
+      if (enclosureType === 'vented') {
+        const fn = f / ts.fs;
+        const h = fb / ts.fs;
+        const ql = 15.0;
+        const c0 = h * h;
+        const c1 = (h * h) / ts.qts + h / ql;
+        const c2 = 1.0 + h * h + alpha + h / (ts.qts * ql);
+        const c3 = 1.0 / ts.qts + h / ql;
+        hCab = new Complex(Math.pow(fn, 4), 0).div(new Complex(Math.pow(fn, 4) - c2 * fn * fn + c0, -c3 * Math.pow(fn, 3) + c1 * fn));
+      } else {
+        const s = new Complex(0, w);
+        const s2 = s.mul(s);
+        hCab = s2.div(s2.add(s.mul(wc / qtc)).add(wc * wc));
+      }
+      const xW = f / fxW;
+      let hLP = new Complex(1, 0);
+      if (wooferOrder === 'firstOrder') hLP = new Complex(1, 0).div(new Complex(1, xW));
+      else if (wooferOrder === 'secondOrderLR') hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, 2 * xW));
+      else if (wooferOrder === 'fourthOrderLR') {
+        const h2 = new Complex(1, 0).div(new Complex(1 - xW * xW, Math.SQRT2 * xW));
+        hLP = h2.mul(h2);
+      }
+      pWooferBase.push(pWfRaw.mul(hCab).mul(hLP));
+    }
+
+    if (!enableAllpass || acousticDelayMM <= 0) {
+      let uncompSSE = 0;
+      for (let i = 0; i < sampleCount; i++) {
+        let delta = pWooferBase[i].phaseDeg - pTweeterFixed[i].phaseDeg;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        uncompSSE += delta * delta;
+      }
+      const rms = Math.sqrt(uncompSSE / sampleCount);
+      return { f0: centerFx, q: 0.707, rmsErrorDeg: rms, status: getPhaseAlignmentStatus(rms) };
+    }
+
+    function evalCost(f0, q) {
+      if (f0 < 0.1 * centerFx || f0 > 10.0 * centerFx || q < 0.05 || q > 25.0) return 1e8;
+      let sse = 0;
+      for (let i = 0; i < sampleCount; i++) {
+        const x = freqs[i] / f0;
+        const hAP = new Complex(1.0 - x * x, -x / q).div(new Complex(1.0 - x * x, x / q));
+        const pWooferFinal = pWooferBase[i].mul(hAP);
+        let delta = pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg;
+        while (delta > 180.0) delta -= 360.0;
+        while (delta < -180.0) delta += 360.0;
+        sse += delta * delta;
+      }
+      return sse;
+    }
+
+    const qInit = Math.max(0.5, Math.min(2.5, 2.0 / (2.0 * Math.PI * centerFx * Math.max(delaySec, 1e-6))));
+    const seeds = [
+      { f0: centerFx * 0.4, q: 0.35 },
+      { f0: centerFx * 0.7, q: qInit },
+      { f0: centerFx, q: qInit },
+      { f0: centerFx * 1.5, q: qInit },
+      { f0: centerFx * 2.4, q: 0.6 }
+    ];
+    let globalOpt = { f0: centerFx, q: qInit, cost: evalCost(centerFx, qInit) };
+
+    for (const seed of seeds) {
+      let simplex = [
+        { f0: seed.f0, q: seed.q, cost: evalCost(seed.f0, seed.q) },
+        { f0: seed.f0 * 1.2, q: seed.q, cost: evalCost(seed.f0 * 1.2, seed.q) },
+        { f0: seed.f0, q: seed.q * 1.25, cost: evalCost(seed.f0, seed.q * 1.25) }
+      ];
+      for (let it = 0; it < 120; it++) {
+        simplex.sort((a, b) => a.cost - b.cost);
+        if (Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5) break;
+        const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
+        const cQ = (simplex[0].q + simplex[1].q) / 2.0;
+        const xrF0 = cF0 + (cF0 - simplex[2].f0);
+        const xrQ = cQ + (cQ - simplex[2].q);
+        const xrCost = evalCost(xrF0, xrQ);
+        if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) { simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost }; continue; }
+        if (xrCost < simplex[0].cost) {
+          const xeF0 = cF0 + 2.0 * (xrF0 - cF0), xeQ = cQ + 2.0 * (xrQ - cQ), xeCost = evalCost(xeF0, xeQ);
+          simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost }; continue;
+        }
+        if (xrCost < simplex[2].cost) {
+          const xcF0 = cF0 + 0.5 * (xrF0 - cF0), xcQ = cQ + 0.5 * (xrQ - cQ), xcCost = evalCost(xcF0, xcQ);
+          if (xcCost < xrCost) { simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
+        } else {
+          const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0), xcQ = cQ - 0.5 * (cQ - simplex[2].q), xcCost = evalCost(xcF0, xcQ);
+          if (xcCost < simplex[2].cost) { simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
+        }
+        for (let i = 1; i <= 2; i++) {
+          const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
+          const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
+          simplex[i] = { f0: sf0, q: sq, cost: evalCost(sf0, sq) };
+        }
+      }
+      simplex.sort((a, b) => a.cost - b.cost);
+      if (simplex[0].cost < globalOpt.cost) globalOpt = simplex[0];
+    }
+
+    const rms = Math.sqrt(globalOpt.cost / sampleCount);
+    return { f0: globalOpt.f0, q: globalOpt.q, rmsErrorDeg: rms, status: getPhaseAlignmentStatus(rms) };
+  }
+
+  // 1. Default 8CX21 Coaxial Driver (2nd-order Linkwitz-Riley at 2200 Hz, 35 mm delay, APF enabled)
+  const defNormal = evaluatePhaseOptimization({ invertTweeterPolarity: false, enableAllpass: true });
+  const defInverted = evaluatePhaseOptimization({ invertTweeterPolarity: true, enableAllpass: true });
+
+  assert.notEqual(defNormal.rmsErrorDeg, defInverted.rmsErrorDeg, 'Inverting tweeter polarity must change RMS phase error');
+  assert.ok(Math.abs(defNormal.rmsErrorDeg - defInverted.rmsErrorDeg) > 8.0, `Expected > 8° RMS difference, got ${defNormal.rmsErrorDeg.toFixed(2)}° vs ${defInverted.rmsErrorDeg.toFixed(2)}°`);
+  assert.equal(defNormal.status.level, 'yellow', 'Normal polarity on 2nd-order LR at 35mm should be Yellow (~10.5°)');
+  assert.equal(defInverted.status.level, 'green', 'Inverted polarity on 2nd-order LR at 35mm should be Green (~2.1°)');
+
+  // 2. 4th-order Linkwitz-Riley (naturally 360° = 0° in-phase): normal polarity aligns better than inverted
+  const lr4Normal = evaluatePhaseOptimization({ wooferOrder: 'fourthOrderLR', tweeterOrder: 'fourthOrderLR', invertTweeterPolarity: false, enableAllpass: true });
+  const lr4Inverted = evaluatePhaseOptimization({ wooferOrder: 'fourthOrderLR', tweeterOrder: 'fourthOrderLR', invertTweeterPolarity: true, enableAllpass: true });
+  assert.ok(lr4Normal.rmsErrorDeg < lr4Inverted.rmsErrorDeg - 5.0, '4th-order LR must have lower RMS error with normal polarity than inverted polarity');
+  assert.equal(lr4Normal.status.level, 'green');
+
+  // 3. Altec 604-8K Preset with CLIO Minimum Phase Curves (1500 Hz, 35 mm delay, APF enabled)
+  const wfAltec = computeMinimumPhase(altec604WooferCurve);
+  const twAltec = computeMinimumPhase(altec604TweeterCurve);
+  const altecNormal = evaluatePhaseOptimization({
+    ts: altec604WooferTS,
+    tweeter: altec604Tweeter,
+    wooferCurve: wfAltec,
+    tweeterCurve: twAltec,
+    fxW: altec604RecommendedCrossover,
+    fxT: altec604RecommendedCrossover,
+    invertTweeterPolarity: false,
+    enableAllpass: true
+  });
+  const altecInverted = evaluatePhaseOptimization({
+    ts: altec604WooferTS,
+    tweeter: altec604Tweeter,
+    wooferCurve: wfAltec,
+    tweeterCurve: twAltec,
+    fxW: altec604RecommendedCrossover,
+    fxT: altec604RecommendedCrossover,
+    invertTweeterPolarity: true,
+    enableAllpass: true
+  });
+
+  assert.equal(altecNormal.status.level, 'red', 'Altec 604-8K normal polarity should trigger Red warning (> 20°)');
+  assert.equal(altecInverted.status.level, 'yellow', 'Inverting tweeter polarity on Altec 604-8K per warning prompt must reduce RMS error into Yellow (< 20°)');
+  assert.ok(altecInverted.rmsErrorDeg < altecNormal.rmsErrorDeg - 20.0, 'Altec 604-8K RMS error must drop by > 20° when tweeter polarity is inverted');
+
+  // 4. All-Pass Filter Disabled (uncompensated crossover RMS phase error): polarity inversion must ALSO update RMS error
+  const uncompZeroDelayNormal = evaluatePhaseOptimization({ acousticDelayMM: 0, invertTweeterPolarity: false, enableAllpass: false });
+  const uncompZeroDelayInverted = evaluatePhaseOptimization({ acousticDelayMM: 0, invertTweeterPolarity: true, enableAllpass: false });
+  assert.ok(uncompZeroDelayNormal.rmsErrorDeg > 150.0, '2nd-order LR at 0mm delay with normal polarity has ~180° phase cancellation');
+  assert.ok(uncompZeroDelayInverted.rmsErrorDeg < 5.0, '2nd-order LR at 0mm delay with inverted polarity sums coherently in-phase (< 5° RMS)');
+
+  // 5. Phase wrap interpolation across ±180° boundary must not create artificial spikes
+  const wrapCurve = [
+    { frequency: 800, magnitude: 90, phase: 178.0 },
+    { frequency: 900, magnitude: 90, phase: -178.0 }
+  ];
+  const midWrap = interpolateCurvePoint(848.5, wrapCurve);
+  assert.ok(Math.abs(midWrap.phase) > 175.0, `Interpolating between +178° and -178° must stay near ±180°, got ${midWrap.phase}°`);
+
+  // 6. Verify source code in AllpassFilterOptimizer.swift and src/App.jsx no longer subtracts meanDelta (which canceled polarity)
+  const optimizerSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Services/AllpassFilterOptimizer.swift', import.meta.url), 'utf8');
+  const viewModelSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/ViewModels/MainDesignerViewModel.swift', import.meta.url), 'utf8');
+  const crossoverSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/CrossoverInspectorView.swift', import.meta.url), 'utf8');
+  const appJSX = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+
+  assert.ok(!optimizerSwift.includes('let diff = d - meanDelta'), 'AllpassFilterOptimizer.swift must not subtract meanDelta (which cancels +180° polarity inversion)');
+  assert.ok(optimizerSwift.includes('evaluateUncompensatedRMSError'), 'AllpassFilterOptimizer.swift must provide evaluateUncompensatedRMSError when APF is disabled');
+  assert.ok(viewModelSwift.includes('evaluateUncompensatedRMSError'), 'MainDesignerViewModel must compute RMS error even when APF is disabled');
+  assert.ok(crossoverSwift.includes('Crossover Phase Alignment:'), 'CrossoverInspectorView must always display live RMS Phase Error in the Crossover Network dialog');
+  assert.ok(!appJSX.includes('const diff = deltas[i] - mean;'), 'App.jsx must not subtract mean phase delta in evalCost');
+  assert.ok(appJSX.includes('Crossover Phase Alignment'), 'App.jsx must always display live RMS Phase Error in the Crossover Designer');
+});
+
+test('Pure Native macOS SwiftUI DMG Package - UDIF HFS+ Mountability, Mach-O ARM64 Code Signature, and SwiftUI Bundle', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const zlib = await import('node:zlib');
+
+  const rootNativeDMG = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner_Native.dmg');
+  const subdirNativeDMG = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/CoaxialSpeakerDesigner_Native.dmg');
+  const nativeAppBundle = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/CoaxialSpeakerDesigner_Native.app');
+  const buildScript = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/build_native_dmg.sh');
+  const packageScript = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/package_native_dmg.py');
+
+  // 1. Verify scripts and DMG files exist and match
+  assert.ok(fs.existsSync(buildScript), 'CoaxialSpeakerDesigner/build_native_dmg.sh must exist');
+  assert.ok(fs.existsSync(packageScript), 'CoaxialSpeakerDesigner/package_native_dmg.py must exist');
+  assert.ok(fs.existsSync(rootNativeDMG), 'Root CoaxialSpeakerDesigner_Native.dmg must exist');
+  assert.ok(fs.existsSync(subdirNativeDMG), 'CoaxialSpeakerDesigner/CoaxialSpeakerDesigner_Native.dmg must exist');
+
+  const rootStat = fs.statSync(rootNativeDMG);
+  const subStat = fs.statSync(subdirNativeDMG);
+  assert.ok(rootStat.size > 500 * 1024, `Native DMG size (${rootStat.size} bytes) must be > 500 KB`);
+  assert.equal(rootStat.size, subStat.size, 'Root Native DMG and subdirectory Native DMG sizes must match');
+
+  // 2. Verify CoaxialSpeakerDesigner_Native.app Mach-O arm64 binary, LC_CODE_SIGNATURE, Info.plist, and SwiftPackage resources
+  const macosBin = path.join(nativeAppBundle, 'Contents/MacOS/CoaxialSpeakerDesigner');
+  const infoPlist = path.join(nativeAppBundle, 'Contents/Info.plist');
+  const pkgManifest = path.join(nativeAppBundle, 'Contents/Resources/SwiftPackage/Package.swift');
+  const swiftMainApp = path.join(nativeAppBundle, 'Contents/Resources/SwiftPackage/Sources/CoaxialSpeakerDesigner/Views/CoaxialSpeakerDesignerApp.swift');
+
+  assert.ok(fs.existsSync(macosBin), 'Native app bundle executable must exist');
+  assert.ok(fs.existsSync(infoPlist), 'Native app bundle Info.plist must exist');
+  assert.ok(fs.existsSync(pkgManifest), 'Embedded release Package.swift must exist');
+  assert.ok(fs.existsSync(swiftMainApp), 'Embedded CoaxialSpeakerDesignerApp.swift must exist');
+
+  const plistText = fs.readFileSync(infoPlist, 'utf8');
+  assert.ok(plistText.includes('com.coaxialspeakerdesigner.native'), 'Info.plist must use com.coaxialspeakerdesigner.native bundle ID');
+  assert.ok(plistText.includes('<string>13.0</string>'), 'Info.plist must target macOS 13.0+ for SwiftUI Charts');
+
+  const binBuf = fs.readFileSync(macosBin);
+  assert.equal(binBuf.readUInt32LE(0), 0xfeedfacf, 'Native executable must be 64-bit Mach-O');
+  assert.equal(binBuf.readUInt32LE(4), 0x0100000c, 'Native executable must target Apple Silicon ARM64');
+
+  const ncmds = binBuf.readUInt32LE(16);
+  let hasCodeSignature = false;
+  let cmdOff = 32;
+  for (let i = 0; i < ncmds; i++) {
+    const cmd = binBuf.readUInt32LE(cmdOff);
+    const cmdSize = binBuf.readUInt32LE(cmdOff + 4);
+    if (cmd === 0x1d) {
+      const sigOff = binBuf.readUInt32LE(cmdOff + 8);
+      const sigMagic = binBuf.readUInt32BE(sigOff);
+      assert.equal(sigMagic, 0xfade0cc0, 'Embedded Apple Silicon LC_CODE_SIGNATURE must have CSMAGIC_EMBEDDED_SIGNATURE');
+      hasCodeSignature = true;
+    }
+    cmdOff += cmdSize;
+  }
+  assert.ok(hasCodeSignature, 'Apple Silicon Mach-O binary must include LC_CODE_SIGNATURE');
+
+  // 3. Verify Apple UDIF (UDZO) koly trailer, mish block descriptors, and Apple HFS+ filesystem inside CoaxialSpeakerDesigner_Native.dmg
+  const dmgBuf = fs.readFileSync(rootNativeDMG);
+  const koly = dmgBuf.subarray(dmgBuf.length - 512);
+  assert.equal(koly.toString('ascii', 0, 4), 'koly', 'Native DMG trailer must have koly magic');
+  assert.equal(koly.readUInt32BE(4), 4, 'koly version must be 4');
+  assert.equal(koly.readUInt32BE(8), 512, 'koly header size must be 512');
+
+  const xmlOffset = Number(koly.readBigUInt64BE(216));
+  const xmlLen = Number(koly.readBigUInt64BE(224));
+  assert.ok(xmlOffset > 0 && xmlLen > 0, 'UDIF XML plist must be present at koly offset 0xD8');
+
+  const xmlStr = dmgBuf.subarray(xmlOffset, xmlOffset + xmlLen).toString('utf8');
+  assert.ok(xmlStr.includes('<string>Apple_HFS</string>'), 'UDIF blkx must declare Apple_HFS');
+  assert.ok(xmlStr.includes('<string>CoaxialSpeakerDesignerNative</string>'), 'UDIF volume name must be CoaxialSpeakerDesignerNative');
+
+  const dataMatch = xmlStr.match(/<data>\s*([\s\S]*?)\s*<\/data>/);
+  assert.ok(dataMatch, 'blkx mish base64 block must exist');
+  const mish = Buffer.from(dataMatch[1], 'base64');
+  assert.equal(mish.toString('ascii', 0, 4), 'mish', 'mish header magic must match');
+
+  const runCount = mish.readUInt32BE(200);
+  const chunks = [];
+  for (let i = 0; i < runCount; i++) {
+    const rOff = 204 + i * 40;
+    const runType = mish.readUInt32BE(rOff);
+    const sectorCount = Number(mish.readBigUInt64BE(rOff + 16));
+    const compOffset = Number(mish.readBigUInt64BE(rOff + 24));
+    const compLen = Number(mish.readBigUInt64BE(rOff + 32));
+    if (runType === 0xffffffff) break;
+    if (runType === 0x00000000) chunks.push(Buffer.alloc(sectorCount * 512));
+    else if (runType === 0x00000001) chunks.push(dmgBuf.subarray(compOffset, compOffset + compLen));
+    else if (runType === 0x80000005) chunks.push(zlib.inflateSync(dmgBuf.subarray(compOffset, compOffset + compLen)));
+  }
+  const rawImg = Buffer.concat(chunks);
+  assert.equal(rawImg.toString('ascii', 512, 514), 'PM', 'Decompressed image must contain Apple Partition Map');
+  assert.ok(rawImg.includes(Buffer.from('H+\x00\x04', 'binary')), 'Decompressed image must contain Apple HFS+ v4 volume header');
+});
+
 
 
 

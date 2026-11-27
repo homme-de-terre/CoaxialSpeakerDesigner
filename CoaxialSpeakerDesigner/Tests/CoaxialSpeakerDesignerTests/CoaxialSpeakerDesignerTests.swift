@@ -535,6 +535,7 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         var crossover = CrossoverNetwork(
             crossoverFrequency: 2200.0,
             acousticCenterOffsetMM: 35.0,
+            invertTweeterPolarity: true,
             enableAllpassFilter: true,
             enableIndependentFrequencies: true,
             wooferCrossoverFrequency: 1800.0,
@@ -549,7 +550,7 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
             maxIterations: 150
         )
 
-        // Optimizer should achieve parallel phase alignment across the split crossover zone
+        // Optimizer should achieve optimal in-phase alignment across the split crossover zone
         XCTAssertTrue(result.isGoalAchieved, "APF optimizer should achieve goal with independent cut-off frequencies")
         XCTAssertLessThan(result.rmsErrorDeg, 8.0, "Residual RMS error should be < 8.0 deg")
 
@@ -1443,5 +1444,59 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertTrue(restored.crossover.enableCDHornCompensation)
         XCTAssertEqual(restored.crossover.cdHornCornerFrequency, 3500.0)
         XCTAssertEqual(restored.crossover.cdHornBoostdB, 5.0)
+    }
+
+    @MainActor
+    func testTweeterPolarityInversionReflectsInRMSErrorValue() {
+        // 1. Default driver with All-Pass Filter enabled (2200 Hz, 35 mm delay)
+        let vm = MainDesignerViewModel()
+        vm.crossover.enableAllpassFilter = true
+        vm.crossover.acousticCenterOffsetMM = 35.0
+        vm.crossover.invertTweeterPolarity = false
+
+        let rmsNormal = vm.crossover.allpassOptimizationErrorDeg!
+        let f0Normal = vm.crossover.allpassOptimizedF0!
+        let statusNormal = vm.crossover.allpassAlignmentStatus
+
+        // Invert tweeter polarity (+180 deg)
+        vm.crossover.invertTweeterPolarity = true
+
+        let rmsInverted = vm.crossover.allpassOptimizationErrorDeg!
+        let f0Inverted = vm.crossover.allpassOptimizedF0!
+        let statusInverted = vm.crossover.allpassAlignmentStatus
+
+        XCTAssertNotEqual(rmsNormal, rmsInverted, "Inverting tweeter polarity must reflect in the RMS phase error value")
+        XCTAssertGreaterThan(abs(rmsNormal - rmsInverted), 5.0, "Inverting tweeter polarity must produce a significant > 5° change in RMS error")
+        XCTAssertNotEqual(f0Normal, f0Inverted, "All-Pass optimal F0 must update when tweeter polarity is inverted")
+        XCTAssertEqual(statusNormal, .acceptable, "Normal polarity at 35mm 2nd-order LR should be in Yellow tier (~10.5°)")
+        XCTAssertEqual(statusInverted, .optimal, "Inverted polarity at 35mm 2nd-order LR should achieve Green optimal alignment (~2.1°)")
+
+        // 2. Altec 604-8K Preset with All-Pass Filter enabled (1500 Hz, 35 mm delay)
+        vm.loadAltec604Preset()
+        vm.crossover.enableAllpassFilter = true
+        vm.crossover.acousticCenterOffsetMM = 35.0
+        vm.crossover.invertTweeterPolarity = false
+
+        let altecRmsNormal = vm.crossover.allpassOptimizationErrorDeg!
+        let altecStatusNormal = vm.crossover.allpassAlignmentStatus
+        XCTAssertEqual(altecStatusNormal, .largeOffset, "Altec 604-8K with normal polarity should indicate Large Phase Offset (> 20°)")
+
+        // Follow the warning recommendation: "Try Inverting Tweeter Polarity"
+        vm.crossover.invertTweeterPolarity = true
+        let altecRmsInverted = vm.crossover.allpassOptimizationErrorDeg!
+        let altecStatusInverted = vm.crossover.allpassAlignmentStatus
+
+        XCTAssertLessThan(altecRmsInverted, altecRmsNormal - 15.0, "Inverting tweeter polarity on Altec 604-8K must substantially reduce RMS phase error")
+        XCTAssertEqual(altecStatusInverted, .acceptable, "Inverting tweeter polarity on Altec 604-8K must improve status from Red to Yellow (< 20°)")
+
+        // 3. With All-Pass Filter disabled (uncompensated crossover RMS phase error)
+        vm.crossover.enableAllpassFilter = false
+        vm.crossover.invertTweeterPolarity = false
+        let uncompNormal = vm.crossover.allpassOptimizationErrorDeg!
+
+        vm.crossover.invertTweeterPolarity = true
+        let uncompInverted = vm.crossover.allpassOptimizationErrorDeg!
+
+        XCTAssertNotEqual(uncompNormal, uncompInverted, "Inverting tweeter polarity must also reflect in uncompensated RMS error when APF is disabled")
     }
 }

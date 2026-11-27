@@ -1,0 +1,486 @@
+import Foundation
+
+/// Crossover Filter Type
+public enum FilterOrder: String, CaseIterable, Identifiable, Codable, Sendable {
+    case firstOrder = "1st Order (6 dB/oct)"
+    case secondOrderLR = "2nd Order Linkwitz-Riley (12 dB/oct)"
+    case secondOrderBW = "2nd Order Butterworth (12 dB/oct)"
+    case thirdOrderBW = "3rd Order Butterworth (18 dB/oct)"
+    case fourthOrderLR = "4th Order Linkwitz-Riley (24 dB/oct)"
+
+    public var id: String { rawValue }
+
+    public var orderNumber: Int {
+        switch self {
+        case .firstOrder: return 1
+        case .secondOrderLR, .secondOrderBW: return 2
+        case .thirdOrderBW: return 3
+        case .fourthOrderLR: return 4
+        }
+    }
+}
+
+/// Represents the calculated passive crossover electrical component values.
+public struct CalculatedComponents: Codable, Sendable {
+    // Woofer Low-Pass components
+    public var L1_mH: Double? = nil
+    public var C1_uF: Double? = nil
+    public var L2_mH: Double? = nil
+    public var C2_uF: Double? = nil
+
+    // Tweeter High-Pass components
+    public var C_HP1_uF: Double? = nil
+    public var L_HP1_mH: Double? = nil
+    public var C_HP2_uF: Double? = nil
+    public var L_HP2_mH: Double? = nil
+
+    // Zobel
+    public var R_zobel_ohms: Double? = nil
+    public var C_zobel_uF: Double? = nil
+
+    // L-Pad
+    public var R1_lpad_ohms: Double? = nil // Series
+    public var R2_lpad_ohms: Double? = nil // Parallel
+
+    // Constant Directivity (CD) Horn Mass Roll-Off Compensation (Parallel to R1)
+    public var C_cd_uF: Double? = nil
+    public var R_cd_ohms: Double? = nil
+
+    // All-Pass Delay Compensation Network
+    public var L_AP_mH: Double? = nil
+    public var C_AP_uF: Double? = nil
+}
+
+/// Coaxial Crossover Network model and calculation engine.
+public struct CrossoverNetwork: Codable, Sendable {
+    public var crossoverFrequency: Double  // Crossover frequency fx (Hz, e.g. 2200 Hz)
+    public var wooferOrder: FilterOrder      // Woofer filter topology
+    public var tweeterOrder: FilterOrder     // Tweeter filter topology
+
+    // Independent target cut-off frequencies for fine-tuning amplitude and phase response
+    public var enableIndependentFrequencies: Bool = false
+    public var wooferCrossoverFrequency: Double? = nil
+    public var tweeterCrossoverFrequency: Double? = nil
+
+    /// Effective cut-off frequency for Woofer low-pass section
+    public var actualWooferFrequency: Double {
+        return (enableIndependentFrequencies ? wooferCrossoverFrequency : nil) ?? crossoverFrequency
+    }
+
+    /// Effective cut-off frequency for Tweeter high-pass section
+    public var actualTweeterFrequency: Double {
+        return (enableIndependentFrequencies ? tweeterCrossoverFrequency : nil) ?? crossoverFrequency
+    }
+
+    /// Geometric mean center frequency of the crossover handover zone
+    public var acousticCenterFrequency: Double {
+        let fW = actualWooferFrequency
+        let fT = actualTweeterFrequency
+        return (fW > 0 && fT > 0) ? sqrt(fW * fT) : crossoverFrequency
+    }
+    
+    // Compensation circuits
+    public var enableZobelNetwork: Bool = true
+    public var enableLPadAttenuator: Bool = true
+    public var userTargetAttenuationdB: Double = 5.0 // dB attenuation for tweeter
+    public var enableCDHornCompensation: Bool = false // Constant Directivity (CD) horn 6 dB/oct mass roll-off EQ across R1
+    public var cdHornCornerFrequency: Double = 3500.0 // Mass break turnover frequency f_eq (Hz, e.g. 3500 Hz for Altec 604-8K Mantaray)
+    public var cdHornBoostdB: Double = 6.0            // Target high-frequency shelf boost (dB)
+    public var enableAllpassFilter: Bool = false     // Optional woofer delay compensation all-pass network
+    
+    // Coaxial Acoustic Alignment
+    public var acousticCenterOffsetMM: Double = 35.0 // Tweeter physical delay offset behind woofer cone (mm)
+    public var invertTweeterPolarity: Bool = false  // Tweeter inverted polarity (+180 deg)
+    public var snapToStandardValues: Bool = false { // Snap component values to commercial E12 series
+        didSet {
+            if snapToStandardValues && snapToE24Values {
+                snapToE24Values = false
+            }
+        }
+    }
+    public var snapToE24Values: Bool = false {      // Snap component values to commercial E24 series
+        didSet {
+            if snapToE24Values && snapToStandardValues {
+                snapToStandardValues = false
+            }
+        }
+    }
+
+    // All-Pass Filter Optimization State
+    public var allpassOptimizedF0: Double? = nil
+    public var allpassOptimizedQ: Double? = nil
+    public var allpassOptimizationErrorDeg: Double? = nil
+    public var allpassOptimizationAchieved: Bool = true
+    public var allpassWarnings: [String] = []
+
+    /// 3-tier phase alignment status based on residual RMS phase error
+    public var allpassAlignmentStatus: PhaseAlignmentStatus {
+        return PhaseAlignmentStatus.from(rmsErrorDeg: allpassOptimizationErrorDeg ?? 0.0)
+    }
+
+    public init(
+        crossoverFrequency: Double = 2200.0,
+        wooferOrder: FilterOrder = .secondOrderLR,
+        tweeterOrder: FilterOrder = .secondOrderLR,
+        enableZobelNetwork: Bool = true,
+        enableLPadAttenuator: Bool = true,
+        userTargetAttenuationdB: Double = 5.0,
+        acousticCenterOffsetMM: Double = 35.0,
+        invertTweeterPolarity: Bool = false,
+        snapToStandardValues: Bool = false,
+        snapToE24Values: Bool = false,
+        enableAllpassFilter: Bool = false,
+        enableIndependentFrequencies: Bool = false,
+        wooferCrossoverFrequency: Double? = nil,
+        tweeterCrossoverFrequency: Double? = nil,
+        enableCDHornCompensation: Bool = false,
+        cdHornCornerFrequency: Double = 3500.0,
+        cdHornBoostdB: Double = 6.0
+    ) {
+        self.crossoverFrequency = crossoverFrequency
+        self.wooferOrder = wooferOrder
+        self.tweeterOrder = tweeterOrder
+        self.enableZobelNetwork = enableZobelNetwork
+        self.enableLPadAttenuator = enableLPadAttenuator
+        self.userTargetAttenuationdB = userTargetAttenuationdB
+        self.acousticCenterOffsetMM = acousticCenterOffsetMM
+        self.invertTweeterPolarity = invertTweeterPolarity
+        self.snapToStandardValues = snapToE24Values ? false : snapToStandardValues
+        self.snapToE24Values = snapToE24Values
+        self.enableAllpassFilter = enableAllpassFilter
+        self.enableIndependentFrequencies = enableIndependentFrequencies
+        self.wooferCrossoverFrequency = wooferCrossoverFrequency
+        self.tweeterCrossoverFrequency = tweeterCrossoverFrequency
+        self.enableCDHornCompensation = enableCDHornCompensation
+        self.cdHornCornerFrequency = cdHornCornerFrequency
+        self.cdHornBoostdB = cdHornBoostdB
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case crossoverFrequency
+        case wooferOrder
+        case tweeterOrder
+        case enableIndependentFrequencies
+        case wooferCrossoverFrequency
+        case tweeterCrossoverFrequency
+        case enableZobelNetwork
+        case enableLPadAttenuator
+        case userTargetAttenuationdB
+        case enableCDHornCompensation
+        case cdHornCornerFrequency
+        case cdHornBoostdB
+        case enableAllpassFilter
+        case acousticCenterOffsetMM
+        case invertTweeterPolarity
+        case snapToStandardValues
+        case snapToE24Values
+        case allpassOptimizedF0
+        case allpassOptimizedQ
+        case allpassOptimizationErrorDeg
+        case allpassOptimizationAchieved
+        case allpassWarnings
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.crossoverFrequency = try container.decodeIfPresent(Double.self, forKey: .crossoverFrequency) ?? 2200.0
+        self.wooferOrder = try container.decodeIfPresent(FilterOrder.self, forKey: .wooferOrder) ?? .secondOrderLR
+        self.tweeterOrder = try container.decodeIfPresent(FilterOrder.self, forKey: .tweeterOrder) ?? .secondOrderLR
+        self.enableIndependentFrequencies = try container.decodeIfPresent(Bool.self, forKey: .enableIndependentFrequencies) ?? false
+        self.wooferCrossoverFrequency = try container.decodeIfPresent(Double.self, forKey: .wooferCrossoverFrequency)
+        self.tweeterCrossoverFrequency = try container.decodeIfPresent(Double.self, forKey: .tweeterCrossoverFrequency)
+        self.enableZobelNetwork = try container.decodeIfPresent(Bool.self, forKey: .enableZobelNetwork) ?? true
+        self.enableLPadAttenuator = try container.decodeIfPresent(Bool.self, forKey: .enableLPadAttenuator) ?? true
+        self.userTargetAttenuationdB = try container.decodeIfPresent(Double.self, forKey: .userTargetAttenuationdB) ?? 5.0
+        self.enableCDHornCompensation = try container.decodeIfPresent(Bool.self, forKey: .enableCDHornCompensation) ?? false
+        self.cdHornCornerFrequency = try container.decodeIfPresent(Double.self, forKey: .cdHornCornerFrequency) ?? 3500.0
+        self.cdHornBoostdB = try container.decodeIfPresent(Double.self, forKey: .cdHornBoostdB) ?? 6.0
+        self.enableAllpassFilter = try container.decodeIfPresent(Bool.self, forKey: .enableAllpassFilter) ?? false
+        self.acousticCenterOffsetMM = try container.decodeIfPresent(Double.self, forKey: .acousticCenterOffsetMM) ?? 35.0
+        self.invertTweeterPolarity = try container.decodeIfPresent(Bool.self, forKey: .invertTweeterPolarity) ?? false
+        let decodedE24 = try container.decodeIfPresent(Bool.self, forKey: .snapToE24Values) ?? false
+        let decodedE12 = try container.decodeIfPresent(Bool.self, forKey: .snapToStandardValues) ?? false
+        self.snapToE24Values = decodedE24
+        self.snapToStandardValues = decodedE24 ? false : decodedE12
+        self.allpassOptimizedF0 = try container.decodeIfPresent(Double.self, forKey: .allpassOptimizedF0)
+        self.allpassOptimizedQ = try container.decodeIfPresent(Double.self, forKey: .allpassOptimizedQ)
+        self.allpassOptimizationErrorDeg = try container.decodeIfPresent(Double.self, forKey: .allpassOptimizationErrorDeg)
+        self.allpassOptimizationAchieved = try container.decodeIfPresent(Bool.self, forKey: .allpassOptimizationAchieved) ?? true
+        self.allpassWarnings = try container.decodeIfPresent([String].self, forKey: .allpassWarnings) ?? []
+    }
+
+    /// Compute ideal passive filter component values based on target driver nominal impedances.
+    public func computeComponentValues(wooferRe: Double, tweeterRe: Double, wooferLe: Double) -> CalculatedComponents {
+        var comp = CalculatedComponents()
+        let fxW = actualWooferFrequency
+        let wW = 2.0 * .pi * fxW
+        let fxT = actualTweeterFrequency
+        let wT = 2.0 * .pi * fxT
+        let Zw = max(wooferRe, 4.0)
+        let Zt = max(tweeterRe, 4.0)
+
+        // 1. Woofer Low-Pass Components
+        switch wooferOrder {
+        case .firstOrder:
+            comp.L1_mH = (Zw / wW) * 1000.0
+        case .secondOrderLR:
+            comp.L1_mH = (Zw / (wW * .pi)) * 1000.0 * 2.0 // L = Zw / (2*pi*fx) = Zw/w
+            comp.C1_uF = (1.0 / (2.0 * .pi * fxW * Zw)) * 1e6
+        case .secondOrderBW:
+            comp.L1_mH = ((sqrt(2.0) * Zw) / wW) * 1000.0
+            comp.C1_uF = (1.0 / (sqrt(2.0) * wW * Zw)) * 1e6
+        case .thirdOrderBW:
+            comp.L1_mH = ((1.5 * Zw) / wW) * 1000.0
+            comp.C1_uF = (1.033 / (wW * Zw)) * 1e6
+            comp.L2_mH = ((0.5 * Zw) / wW) * 1000.0
+        case .fourthOrderLR:
+            comp.L1_mH = ((1.2 * Zw) / wW) * 1000.0
+            comp.C1_uF = (0.33 / (wW * Zw)) * 1e6
+            comp.L2_mH = ((0.4 * Zw) / wW) * 1000.0
+            comp.C2_uF = (0.75 / (wW * Zw)) * 1e6
+        }
+
+        // 2. Tweeter High-Pass Components
+        switch tweeterOrder {
+        case .firstOrder:
+            comp.C_HP1_uF = (1.0 / (wT * Zt)) * 1e6
+        case .secondOrderLR:
+            comp.C_HP1_uF = (1.0 / (wT * Zt)) * 1e6
+            comp.L_HP1_mH = (Zt / wT) * 1000.0
+        case .secondOrderBW:
+            comp.C_HP1_uF = (1.0 / (sqrt(2.0) * wT * Zt)) * 1e6
+            comp.L_HP1_mH = ((sqrt(2.0) * Zt) / wT) * 1000.0
+        case .thirdOrderBW:
+            comp.C_HP1_uF = (1.0 / (1.5 * wT * Zt)) * 1e6
+            comp.L_HP1_mH = (Zt / (1.033 * wT)) * 1000.0
+            comp.C_HP2_uF = (1.0 / (0.5 * wT * Zt)) * 1e6
+        case .fourthOrderLR:
+            comp.C_HP1_uF = (1.0 / (1.2 * wT * Zt)) * 1e6
+            comp.L_HP1_mH = (Zt / (0.33 * wT)) * 1000.0
+            comp.C_HP2_uF = (1.0 / (0.4 * wT * Zt)) * 1e6
+            comp.L_HP2_mH = (Zt / (0.75 * wT)) * 1000.0
+        }
+
+        // 3. Zobel Network for Woofer (Rz = 1.25 * Re, Cz = Le / Rz^2)
+        if enableZobelNetwork && wooferLe > 0 {
+            let rz = 1.25 * wooferRe
+            let czFarads = (wooferLe / 1000.0) / (rz * rz)
+            comp.R_zobel_ohms = rz
+            comp.C_zobel_uF = czFarads * 1e6
+        }
+
+        // 4. L-Pad Attenuator & Constant Directivity (CD) Horn Mass Roll-Off Compensation for Tweeter
+        let effectiveAttenDB: Double = {
+            if enableCDHornCompensation {
+                let baseAtten = enableLPadAttenuator ? userTargetAttenuationdB : 0.0
+                return max(baseAtten, max(cdHornBoostdB, 0.5) + 0.5)
+            }
+            return enableLPadAttenuator ? userTargetAttenuationdB : 0.0
+        }()
+
+        if effectiveAttenDB > 0 {
+            let k = pow(10.0, -effectiveAttenDB / 20.0)
+            if k < 1.0 {
+                let r1 = Zt * (1.0 - k)
+                let r2 = Zt * (k / (1.0 - k))
+                comp.R1_lpad_ohms = r1
+                comp.R2_lpad_ohms = r2
+
+                if enableCDHornCompensation && cdHornBoostdB > 0 && cdHornCornerFrequency > 0 {
+                    let boost = min(max(cdHornBoostdB, 0.5), effectiveAttenDB - 0.5)
+                    let fEq = max(cdHornCornerFrequency, 500.0)
+                    let wEq = 2.0 * .pi * fEq
+                    let kInf = pow(10.0, -(effectiveAttenDB - boost) / 20.0)
+                    let rp = (r2 * Zt) / (r2 + Zt)
+
+                    // Damped HF shelf: series R_eq + C_eq across R1
+                    let rsInf = rp * ((1.0 / kInf) - 1.0)
+                    let rEq = max((r1 * rsInf) / max(r1 - rsInf, 0.05), 0.15)
+                    comp.R_cd_ohms = rEq
+                    comp.C_cd_uF = (1.0 / (wEq * max(r1 + rEq, 0.1))) * 1e6
+                }
+            }
+        }
+
+        // 5. All-Pass Delay Compensation Network for Woofer
+        if enableAllpassFilter && acousticCenterOffsetMM > 0 {
+            let f0 = allpassOptimizedF0 ?? crossoverFrequency
+            let w0 = 2.0 * .pi * f0
+            let tau = (acousticCenterOffsetMM / 1000.0) / 343.0
+            let qAP = allpassOptimizedQ ?? max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
+            let lAP = (Zw / (w0 * qAP)) * 1000.0
+            let cAP = (1.0 / (w0 * qAP * Zw)) * 1e6
+            comp.L_AP_mH = lAP
+            comp.C_AP_uF = cAP
+        }
+
+        // Snap to standard E24 or E12 values if requested
+        if snapToE24Values {
+            comp.L1_mH = comp.L1_mH.map { Self.snapE24($0) }
+            comp.C1_uF = comp.C1_uF.map { Self.snapE24($0) }
+            comp.L2_mH = comp.L2_mH.map { Self.snapE24($0) }
+            comp.C2_uF = comp.C2_uF.map { Self.snapE24($0) }
+
+            comp.C_HP1_uF = comp.C_HP1_uF.map { Self.snapE24($0) }
+            comp.L_HP1_mH = comp.L_HP1_mH.map { Self.snapE24($0) }
+            comp.C_HP2_uF = comp.C_HP2_uF.map { Self.snapE24($0) }
+            comp.L_HP2_mH = comp.L_HP2_mH.map { Self.snapE24($0) }
+
+            comp.R_zobel_ohms = comp.R_zobel_ohms.map { Self.snapE24($0) }
+            comp.C_zobel_uF = comp.C_zobel_uF.map { Self.snapE24($0) }
+            comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { Self.snapE24($0) }
+            comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { Self.snapE24($0) }
+            comp.C_cd_uF = comp.C_cd_uF.map { Self.snapE24($0) }
+            comp.R_cd_ohms = comp.R_cd_ohms.map { Self.snapE24($0) }
+            comp.L_AP_mH = comp.L_AP_mH.map { Self.snapE24($0) }
+            comp.C_AP_uF = comp.C_AP_uF.map { Self.snapE24($0) }
+        } else if snapToStandardValues {
+            comp.L1_mH = comp.L1_mH.map { Self.snapE12($0) }
+            comp.C1_uF = comp.C1_uF.map { Self.snapE12($0) }
+            comp.L2_mH = comp.L2_mH.map { Self.snapE12($0) }
+            comp.C2_uF = comp.C2_uF.map { Self.snapE12($0) }
+
+            comp.C_HP1_uF = comp.C_HP1_uF.map { Self.snapE12($0) }
+            comp.L_HP1_mH = comp.L_HP1_mH.map { Self.snapE12($0) }
+            comp.C_HP2_uF = comp.C_HP2_uF.map { Self.snapE12($0) }
+            comp.L_HP2_mH = comp.L_HP2_mH.map { Self.snapE12($0) }
+
+            comp.R_zobel_ohms = comp.R_zobel_ohms.map { Self.snapE12($0) }
+            comp.C_zobel_uF = comp.C_zobel_uF.map { Self.snapE12($0) }
+            comp.R1_lpad_ohms = comp.R1_lpad_ohms.map { Self.snapE12($0) }
+            comp.R2_lpad_ohms = comp.R2_lpad_ohms.map { Self.snapE12($0) }
+            comp.C_cd_uF = comp.C_cd_uF.map { Self.snapE12($0) }
+            comp.R_cd_ohms = comp.R_cd_ohms.map { Self.snapE12($0) }
+            comp.L_AP_mH = comp.L_AP_mH.map { Self.snapE12($0) }
+            comp.C_AP_uF = comp.C_AP_uF.map { Self.snapE12($0) }
+        }
+
+        return comp
+    }
+
+    /// Snap value to closest E12 standard commercial electronic series (±10%).
+    public static func snapE12(_ val: Double) -> Double {
+        guard val > 0 else { return 0 }
+        let e12Base = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2, 10.0]
+        let exponent = floor(log10(val))
+        let normalized = val / pow(10.0, exponent)
+        let closest = e12Base.min(by: { abs($0 - normalized) < abs($1 - normalized) }) ?? normalized
+        return closest * pow(10.0, exponent)
+    }
+
+    /// Snap value to closest E24 standard commercial electronic series (±5%).
+    public static func snapE24(_ val: Double) -> Double {
+        guard val > 0 else { return 0 }
+        let e24Base = [
+            1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0,
+            2.2, 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3,
+            4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1, 10.0
+        ]
+        let exponent = floor(log10(val))
+        let normalized = val / pow(10.0, exponent)
+        let closest = e24Base.min(by: { abs($0 - normalized) < abs($1 - normalized) }) ?? normalized
+        return closest * pow(10.0, exponent)
+    }
+
+    /// Complex electrical low-pass filter transfer function H_LP(f)
+    public func wooferFilterTransferFunction(frequency f: Double) -> ComplexNumber {
+        let x = f / actualWooferFrequency
+        switch wooferOrder {
+        case .firstOrder:
+            // 1 / (1 + jx)
+            return ComplexNumber(real: 1.0, imag: 0.0) / ComplexNumber(real: 1.0, imag: x)
+        case .secondOrderLR:
+            // 1 / ( (1 - x^2) + j(2x) )
+            return ComplexNumber(real: 1.0, imag: 0.0) / ComplexNumber(real: 1.0 - x*x, imag: 2.0*x)
+        case .secondOrderBW:
+            // 1 / ( (1 - x^2) + j(sqrt(2)*x) )
+            return ComplexNumber(real: 1.0, imag: 0.0) / ComplexNumber(real: 1.0 - x*x, imag: sqrt(2.0)*x)
+        case .thirdOrderBW:
+            // 1 / ( (1 - 2x^2) + j(2x - x^3) )
+            return ComplexNumber(real: 1.0, imag: 0.0) / ComplexNumber(real: 1.0 - 2.0*x*x, imag: 2.0*x - x*x*x)
+        case .fourthOrderLR:
+            // [1 / ((1-x^2) + j*sqrt(2)x)]^2
+            let h2 = ComplexNumber(real: 1.0, imag: 0.0) / ComplexNumber(real: 1.0 - x*x, imag: sqrt(2.0)*x)
+            return h2 * h2
+        }
+    }
+
+    /// Complex electrical high-pass filter transfer function H_HP(f)
+    public func tweeterFilterTransferFunction(frequency f: Double) -> ComplexNumber {
+        let x = f / actualTweeterFrequency
+        switch tweeterOrder {
+        case .firstOrder:
+            // jx / (1 + jx)
+            return ComplexNumber(real: 0.0, imag: x) / ComplexNumber(real: 1.0, imag: x)
+        case .secondOrderLR:
+            // -x^2 / ( (1 - x^2) + j(2x) )
+            return ComplexNumber(real: -x*x, imag: 0.0) / ComplexNumber(real: 1.0 - x*x, imag: 2.0*x)
+        case .secondOrderBW:
+            // -x^2 / ( (1 - x^2) + j(sqrt(2)*x) )
+            return ComplexNumber(real: -x*x, imag: 0.0) / ComplexNumber(real: 1.0 - x*x, imag: sqrt(2.0)*x)
+        case .thirdOrderBW:
+            // -j x^3 / ( (1 - 2x^2) + j(2x - x^3) )
+            return ComplexNumber(real: 0.0, imag: -x*x*x) / ComplexNumber(real: 1.0 - 2.0*x*x, imag: 2.0*x - x*x*x)
+        case .fourthOrderLR:
+            // [-x^2 / ((1-x^2) + j*sqrt(2)x)]^2
+            let h2 = ComplexNumber(real: -x*x, imag: 0.0) / ComplexNumber(real: 1.0 - x*x, imag: sqrt(2.0)*x)
+            return h2 * h2
+        }
+    }
+
+    /// Acoustic center time delay offset factor e^(-j * 2 * pi * f * dt) * Polarity
+    public func tweeterAcousticDelayFactor(frequency f: Double) -> ComplexNumber {
+        let speedOfSoundMS = 343.0 // m/s
+        let delaySeconds = (acousticCenterOffsetMM / 1000.0) / speedOfSoundMS
+        let phaseShiftRad = 2.0 * .pi * f * delaySeconds
+        let polarityMultiplier = invertTweeterPolarity ? -1.0 : 1.0
+
+        return ComplexNumber(r: polarityMultiplier, theta: -phaseShiftRad)
+    }
+
+    /// Complex electrical all-pass delay compensation filter transfer function H_AP(f) on woofer branch.
+    /// Magnitude is strictly 1.0 (0 dB) at all frequencies, providing phase delay to match the recessed tweeter.
+    public func allpassFilterTransferFunction(frequency f: Double) -> ComplexNumber {
+        guard enableAllpassFilter && acousticCenterOffsetMM > 0 else {
+            return ComplexNumber(real: 1.0, imag: 0.0)
+        }
+        let f0 = allpassOptimizedF0 ?? acousticCenterFrequency
+        let tau = (acousticCenterOffsetMM / 1000.0) / 343.0
+        let w0 = 2.0 * .pi * f0
+        let qAP = allpassOptimizedQ ?? max(0.5, min(2.5, 2.0 / (w0 * max(tau, 1e-6))))
+        let x = f / f0
+
+        // 2nd-order All-Pass: [ (1 - x^2) - j(x/Q) ] / [ (1 - x^2) + j(x/Q) ]
+        let num = ComplexNumber(real: 1.0 - x * x, imag: -x / qAP)
+        let denom = ComplexNumber(real: 1.0 - x * x, imag: x / qAP)
+        return num / denom
+    }
+
+    /// L-Pad complex attenuation factor
+    public var lpadVoltageGain: Double {
+        if enableLPadAttenuator && userTargetAttenuationdB > 0 {
+            return pow(10.0, -userTargetAttenuationdB / 20.0)
+        }
+        return 1.0
+    }
+
+    /// Frequency-dependent complex voltage transfer function H_LPad+CD(f) of the Tweeter L-Pad and optional CD Horn Mass Roll-Off Compensation network.
+    public func tweeterLPadAndCDHornTransferFunction(frequency f: Double, tweeterRe: Double = 8.0) -> ComplexNumber {
+        guard enableCDHornCompensation else {
+            return ComplexNumber(real: lpadVoltageGain, imag: 0.0)
+        }
+        let zT = max(tweeterRe, 4.0)
+        let comp = computeComponentValues(wooferRe: 8.0, tweeterRe: zT, wooferLe: 0.8)
+        guard let r1 = comp.R1_lpad_ohms, let r2 = comp.R2_lpad_ohms, let cCD = comp.C_cd_uF, cCD > 0 else {
+            return ComplexNumber(real: lpadVoltageGain, imag: 0.0)
+        }
+        let w = 2.0 * .pi * max(f, 1.0)
+        let rCD = comp.R_cd_ohms ?? 0.0
+        let zBypass = ComplexNumber(real: rCD, imag: -1.0 / (w * (cCD / 1e6)))
+        let zR1 = ComplexNumber(real: r1, imag: 0.0)
+        let zSeries = (zR1 * zBypass) / (zR1 + zBypass)
+        let rParallel = (r2 * zT) / (r2 + zT)
+        let zShuntLoad = ComplexNumber(real: rParallel, imag: 0.0)
+        return zShuntLoad / (zSeries + zShuntLoad)
+    }
+}

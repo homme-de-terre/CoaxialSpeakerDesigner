@@ -861,8 +861,8 @@ public class SchematicReportRenderer {
         let apfAchievedStr = crossover.enableAllpassFilter
             ? apfStatus.label
             : "Off (Disabled)"
-        let f0Str = crossover.allpassOptimizedF0 != nil ? "\(Int(crossover.allpassOptimizedF0!)) Hz" : "N/A"
-        let qStr = crossover.allpassOptimizedQ != nil ? String(format: "%.2f", crossover.allpassOptimizedQ!) : "N/A"
+        let f0Str = (crossover.enableAllpassFilter && crossover.allpassOptimizedF0 != nil) ? "\(Int(crossover.allpassOptimizedF0!)) Hz" : "N/A"
+        let qStr = (crossover.enableAllpassFilter && crossover.allpassOptimizedQ != nil) ? String(format: "%.2f", crossover.allpassOptimizedQ!) : "N/A"
         let errStr = crossover.allpassOptimizationErrorDeg != nil ? String(format: "%.2f°", crossover.allpassOptimizationErrorDeg!) : "N/A"
         let delayMs = (crossover.acousticCenterOffsetMM / 1000.0) / 343.0 * 1000.0
 

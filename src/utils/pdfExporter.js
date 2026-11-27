@@ -821,7 +821,7 @@ export function generateSchematicPDF({
       ['APF Optimization', enableAllpass ? (apfOptimization.alignmentStatus?.label || 'Active') : 'Off (Disabled)'],
       ['Optimal APF F0', enableAllpass ? `${Math.round(apfOptimization.f0)} Hz` : 'N/A'],
       ['Optimal APF Q', enableAllpass ? apfOptimization.q.toFixed(2) : 'N/A'],
-      ['Residual Phase RMS', enableAllpass ? `${apfOptimization.rmsErrorDeg.toFixed(2)} deg` : 'N/A']
+      ['Residual Phase RMS', typeof apfOptimization?.rmsErrorDeg === 'number' ? `${apfOptimization.rmsErrorDeg.toFixed(2)} deg` : 'N/A']
     ]
   );
 

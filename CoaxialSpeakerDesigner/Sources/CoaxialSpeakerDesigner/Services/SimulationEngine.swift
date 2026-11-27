@@ -46,8 +46,8 @@ public enum SimulationEngine {
             ? baseTweeterCurve.map { ResponseDataPoint(id: $0.id, frequency: $0.frequency, magnitude: $0.magnitude + tweeterSPLShift, phase: $0.phase) }
             : baseTweeterCurve
 
-        let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
-        let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)
+        let wooferAcousticP = driver.hasCustomWooferCurve ? ensurePhase(curve: rawWooferCurve) : rawWooferCurve
+        let tweeterAcousticP = driver.hasCustomTweeterCurve ? ensurePhase(curve: rawTweeterCurve) : rawTweeterCurve
         
         for i in 0...stepCount {
             let logF = logMin + Double(i) * logStep
@@ -230,7 +230,12 @@ public enum SimulationEngine {
                 let t = (logF - logF1) / (logF2 - logF1)
                 
                 let spl = p1.magnitude + t * (p2.magnitude - p1.magnitude)
-                let phaseDeg = p1.phase + t * (p2.phase - p1.phase)
+                var dPhase = p2.phase - p1.phase
+                while dPhase > 180.0 { dPhase -= 360.0 }
+                while dPhase < -180.0 { dPhase += 360.0 }
+                var phaseDeg = p1.phase + t * dPhase
+                while phaseDeg > 180.0 { phaseDeg -= 360.0 }
+                while phaseDeg < -180.0 { phaseDeg += 360.0 }
                 
                 let magLinear = pow(10.0, spl / 20.0)
                 let phaseRad = phaseDeg * (.pi / 180.0)
@@ -450,8 +455,8 @@ public enum SimulationEngine {
             ? baseTweeterCurve.map { ResponseDataPoint(id: $0.id, frequency: $0.frequency, magnitude: $0.magnitude + tweeterSPLShift, phase: $0.phase) }
             : baseTweeterCurve
 
-        let wooferAcousticP = ensurePhase(curve: rawWooferCurve)
-        let tweeterAcousticP = ensurePhase(curve: rawTweeterCurve)
+        let wooferAcousticP = driver.hasCustomWooferCurve ? ensurePhase(curve: rawWooferCurve) : rawWooferCurve
+        let tweeterAcousticP = driver.hasCustomTweeterCurve ? ensurePhase(curve: rawTweeterCurve) : rawTweeterCurve
 
         for k in 1..<(n / 2) {
             let f = Double(k) * fs / Double(n)
