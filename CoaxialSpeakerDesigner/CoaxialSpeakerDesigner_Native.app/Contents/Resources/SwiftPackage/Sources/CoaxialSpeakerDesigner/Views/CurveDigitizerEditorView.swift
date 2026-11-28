@@ -13,7 +13,7 @@ public struct CurveDigitizerEditorView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Image(systemName: "pencil.and.outline")
+                Image(systemName: "doc.text")
                     .font(.title2)
                     .foregroundColor(.accentColor)
                 Text("FRD Response Curve Import & Digitizer")
@@ -71,7 +71,7 @@ public struct CurveDigitizerEditorView: View {
                         .frame(minHeight: 180, maxHeight: 240)
                         .border(Color.gray.opacity(0.3))
 
-                    HStack(spacing: 10) {
+                    TabFlowLayout(horizontalSpacing: 10, verticalSpacing: 8) {
                         Button(action: {
                             viewModel.importWooferFRDText(viewModel.wooferFRDText)
                         }) {
@@ -107,9 +107,8 @@ public struct CurveDigitizerEditorView: View {
                             Label("Reset to Synthetic", systemImage: "arrow.counterclockwise")
                         }
                         .buttonStyle(.bordered)
-
-                        Spacer()
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
@@ -127,7 +126,7 @@ public struct CurveDigitizerEditorView: View {
                         .frame(minHeight: 180, maxHeight: 240)
                         .border(Color.gray.opacity(0.3))
 
-                    HStack(spacing: 10) {
+                    TabFlowLayout(horizontalSpacing: 10, verticalSpacing: 8) {
                         Button(action: {
                             viewModel.importTweeterFRDText(viewModel.tweeterFRDText)
                         }) {
@@ -163,9 +162,8 @@ public struct CurveDigitizerEditorView: View {
                             Label("Reset to Synthetic", systemImage: "arrow.counterclockwise")
                         }
                         .buttonStyle(.bordered)
-
-                        Spacer()
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -177,7 +175,7 @@ public struct CurveDigitizerEditorView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    HStack(spacing: 10) {
+                    TabFlowLayout(horizontalSpacing: 10, verticalSpacing: 8) {
                         #if canImport(AppKit)
                         Button(action: {
                             viewModel.exportSystemFRDToFile()
@@ -194,6 +192,7 @@ public struct CurveDigitizerEditorView: View {
                         .buttonStyle(.bordered)
                         #endif
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(6)
             }

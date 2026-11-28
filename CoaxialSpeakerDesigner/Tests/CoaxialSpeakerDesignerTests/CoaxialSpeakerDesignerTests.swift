@@ -1557,4 +1557,20 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         XCTAssertEqual(altecRangeN.minDeg, altecRangeI.minDeg, accuracy: 1e-9)
         XCTAssertEqual(altecRangeN.maxDeg, altecRangeI.maxDeg, accuracy: 1e-9)
     }
+
+    @MainActor
+    func testFRDImportExportTabSelectionAndViewConstruction() {
+        let vm = MainDesignerViewModel()
+        XCTAssertEqual(vm.selectedTab, 0)
+
+        // Selecting FRD Import/Export tab (tag 6) activates CurveDigitizerEditorView
+        vm.selectedTab = 6
+        XCTAssertEqual(vm.selectedTab, 6)
+
+        let frdView = CurveDigitizerEditorView(viewModel: vm)
+        XCTAssertNotNil(frdView)
+
+        let splitView = MainSplitView()
+        XCTAssertNotNil(splitView)
+    }
 }

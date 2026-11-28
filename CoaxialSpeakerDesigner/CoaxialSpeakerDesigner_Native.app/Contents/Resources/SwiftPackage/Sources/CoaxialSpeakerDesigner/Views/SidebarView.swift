@@ -67,6 +67,18 @@ public struct SidebarView: View {
                         }
                         .buttonStyle(.bordered)
 
+                        Button(action: {
+                            viewModel.selectedTab = 6
+                        }) {
+                            HStack {
+                                Image(systemName: "doc.text")
+                                Text("FRD Import/Export...")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Open FRD Response Curve Import & Export Dialog (⇧⌘I)")
+
                         HStack {
                             VStack { Divider() }
                             Text("or from web URL")

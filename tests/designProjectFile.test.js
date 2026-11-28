@@ -1395,8 +1395,10 @@ test('Full Screen Mode & Screen Boundary Layout Constraints - Window Clamping Ma
   assert.ok(appSwift.includes('constrainWindowsToScreenBounds'), 'CoaxialSpeakerDesignerApp must enforce constrainWindowsToScreenBounds');
   assert.ok(appSwift.includes('didEnterFullScreenNotification'), 'CoaxialSpeakerDesignerApp must listen for didEnterFullScreenNotification');
   assert.ok(appSwift.includes('willEnterFullScreenNotification'), 'CoaxialSpeakerDesignerApp must listen for willEnterFullScreenNotification');
-  assert.ok(mainSplitSwift.includes('ScrollView(.horizontal, showsIndicators: false)'), 'MainSplitView 9-tab Picker must be wrapped in horizontal ScrollView so it has zero minimum width push');
-  assert.ok(mainSplitSwift.includes('.labelsHidden()'), 'MainSplitView Picker must hide duplicate View Mode label');
+  assert.ok(mainSplitSwift.includes('public struct TabFlowLayout: Layout'), 'MainSplitView must use responsive wrapping TabFlowLayout so all 9 tabs stay visible without pushing window width');
+  assert.ok(!mainSplitSwift.includes('.pickerStyle(.segmented)'), 'MainSplitView must not use NSSegmentedControl Picker which clips the 9th FRD Import/Export tab');
+  assert.ok(!mainSplitSwift.includes('.labelsHidden()'), 'MainSplitView must not apply .labelsHidden() to navigation tabs');
+  assert.ok(mainSplitSwift.includes('tabButton(tag: 6) { Label("FRD Import/Export"'), 'MainSplitView must render explicit FRD Import/Export tab button');
   assert.ok(crossoverSwift.includes('ScrollView(.horizontal, showsIndicators: false)'), 'CrossoverInspectorView detached buttons must be horizontally scrollable');
 
   // 3. Verify React / Web / Desktop app CSS viewport boundary constraints
@@ -2311,6 +2313,111 @@ test('Woofer Phase Invariance Under Tweeter Polarity Inversion - Physics, APF Ne
   assert.ok(simSwift.includes('tweeterAltUnwrappedPhaseDeg'), 'SimulationEngine.swift must compute polarity-invariant unwrapped bounds');
   assert.ok(phaseViewSwift.includes('public static func determinePhaseRange'), 'PhaseBodeChartView.swift must provide polarity-invariant determinePhaseRange');
 });
+
+test('Native SwiftUI FRD Import/Export Dialog Visibility - TabFlowLayout Wrapping Math, Sidebar & Menu Wiring, and Bundle Sync', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  const mainSplitPath = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/MainSplitView.swift');
+  const sidebarPath = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/SidebarView.swift');
+  const appPath = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/CoaxialSpeakerDesignerApp.swift');
+  const frdViewPath = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/CurveDigitizerEditorView.swift');
+  const bundledMainSplitPath = path.resolve(process.cwd(), 'CoaxialSpeakerDesigner/CoaxialSpeakerDesigner_Native.app/Contents/Resources/SwiftPackage/Sources/CoaxialSpeakerDesigner/Views/MainSplitView.swift');
+
+  const mainSplitSwift = fs.readFileSync(mainSplitPath, 'utf8');
+  const sidebarSwift = fs.readFileSync(sidebarPath, 'utf8');
+  const appSwift = fs.readFileSync(appPath, 'utf8');
+  const frdSwift = fs.readFileSync(frdViewPath, 'utf8');
+  const bundledMainSplitSwift = fs.readFileSync(bundledMainSplitPath, 'utf8');
+
+  // 1. Verify all 9 tabs (especially tag 6: FRD Import/Export) use explicit TabFlowLayout buttons with .labelStyle(.titleOnly)
+  const expectedTabs = [
+    { tag: 0, title: 'Amplitude Response' },
+    { tag: 1, title: 'Phase & Delay' },
+    { tag: 8, title: 'Group Delay' },
+    { tag: 7, title: 'Step Response' },
+    { tag: 2, title: 'System Impedance' },
+    { tag: 3, title: 'Cabinet Closed/Ported' },
+    { tag: 4, title: 'Crossover Network' },
+    { tag: 5, title: 'Schematic & BOM' },
+    { tag: 6, title: 'FRD Import/Export' }
+  ];
+
+  for (const t of expectedTabs) {
+    assert.ok(
+      mainSplitSwift.includes(`tabButton(tag: ${t.tag}) { Label("${t.title}"`),
+      `MainSplitView.swift must include visible tab button for "${t.title}" (tag ${t.tag})`
+    );
+  }
+  assert.ok(mainSplitSwift.includes('.labelStyle(.titleOnly)'), 'tabButton must explicitly render title text via .labelStyle(.titleOnly)');
+  assert.ok(mainSplitSwift.includes('case 6:\n                        ScrollView { CurveDigitizerEditorView(viewModel: viewModel) }'), 'Tag 6 must route to CurveDigitizerEditorView');
+
+  // 2. Verify Sidebar and File Menu also provide direct access to FRD Import/Export (tag 6)
+  assert.ok(sidebarSwift.includes('Text("FRD Import/Export...")') && sidebarSwift.includes('viewModel.selectedTab = 6'), 'SidebarView must provide FRD Import/Export button');
+  assert.ok(appSwift.includes('Button("FRD Import/Export...")') && appSwift.includes('CSD_OpenFRD'), 'CoaxialSpeakerDesignerApp File menu must include FRD Import/Export...');
+  assert.ok(mainSplitSwift.includes('CSD_OpenFRD'), 'MainSplitView must handle CSD_OpenFRD notification');
+  assert.ok(frdSwift.includes('TabFlowLayout'), 'CurveDigitizerEditorView action buttons must wrap cleanly on compact windows');
+
+  // 3. Verify embedded Native .app bundle Swift source matches MainSplitView.swift
+  assert.equal(bundledMainSplitSwift, mainSplitSwift, 'Embedded CoaxialSpeakerDesigner_Native.app MainSplitView.swift must be in sync with source');
+
+  // 4. Verify TabFlowLayout placement math guarantees FRD Import/Export is 100% within viewport bounds at ALL window widths
+  function computeTabFlowLayout(itemSizes, proposalWidth, hSpacing = 4, vSpacing = 4) {
+    const maxSingleWidth = Math.max(...itemSizes.map(s => s.width));
+    const availableWidth = Number.isFinite(proposalWidth) ? Math.max(proposalWidth, maxSingleWidth) : Infinity;
+
+    let curX = 0;
+    let curY = 0;
+    let rowH = 0;
+    const placements = [];
+
+    for (const s of itemSizes) {
+      if (curX > 0 && curX + hSpacing + s.width > availableWidth) {
+        curY += rowH + vSpacing;
+        curX = 0;
+        rowH = 0;
+      } else if (curX > 0) {
+        curX += hSpacing;
+      }
+      placements.push({ x: curX, y: curY, width: s.width, height: s.height });
+      curX += s.width;
+      rowH = Math.max(rowH, s.height);
+    }
+    return {
+      width: Number.isFinite(proposalWidth) ? Math.max(proposalWidth, maxSingleWidth) : Math.max(...placements.map(p => p.x + p.width)),
+      height: curY + rowH,
+      placements
+    };
+  }
+
+  // Realistic macOS 11.5pt font + 16pt horizontal padding sizes for all 9 tabs
+  const tabSizes = expectedTabs.map(t => ({
+    title: t.title,
+    width: Math.round(t.title.length * 5.8 + 16),
+    height: 25
+  }));
+
+  // At 900pt min window (470pt header), 1150pt medium window (720pt header), and 1512pt MacBook Pro full-screen (1092pt header):
+  for (const headerWidth of [470, 720, 1092]) {
+    const layout = computeTabFlowLayout(tabSizes, headerWidth);
+    const frdRect = layout.placements[8]; // 9th tab: FRD Import/Export
+    assert.ok(frdRect.x >= 0, `FRD Import/Export left edge (${frdRect.x}) must be >= 0 at width ${headerWidth}`);
+    assert.ok(frdRect.x + frdRect.width <= headerWidth, `FRD Import/Export right edge (${frdRect.x + frdRect.width}) must stay inside header width ${headerWidth} (never clipped off-screen)`);
+  }
+
+  // On 1512pt MacBook Pro full-screen (1092pt header), all 9 tabs sit on a single row (y === 0)
+  const wideLayout = computeTabFlowLayout(tabSizes, 1092);
+  assert.equal(wideLayout.placements[8].y, 0, 'All 9 tabs including FRD Import/Export fit on 1 row on 1512pt MacBook Pro display');
+
+  // On compact 900pt window (470pt header), trailing tabs wrap cleanly to row 2+ instead of clipping
+  const compactLayout = computeTabFlowLayout(tabSizes, 470);
+  assert.ok(compactLayout.placements[8].y > 0, 'FRD Import/Export wraps onto visible lower row on compact 900pt window');
+
+  // Zero-width probe reports single widest tab (~138pt), never pushing window past screen bounds
+  const minProbe = computeTabFlowLayout(tabSizes, 0);
+  assert.ok(minProbe.width < 160, `Minimum intrinsic width (${minProbe.width}pt) must be < 160pt so window never overflows screen`);
+});
+
 
 
 

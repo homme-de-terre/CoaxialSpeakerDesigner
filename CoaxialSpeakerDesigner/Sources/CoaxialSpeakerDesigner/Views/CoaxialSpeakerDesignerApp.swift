@@ -38,6 +38,12 @@ public struct CoaxialSpeakerDesignerApp: App {
                 Button("Save Design As...") {
                     NotificationCenter.default.post(name: NSNotification.Name("CSD_SaveDesign"), object: nil)
                 }.keyboardShortcut("s", modifiers: .command)
+
+                Divider()
+
+                Button("FRD Import/Export...") {
+                    NotificationCenter.default.post(name: NSNotification.Name("CSD_OpenFRD"), object: nil)
+                }.keyboardShortcut("i", modifiers: [.command, .shift])
             }
 
             CommandGroup(replacing: .appInfo) {
