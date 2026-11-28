@@ -98,9 +98,13 @@ public enum AllpassFilterOptimizer {
             freqs.append(exp(logLow + Double(i) * logStep))
         }
 
-        // Precompute fixed Tweeter complex pressure and fixed Woofer base pressure (before APF)
+        // Precompute Normal-polarity Tweeter pressure (for polarity-invariant woofer APF F0/Q optimization),
+        // Actual Tweeter pressure (including polarity toggle for RMS error evaluation), and Woofer base pressure.
+        let delaySeconds = (crossover.acousticCenterOffsetMM / 1000.0) / 343.0
+        var pTweeterNormal: [ComplexNumber] = []
         var pTweeterFixed: [ComplexNumber] = []
         var pWooferBase: [ComplexNumber] = []
+        pTweeterNormal.reserveCapacity(sampleCount)
         pTweeterFixed.reserveCapacity(sampleCount)
         pWooferBase.reserveCapacity(sampleCount)
 
@@ -108,8 +112,11 @@ public enum AllpassFilterOptimizer {
             let pTwRaw = interpolateAcousticPressure(freq: f, curve: tweeterAcousticP)
             let hHP = crossover.tweeterFilterTransferFunction(frequency: f)
             let hLpadCD = crossover.tweeterLPadAndCDHornTransferFunction(frequency: f, tweeterRe: driver.tweeter.re)
-            let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
-            pTweeterFixed.append(pTwRaw * hHP * hLpadCD * hDelay)
+            let phaseShiftRad = 2.0 * .pi * f * delaySeconds
+            let hDelayNormal = ComplexNumber(r: 1.0, theta: -phaseShiftRad)
+            let hDelayActual = crossover.tweeterAcousticDelayFactor(frequency: f)
+            pTweeterNormal.append(pTwRaw * hHP * hLpadCD * hDelayNormal)
+            pTweeterFixed.append(pTwRaw * hHP * hLpadCD * hDelayActual)
 
             let pWfRaw = interpolateAcousticPressure(freq: f, curve: wooferAcousticP)
             let hCab = cabinet.transferFunction(frequency: f, ts: driver.wooferTS)
@@ -117,14 +124,16 @@ public enum AllpassFilterOptimizer {
             pWooferBase.append(pWfRaw * hCab * hLP)
         }
 
-        // Cost function: sum of squared in-phase alignment errors (wrapped to [-180°, +180°] around 0° coherent target)
-        // Directly reflects tweeter polarity (+180° inversion) as well as acoustic delay and filter phase slopes.
-        func evaluateCost(f0: Double, q: Double) -> Double {
+        // Optimize woofer APF (f0, q) strictly for acoustic delay & slope alignment,
+        // independent of tweeter wiring polarity (+0° or +180°), so inverting tweeter
+        // polarity never alters the woofer passive network or woofer phase response.
+        func evaluateCandidatePolarityCost(f0: Double, q: Double, targetPolaritySign: Double) -> Double {
             if f0 < 0.1 * fx || f0 > 10.0 * fx || q < 0.05 || q > 25.0 {
                 return 1e8
             }
 
             var sse = 0.0
+            let polarityOffsetDeg = targetPolaritySign < 0.0 ? 180.0 : 0.0
 
             for i in 0..<sampleCount {
                 let f = freqs[i]
@@ -135,7 +144,7 @@ public enum AllpassFilterOptimizer {
 
                 let pWooferFinal = pWooferBase[i] * hAP
                 let wPhase = pWooferFinal.phaseDegrees
-                let tPhase = pTweeterFixed[i].phaseDegrees
+                let tPhase = pTweeterNormal[i].phaseDegrees + polarityOffsetDeg
                 var delta = wPhase - tPhase
                 while delta > 180.0 { delta -= 360.0 }
                 while delta < -180.0 { delta += 360.0 }
@@ -146,7 +155,7 @@ public enum AllpassFilterOptimizer {
         }
 
         // Initial guesses for F0 and Q (multi-start Nelder-Mead simplex across crossover region)
-        let tau = (crossover.acousticCenterOffsetMM / 1000.0) / 343.0
+        let tau = delaySeconds
         let qInit = max(0.5, min(2.5, 2.0 / (2.0 * .pi * fx * max(tau, 1e-6))))
         let f0Init = fx
 
@@ -162,7 +171,8 @@ public enum AllpassFilterOptimizer {
             (fx * 0.7, qInit),
             (f0Init, qInit),
             (fx * 1.5, qInit),
-            (fx * 2.4, 0.6)
+            (fx * 2.4, 0.6),
+            (fx * 4.5, 0.5)
         ]
 
         let alpha = 1.0  // Reflection
@@ -170,96 +180,102 @@ public enum AllpassFilterOptimizer {
         let rho = 0.5    // Contraction
         let sigma = 0.5  // Shrink
 
-        var globalOptimal = SimplexPoint(f0: f0Init, q: qInit, cost: evaluateCost(f0: f0Init, q: qInit))
+        var globalOptimal = SimplexPoint(
+            f0: f0Init,
+            q: qInit,
+            cost: evaluateCandidatePolarityCost(f0: f0Init, q: qInit, targetPolaritySign: 1.0)
+        )
 
-        for seed in seedCandidates {
-            var s: [SimplexPoint] = [
-                SimplexPoint(f0: seed.f0, q: seed.q, cost: evaluateCost(f0: seed.f0, q: seed.q)),
-                SimplexPoint(f0: seed.f0 * 1.2, q: seed.q, cost: evaluateCost(f0: seed.f0 * 1.2, q: seed.q)),
-                SimplexPoint(f0: seed.f0, q: seed.q * 1.25, cost: evaluateCost(f0: seed.f0, q: seed.q * 1.25))
-            ]
+        for targetSign in [1.0, -1.0] {
+            for seed in seedCandidates {
+                var s: [SimplexPoint] = [
+                    SimplexPoint(f0: seed.f0, q: seed.q, cost: evaluateCandidatePolarityCost(f0: seed.f0, q: seed.q, targetPolaritySign: targetSign)),
+                    SimplexPoint(f0: seed.f0 * 1.2, q: seed.q, cost: evaluateCandidatePolarityCost(f0: seed.f0 * 1.2, q: seed.q, targetPolaritySign: targetSign)),
+                    SimplexPoint(f0: seed.f0, q: seed.q * 1.25, cost: evaluateCandidatePolarityCost(f0: seed.f0, q: seed.q * 1.25, targetPolaritySign: targetSign))
+                ]
 
-            for _ in 0..<maxIterations {
-                s.sort { $0.cost < $1.cost }
+                for _ in 0..<maxIterations {
+                    s.sort { $0.cost < $1.cost }
 
-                let best = s[0]
-                let worst = s[2]
+                    let best = s[0]
+                    let worst = s[2]
 
-                // Check convergence
-                let costDiff = abs(worst.cost - best.cost)
-                let f0Span = abs(worst.f0 - best.f0) / max(best.f0, 1.0)
-                let qSpan = abs(worst.q - best.q) / max(best.q, 0.1)
+                    // Check convergence
+                    let costDiff = abs(worst.cost - best.cost)
+                    let f0Span = abs(worst.f0 - best.f0) / max(best.f0, 1.0)
+                    let qSpan = abs(worst.q - best.q) / max(best.q, 0.1)
 
-                if costDiff < 1e-5 && f0Span < 1e-4 && qSpan < 1e-4 {
-                    break
-                }
+                    if costDiff < 1e-5 && f0Span < 1e-4 && qSpan < 1e-4 {
+                        break
+                    }
 
-                // Centroid of best two points
-                let cF0 = (s[0].f0 + s[1].f0) / 2.0
-                let cQ = (s[0].q + s[1].q) / 2.0
+                    // Centroid of best two points
+                    let cF0 = (s[0].f0 + s[1].f0) / 2.0
+                    let cQ = (s[0].q + s[1].q) / 2.0
 
-                // 1. Reflection
-                let xrF0 = cF0 + alpha * (cF0 - worst.f0)
-                let xrQ = cQ + alpha * (cQ - worst.q)
-                let xrCost = evaluateCost(f0: xrF0, q: xrQ)
+                    // 1. Reflection
+                    let xrF0 = cF0 + alpha * (cF0 - worst.f0)
+                    let xrQ = cQ + alpha * (cQ - worst.q)
+                    let xrCost = evaluateCandidatePolarityCost(f0: xrF0, q: xrQ, targetPolaritySign: targetSign)
 
-                if xrCost < s[1].cost && xrCost >= s[0].cost {
-                    s[2] = SimplexPoint(f0: xrF0, q: xrQ, cost: xrCost)
-                    continue
-                }
-
-                // 2. Expansion
-                if xrCost < s[0].cost {
-                    let xeF0 = cF0 + gamma * (xrF0 - cF0)
-                    let xeQ = cQ + gamma * (xrQ - cQ)
-                    let xeCost = evaluateCost(f0: xeF0, q: xeQ)
-
-                    if xeCost < xrCost {
-                        s[2] = SimplexPoint(f0: xeF0, q: xeQ, cost: xeCost)
-                    } else {
+                    if xrCost < s[1].cost && xrCost >= s[0].cost {
                         s[2] = SimplexPoint(f0: xrF0, q: xrQ, cost: xrCost)
-                    }
-                    continue
-                }
-
-                // 3. Contraction
-                if xrCost < worst.cost {
-                    // Outside contraction
-                    let xcF0 = cF0 + rho * (xrF0 - cF0)
-                    let xcQ = cQ + rho * (xrQ - cQ)
-                    let xcCost = evaluateCost(f0: xcF0, q: xcQ)
-                    if xcCost < xrCost {
-                        s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
                         continue
                     }
-                } else {
-                    // Inside contraction
-                    let xcF0 = cF0 - rho * (cF0 - worst.f0)
-                    let xcQ = cQ - rho * (cQ - worst.q)
-                    let xcCost = evaluateCost(f0: xcF0, q: xcQ)
-                    if xcCost < worst.cost {
-                        s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
+
+                    // 2. Expansion
+                    if xrCost < s[0].cost {
+                        let xeF0 = cF0 + gamma * (xrF0 - cF0)
+                        let xeQ = cQ + gamma * (xrQ - cQ)
+                        let xeCost = evaluateCandidatePolarityCost(f0: xeF0, q: xeQ, targetPolaritySign: targetSign)
+
+                        if xeCost < xrCost {
+                            s[2] = SimplexPoint(f0: xeF0, q: xeQ, cost: xeCost)
+                        } else {
+                            s[2] = SimplexPoint(f0: xrF0, q: xrQ, cost: xrCost)
+                        }
                         continue
+                    }
+
+                    // 3. Contraction
+                    if xrCost < worst.cost {
+                        // Outside contraction
+                        let xcF0 = cF0 + rho * (xrF0 - cF0)
+                        let xcQ = cQ + rho * (xrQ - cQ)
+                        let xcCost = evaluateCandidatePolarityCost(f0: xcF0, q: xcQ, targetPolaritySign: targetSign)
+                        if xcCost < xrCost {
+                            s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
+                            continue
+                        }
+                    } else {
+                        // Inside contraction
+                        let xcF0 = cF0 - rho * (cF0 - worst.f0)
+                        let xcQ = cQ - rho * (cQ - worst.q)
+                        let xcCost = evaluateCandidatePolarityCost(f0: xcF0, q: xcQ, targetPolaritySign: targetSign)
+                        if xcCost < worst.cost {
+                            s[2] = SimplexPoint(f0: xcF0, q: xcQ, cost: xcCost)
+                            continue
+                        }
+                    }
+
+                    // 4. Shrink
+                    for i in 1...2 {
+                        let sf0 = s[0].f0 + sigma * (s[i].f0 - s[0].f0)
+                        let sq = s[0].q + sigma * (s[i].q - s[0].q)
+                        s[i] = SimplexPoint(f0: sf0, q: sq, cost: evaluateCandidatePolarityCost(f0: sf0, q: sq, targetPolaritySign: targetSign))
                     }
                 }
 
-                // 4. Shrink
-                for i in 1...2 {
-                    let sf0 = s[0].f0 + sigma * (s[i].f0 - s[0].f0)
-                    let sq = s[0].q + sigma * (s[i].q - s[0].q)
-                    s[i] = SimplexPoint(f0: sf0, q: sq, cost: evaluateCost(f0: sf0, q: sq))
+                s.sort { $0.cost < $1.cost }
+                if s[0].cost < globalOptimal.cost {
+                    globalOptimal = s[0]
                 }
-            }
-
-            s.sort { $0.cost < $1.cost }
-            if s[0].cost < globalOptimal.cost {
-                globalOptimal = s[0]
             }
         }
 
         let optimal = globalOptimal
 
-        // Compute final statistics across window (if acoustic delay is 0, no all-pass delay filter is applied)
+        // Compute final RMS error against the user's actual selected tweeter polarity
         let finalSSE: Double
         if crossover.acousticCenterOffsetMM <= 0 {
             var uncompSSE = 0.0
@@ -271,7 +287,20 @@ public enum AllpassFilterOptimizer {
             }
             finalSSE = uncompSSE
         } else {
-            finalSSE = optimal.cost
+            var actualSSE = 0.0
+            for i in 0..<sampleCount {
+                let f = freqs[i]
+                let x = f / optimal.f0
+                let num = ComplexNumber(real: 1.0 - x * x, imag: -x / optimal.q)
+                let denom = ComplexNumber(real: 1.0 - x * x, imag: x / optimal.q)
+                let hAP = num / denom
+                let pWooferFinal = pWooferBase[i] * hAP
+                var d = pWooferFinal.phaseDegrees - pTweeterFixed[i].phaseDegrees
+                while d > 180.0 { d -= 360.0 }
+                while d < -180.0 { d += 360.0 }
+                actualSSE += d * d
+            }
+            finalSSE = actualSSE
         }
         let rmsErrorDeg = sqrt(finalSSE / Double(sampleCount))
 

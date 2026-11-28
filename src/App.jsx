@@ -676,6 +676,7 @@ export default function App() {
     const qtc = cabinetCalculations.actualQtc;
     const wc = 2.0 * Math.PI * fc;
 
+    const pTweeterNormal = [];
     const pTweeterFixed = [];
     const pWooferBase = [];
 
@@ -700,13 +701,17 @@ export default function App() {
         hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, 2 * xT));
       } else if (tweeterOrder === 'secondOrderBW') {
         hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
+      } else if (tweeterOrder === 'thirdOrderBW') {
+        hHP = new Complex(0, -xT * xT * xT).div(new Complex(1 - 2 * xT * xT, 2 * xT - xT * xT * xT));
       } else if (tweeterOrder === 'fourthOrderLR') {
         const h2 = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
         hHP = h2.mul(h2);
       }
       const hLpadCD = evaluateLPadAndCDHornTransfer(f);
-      const hDelay = Complex.polar(polarityMult, -w * delaySec);
-      pTweeterFixed.push(pTweeterRawComp.mul(hHP).mul(hLpadCD).mul(hDelay));
+      const hDelayNormal = Complex.polar(1.0, -w * delaySec);
+      const hDelayActual = Complex.polar(polarityMult, -w * delaySec);
+      pTweeterNormal.push(pTweeterRawComp.mul(hHP).mul(hLpadCD).mul(hDelayNormal));
+      pTweeterFixed.push(pTweeterRawComp.mul(hHP).mul(hLpadCD).mul(hDelayActual));
 
       const wfPt = interpolateCurvePoint(f, preparedWooferCurve);
       let pWooferRawSPL, pWooferRawPhaseRad = 0.0;
@@ -750,6 +755,8 @@ export default function App() {
         hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, 2 * xW));
       } else if (wooferOrder === 'secondOrderBW') {
         hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, Math.SQRT2 * xW));
+      } else if (wooferOrder === 'thirdOrderBW') {
+        hLP = new Complex(1, 0).div(new Complex(1 - 2 * xW * xW, 2 * xW - xW * xW * xW));
       } else if (wooferOrder === 'fourthOrderLR') {
         const h2 = new Complex(1, 0).div(new Complex(1 - xW * xW, Math.SQRT2 * xW));
         hLP = h2.mul(h2);
@@ -776,9 +783,13 @@ export default function App() {
       };
     }
 
-    function evalCost(f0, q) {
+    // Optimize woofer APF (f0, q) strictly for acoustic delay & slope alignment,
+    // independent of tweeter wiring polarity (+0° or +180°), so inverting tweeter
+    // polarity never alters the woofer passive network or woofer phase response.
+    function evalCandidatePolarityCost(f0, q, targetPolaritySign) {
       if (f0 < 0.1 * centerFx || f0 > 10.0 * centerFx || q < 0.05 || q > 25.0) return 1e8;
       let sse = 0;
+      const polarityOffsetDeg = targetPolaritySign < 0 ? 180.0 : 0.0;
       for (let i = 0; i < sampleCount; i++) {
         const f = freqs[i];
         const x = f / f0;
@@ -786,7 +797,7 @@ export default function App() {
         const denom = new Complex(1.0 - x * x, x / q);
         const hAP = num.div(denom);
         const pWooferFinal = pWooferBase[i].mul(hAP);
-        let delta = pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg;
+        let delta = pWooferFinal.phaseDeg - (pTweeterNormal[i].phaseDeg + polarityOffsetDeg);
         while (delta > 180.0) delta -= 360.0;
         while (delta < -180.0) delta += 360.0;
         sse += delta * delta;
@@ -801,71 +812,94 @@ export default function App() {
       { f0: centerFx * 0.7, q: qInit },
       { f0: centerFx, q: qInit },
       { f0: centerFx * 1.5, q: qInit },
-      { f0: centerFx * 2.4, q: 0.6 }
+      { f0: centerFx * 2.4, q: 0.6 },
+      { f0: centerFx * 4.5, q: 0.5 }
     ];
 
-    let globalOptimal = { f0: centerFx, q: qInit, cost: evalCost(centerFx, qInit) };
+    let globalOptimal = { f0: centerFx, q: qInit, cost: evalCandidatePolarityCost(centerFx, qInit, 1.0) };
 
-    for (const seed of seedCandidates) {
-      let simplex = [
-        { f0: seed.f0, q: seed.q, cost: evalCost(seed.f0, seed.q) },
-        { f0: seed.f0 * 1.2, q: seed.q, cost: evalCost(seed.f0 * 1.2, seed.q) },
-        { f0: seed.f0, q: seed.q * 1.25, cost: evalCost(seed.f0, seed.q * 1.25) }
-      ];
+    for (const targetSign of [1.0, -1.0]) {
+      for (const seed of seedCandidates) {
+        let simplex = [
+          { f0: seed.f0, q: seed.q, cost: evalCandidatePolarityCost(seed.f0, seed.q, targetSign) },
+          { f0: seed.f0 * 1.2, q: seed.q, cost: evalCandidatePolarityCost(seed.f0 * 1.2, seed.q, targetSign) },
+          { f0: seed.f0, q: seed.q * 1.25, cost: evalCandidatePolarityCost(seed.f0, seed.q * 1.25, targetSign) }
+        ];
 
-      for (let it = 0; it < 120; it++) {
+        for (let it = 0; it < 150; it++) {
+          simplex.sort((a, b) => a.cost - b.cost);
+          if (
+            Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5 &&
+            Math.abs(simplex[2].f0 - simplex[0].f0) / Math.max(simplex[0].f0, 1.0) < 1e-4 &&
+            Math.abs(simplex[2].q - simplex[0].q) / Math.max(simplex[0].q, 0.1) < 1e-4
+          ) {
+            break;
+          }
+          const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
+          const cQ = (simplex[0].q + simplex[1].q) / 2.0;
+
+          const xrF0 = cF0 + (cF0 - simplex[2].f0);
+          const xrQ = cQ + (cQ - simplex[2].q);
+          const xrCost = evalCandidatePolarityCost(xrF0, xrQ, targetSign);
+
+          if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) {
+            simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost };
+            continue;
+          }
+          if (xrCost < simplex[0].cost) {
+            const xeF0 = cF0 + 2.0 * (xrF0 - cF0);
+            const xeQ = cQ + 2.0 * (xrQ - cQ);
+            const xeCost = evalCandidatePolarityCost(xeF0, xeQ, targetSign);
+            simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost };
+            continue;
+          }
+          if (xrCost < simplex[2].cost) {
+            const xcF0 = cF0 + 0.5 * (xrF0 - cF0);
+            const xcQ = cQ + 0.5 * (xrQ - cQ);
+            const xcCost = evalCandidatePolarityCost(xcF0, xcQ, targetSign);
+            if (xcCost < xrCost) {
+              simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
+              continue;
+            }
+          } else {
+            const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0);
+            const xcQ = cQ - 0.5 * (cQ - simplex[2].q);
+            const xcCost = evalCandidatePolarityCost(xcF0, xcQ, targetSign);
+            if (xcCost < simplex[2].cost) {
+              simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
+              continue;
+            }
+          }
+          for (let i = 1; i <= 2; i++) {
+            const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
+            const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
+            simplex[i] = { f0: sf0, q: sq, cost: evalCandidatePolarityCost(sf0, sq, targetSign) };
+          }
+        }
+
         simplex.sort((a, b) => a.cost - b.cost);
-        if (Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5) break;
-        const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
-        const cQ = (simplex[0].q + simplex[1].q) / 2.0;
-
-        const xrF0 = cF0 + (cF0 - simplex[2].f0);
-        const xrQ = cQ + (cQ - simplex[2].q);
-        const xrCost = evalCost(xrF0, xrQ);
-
-        if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) {
-          simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost };
-          continue;
+        if (simplex[0].cost < globalOptimal.cost) {
+          globalOptimal = simplex[0];
         }
-        if (xrCost < simplex[0].cost) {
-          const xeF0 = cF0 + 2.0 * (xrF0 - cF0);
-          const xeQ = cQ + 2.0 * (xrQ - cQ);
-          const xeCost = evalCost(xeF0, xeQ);
-          simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost };
-          continue;
-        }
-        if (xrCost < simplex[2].cost) {
-          const xcF0 = cF0 + 0.5 * (xrF0 - cF0);
-          const xcQ = cQ + 0.5 * (xrQ - cQ);
-          const xcCost = evalCost(xcF0, xcQ);
-          if (xcCost < xrCost) {
-            simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
-            continue;
-          }
-        } else {
-          const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0);
-          const xcQ = cQ - 0.5 * (cQ - simplex[2].q);
-          const xcCost = evalCost(xcF0, xcQ);
-          if (xcCost < simplex[2].cost) {
-            simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost };
-            continue;
-          }
-        }
-        for (let i = 1; i <= 2; i++) {
-          const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
-          const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
-          simplex[i] = { f0: sf0, q: sq, cost: evalCost(sf0, sq) };
-        }
-      }
-
-      simplex.sort((a, b) => a.cost - b.cost);
-      if (simplex[0].cost < globalOptimal.cost) {
-        globalOptimal = simplex[0];
       }
     }
 
     const opt = globalOptimal;
-    const rmsErrorDeg = Math.sqrt(opt.cost / sampleCount);
+    // Evaluate actual in-phase RMS alignment error with the user's selected tweeter polarity
+    let actualSSE = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const f = freqs[i];
+      const x = f / opt.f0;
+      const num = new Complex(1.0 - x * x, -x / opt.q);
+      const denom = new Complex(1.0 - x * x, x / opt.q);
+      const hAP = num.div(denom);
+      const pWooferFinal = pWooferBase[i].mul(hAP);
+      let delta = pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg;
+      while (delta > 180.0) delta -= 360.0;
+      while (delta < -180.0) delta += 360.0;
+      actualSSE += delta * delta;
+    }
+    const rmsErrorDeg = Math.sqrt(actualSSE / sampleCount);
     const alignmentStatus = getPhaseAlignmentStatus(rmsErrorDeg);
     const isGoalAchieved = rmsErrorDeg <= 10.0;
 
@@ -911,6 +945,10 @@ export default function App() {
     } else if (wooferOrder === 'secondOrderBW') {
       comp.L1 = ((Math.SQRT2 * Zw) / wW) * 1000.0;
       comp.C1 = (1.0 / (Math.SQRT2 * wW * Zw)) * 1e6;
+    } else if (wooferOrder === 'thirdOrderBW') {
+      comp.L1 = ((1.5 * Zw) / wW) * 1000.0;
+      comp.C1 = (1.033 / (wW * Zw)) * 1e6;
+      comp.L2 = ((0.5 * Zw) / wW) * 1000.0;
     } else if (wooferOrder === 'fourthOrderLR') {
       comp.L1 = ((1.2 * Zw) / wW) * 1000.0;
       comp.C1 = (0.33 / (wW * Zw)) * 1e6;
@@ -927,6 +965,10 @@ export default function App() {
     } else if (tweeterOrder === 'secondOrderBW') {
       comp.C_HP1 = (1.0 / (Math.SQRT2 * wT * Zt)) * 1e6;
       comp.L_HP1 = ((Math.SQRT2 * Zt) / wT) * 1000.0;
+    } else if (tweeterOrder === 'thirdOrderBW') {
+      comp.C_HP1 = (1.0 / (1.5 * wT * Zt)) * 1e6;
+      comp.L_HP1 = (Zt / (1.033 * wT)) * 1000.0;
+      comp.C_HP2 = (1.0 / (0.5 * wT * Zt)) * 1e6;
     } else if (tweeterOrder === 'fourthOrderLR') {
       comp.C_HP1 = (1.0 / (1.2 * wT * Zt)) * 1e6;
       comp.L_HP1 = (Zt / (0.33 * wT)) * 1000.0;
@@ -985,7 +1027,6 @@ export default function App() {
     const wc = 2.0 * Math.PI * fc;
     const speedOfSound = 343.0; // m/s
     const delaySec = (acousticDelayMM / 1000.0) / speedOfSound;
-    const polarityMult = invertTweeterPolarity ? -1.0 : 1.0;
     const actualWooferFx = enableIndependentFx ? wooferFx : fx;
     const actualTweeterFx = enableIndependentFx ? tweeterFx : fx;
 
@@ -1045,6 +1086,8 @@ export default function App() {
         hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, 2 * xW));
       } else if (wooferOrder === 'secondOrderBW') {
         hLP = new Complex(1, 0).div(new Complex(1 - xW * xW, Math.SQRT2 * xW));
+      } else if (wooferOrder === 'thirdOrderBW') {
+        hLP = new Complex(1, 0).div(new Complex(1 - 2 * xW * xW, 2 * xW - xW * xW * xW));
       } else if (wooferOrder === 'fourthOrderLR') {
         const h2 = new Complex(1, 0).div(new Complex(1 - xW * xW, Math.SQRT2 * xW));
         hLP = h2.mul(h2);
@@ -1083,18 +1126,28 @@ export default function App() {
         hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, 2 * xT));
       } else if (tweeterOrder === 'secondOrderBW') {
         hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
+      } else if (tweeterOrder === 'thirdOrderBW') {
+        hHP = new Complex(0, -xT * xT * xT).div(new Complex(1 - 2 * xT * xT, 2 * xT - xT * xT * xT));
       } else if (tweeterOrder === 'fourthOrderLR') {
         const h2 = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
         hHP = h2.mul(h2);
       }
 
       const hLpadCD = evaluateLPadAndCDHornTransfer(f);
-      const hDelay = Complex.polar(polarityMult, -w * delaySec);
-      const pTweeterFinal = pTweeterRawComp.mul(hHP).mul(hLpadCD).mul(hDelay);
-      const pTweeterDelayComp = pTweeterRawComp.mul(hHP).mul(hLpadCD).scale(polarityMult);
+      const pTweeterBase = pTweeterRawComp.mul(hHP).mul(hLpadCD);
+      const pTweeterPos = pTweeterBase.mul(Complex.polar(1.0, -w * delaySec));
+      const pTweeterNeg = pTweeterBase.mul(Complex.polar(-1.0, -w * delaySec));
+      const pTweeterFinal = invertTweeterPolarity ? pTweeterNeg : pTweeterPos;
+      const pTweeterAlt = invertTweeterPolarity ? pTweeterPos : pTweeterNeg;
+
+      const pTweeterDelayCompPos = pTweeterBase.scale(1.0);
+      const pTweeterDelayCompNeg = pTweeterBase.scale(-1.0);
+      const pTweeterDelayComp = invertTweeterPolarity ? pTweeterDelayCompNeg : pTweeterDelayCompPos;
+      const pTweeterDelayCompAlt = invertTweeterPolarity ? pTweeterDelayCompPos : pTweeterDelayCompNeg;
 
       // 3. Acoustic Summation
       const pTotal = pWooferFinal.add(pTweeterFinal);
+      const pTotalAlt = pWooferFinal.add(pTweeterAlt);
 
       const wooferFinalSPL = 20.0 * Math.log10(Math.max(pWooferFinal.mag, 1e-6));
       const tweeterFinalSPL = 20.0 * Math.log10(Math.max(pTweeterFinal.mag, 1e-6));
@@ -1102,8 +1155,11 @@ export default function App() {
 
       const wooferPhase = pWooferFinal.phaseDeg;
       const tweeterPhase = pTweeterFinal.phaseDeg;
+      const tweeterAltPhase = pTweeterAlt.phaseDeg;
       const tweeterDelayCompPhase = pTweeterDelayComp.phaseDeg;
+      const tweeterDelayCompAltPhase = pTweeterDelayCompAlt.phaseDeg;
       const totalPhase = pTotal.phaseDeg;
+      const totalAltPhase = pTotalAlt.phaseDeg;
       let deltaPhase = Math.abs(wooferPhase - tweeterPhase) % 360;
       if (deltaPhase > 180) deltaPhase = 360 - deltaPhase;
 
@@ -1209,9 +1265,12 @@ export default function App() {
         totalSPL,
         wooferPhase,
         tweeterPhase,
+        tweeterAltPhase,
         totalPhase,
+        totalAltPhase,
         deltaPhase,
         tweeterDelayCompPhase,
+        tweeterDelayCompAltPhase,
         zWooferMag: zWooferVoiceCoil.mag,
         zTweeterMag: zTweeterRaw.mag,
         zTotalMag: zTotal.mag
@@ -1233,7 +1292,11 @@ export default function App() {
     const freqs = points.map(p => p.frequency);
     const wooferUnwrapped = unwrapPhaseArray(points.map(p => p.wooferPhase));
     const tweeterUnwrapped = unwrapPhaseArray(points.map(p => p.tweeterPhase));
+    const tweeterAltUnwrapped = unwrapPhaseArray(points.map(p => p.tweeterAltPhase));
+    const tweeterDelayCompUnwrapped = unwrapPhaseArray(points.map(p => p.tweeterDelayCompPhase));
+    const tweeterDelayCompAltUnwrapped = unwrapPhaseArray(points.map(p => p.tweeterDelayCompAltPhase));
     const totalUnwrapped = unwrapPhaseArray(points.map(p => p.totalPhase));
+    const totalAltUnwrapped = unwrapPhaseArray(points.map(p => p.totalAltPhase));
 
     function computeGDArray(frequencies, unwrappedPhases) {
       const n = frequencies.length;
@@ -1264,7 +1327,11 @@ export default function App() {
     for (let i = 0; i < points.length; i++) {
       points[i].wooferUnwrappedPhase = wooferUnwrapped[i];
       points[i].tweeterUnwrappedPhase = tweeterUnwrapped[i];
+      points[i].tweeterAltUnwrappedPhase = tweeterAltUnwrapped[i];
+      points[i].tweeterDelayCompUnwrappedPhase = tweeterDelayCompUnwrapped[i];
+      points[i].tweeterDelayCompAltUnwrappedPhase = tweeterDelayCompAltUnwrapped[i];
       points[i].totalUnwrappedPhase = totalUnwrapped[i];
+      points[i].totalAltUnwrappedPhase = totalAltUnwrapped[i];
       points[i].wooferGD = wooferGD[i];
       points[i].tweeterGD = tweeterGD[i];
       points[i].totalGD = totalGD[i];
@@ -1388,30 +1455,45 @@ export default function App() {
       const logMin = Math.log10(minF);
       const logMax = Math.log10(maxF);
 
-      // Determine phase range (unwrap vs wrapped)
+      // Determine phase range (unwrap vs wrapped), keeping Y-axis invariant to tweeter polarity toggle
       let minDeg = -180.0;
       let maxDeg = 180.0;
       if (unwrapPhase) {
-        let minVal = 0.0, maxVal = 180.0;
+        let minVal = 0.0, maxVal = 0.0;
         simulationData.forEach(p => {
           if (showWoofer && Number.isFinite(p.wooferUnwrappedPhase)) {
             minVal = Math.min(minVal, p.wooferUnwrappedPhase);
             maxVal = Math.max(maxVal, p.wooferUnwrappedPhase);
           }
           if (showTweeter) {
-            const twP = compensateTweeterDelay ? p.tweeterDelayCompPhase : p.tweeterUnwrappedPhase;
+            const twP = compensateTweeterDelay ? p.tweeterDelayCompUnwrappedPhase : p.tweeterUnwrappedPhase;
+            const twAltP = compensateTweeterDelay ? p.tweeterDelayCompAltUnwrappedPhase : p.tweeterAltUnwrappedPhase;
             if (Number.isFinite(twP)) {
               minVal = Math.min(minVal, twP);
               maxVal = Math.max(maxVal, twP);
             }
+            if (Number.isFinite(twAltP)) {
+              minVal = Math.min(minVal, twAltP);
+              maxVal = Math.max(maxVal, twAltP);
+            }
           }
-          if (showTotalSystem && Number.isFinite(p.totalUnwrappedPhase)) {
-            minVal = Math.min(minVal, p.totalUnwrappedPhase);
-            maxVal = Math.max(maxVal, p.totalUnwrappedPhase);
+          if (showTotalSystem) {
+            if (Number.isFinite(p.totalUnwrappedPhase)) {
+              minVal = Math.min(minVal, p.totalUnwrappedPhase);
+              maxVal = Math.max(maxVal, p.totalUnwrappedPhase);
+            }
+            if (Number.isFinite(p.totalAltUnwrappedPhase)) {
+              minVal = Math.min(minVal, p.totalAltUnwrappedPhase);
+              maxVal = Math.max(maxVal, p.totalAltUnwrappedPhase);
+            }
           }
         });
         minDeg = Math.min(-180, Math.floor((minVal - 15) / 90) * 90);
         maxDeg = Math.max(180, Math.ceil((maxVal + 15) / 90) * 90);
+        if (maxDeg - minDeg > 540) {
+          minDeg = Math.min(-180, Math.floor((minVal - 15) / 180) * 180);
+          maxDeg = Math.max(180, Math.ceil((maxVal + 15) / 180) * 180);
+        }
       }
       const spanDeg = maxDeg - minDeg;
 
@@ -1495,7 +1577,9 @@ export default function App() {
         drawCurve(unwrapPhase ? 'wooferUnwrappedPhase' : 'wooferPhase', '#3b82f6', 2);
       }
       if (showTweeter) {
-        const twKey = compensateTweeterDelay ? 'tweeterDelayCompPhase' : (unwrapPhase ? 'tweeterUnwrappedPhase' : 'tweeterPhase');
+        const twKey = compensateTweeterDelay
+          ? (unwrapPhase ? 'tweeterDelayCompUnwrappedPhase' : 'tweeterDelayCompPhase')
+          : (unwrapPhase ? 'tweeterUnwrappedPhase' : 'tweeterPhase');
         drawCurve(twKey, '#ef4444', 2);
       }
       if (showPhaseDiff) {

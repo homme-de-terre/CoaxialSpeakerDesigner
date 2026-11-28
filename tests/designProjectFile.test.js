@@ -1523,6 +1523,7 @@ test('Crossover Network Dialog - Tweeter Polarity Inversion Reflects in RMS Phas
     const qtc = ts.qts * Math.sqrt(1 + alpha);
     const wc = 2.0 * Math.PI * fc;
 
+    const pTweeterNormal = [];
     const pTweeterFixed = [];
     const pWooferBase = [];
 
@@ -1536,12 +1537,13 @@ test('Crossover Network Dialog - Tweeter Polarity Inversion Reflects in RMS Phas
       let hHP = new Complex(1, 0);
       if (tweeterOrder === 'firstOrder') hHP = new Complex(0, xT).div(new Complex(1, xT));
       else if (tweeterOrder === 'secondOrderLR') hHP = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, 2 * xT));
+      else if (tweeterOrder === 'thirdOrderBW') hHP = new Complex(0, -xT * xT * xT).div(new Complex(1 - 2 * xT * xT, 2 * xT - xT * xT * xT));
       else if (tweeterOrder === 'fourthOrderLR') {
         const h2 = new Complex(-xT * xT, 0).div(new Complex(1 - xT * xT, Math.SQRT2 * xT));
         hHP = h2.mul(h2);
       }
-      const hDelay = Complex.polar(polarityMult, -w * delaySec);
-      pTweeterFixed.push(pTwRaw.mul(hHP).mul(hDelay));
+      pTweeterNormal.push(pTwRaw.mul(hHP).mul(Complex.polar(1.0, -w * delaySec)));
+      pTweeterFixed.push(pTwRaw.mul(hHP).mul(Complex.polar(polarityMult, -w * delaySec)));
 
       const wfPt = interpolateCurvePoint(f, wooferCurve);
       const pWfRaw = wfPt
@@ -1585,14 +1587,15 @@ test('Crossover Network Dialog - Tweeter Polarity Inversion Reflects in RMS Phas
       return { f0: centerFx, q: 0.707, rmsErrorDeg: rms, status: getPhaseAlignmentStatus(rms) };
     }
 
-    function evalCost(f0, q) {
+    function evalCandidateCost(f0, q, targetSign) {
       if (f0 < 0.1 * centerFx || f0 > 10.0 * centerFx || q < 0.05 || q > 25.0) return 1e8;
       let sse = 0;
+      const offsetDeg = targetSign < 0 ? 180.0 : 0.0;
       for (let i = 0; i < sampleCount; i++) {
         const x = freqs[i] / f0;
         const hAP = new Complex(1.0 - x * x, -x / q).div(new Complex(1.0 - x * x, x / q));
         const pWooferFinal = pWooferBase[i].mul(hAP);
-        let delta = pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg;
+        let delta = pWooferFinal.phaseDeg - (pTweeterNormal[i].phaseDeg + offsetDeg);
         while (delta > 180.0) delta -= 360.0;
         while (delta < -180.0) delta += 360.0;
         sse += delta * delta;
@@ -1606,47 +1609,64 @@ test('Crossover Network Dialog - Tweeter Polarity Inversion Reflects in RMS Phas
       { f0: centerFx * 0.7, q: qInit },
       { f0: centerFx, q: qInit },
       { f0: centerFx * 1.5, q: qInit },
-      { f0: centerFx * 2.4, q: 0.6 }
+      { f0: centerFx * 2.4, q: 0.6 },
+      { f0: centerFx * 4.5, q: 0.5 }
     ];
-    let globalOpt = { f0: centerFx, q: qInit, cost: evalCost(centerFx, qInit) };
+    let globalOpt = { f0: centerFx, q: qInit, cost: evalCandidateCost(centerFx, qInit, 1.0) };
 
-    for (const seed of seeds) {
-      let simplex = [
-        { f0: seed.f0, q: seed.q, cost: evalCost(seed.f0, seed.q) },
-        { f0: seed.f0 * 1.2, q: seed.q, cost: evalCost(seed.f0 * 1.2, seed.q) },
-        { f0: seed.f0, q: seed.q * 1.25, cost: evalCost(seed.f0, seed.q * 1.25) }
-      ];
-      for (let it = 0; it < 120; it++) {
+    for (const targetSign of [1.0, -1.0]) {
+      for (const seed of seeds) {
+        let simplex = [
+          { f0: seed.f0, q: seed.q, cost: evalCandidateCost(seed.f0, seed.q, targetSign) },
+          { f0: seed.f0 * 1.2, q: seed.q, cost: evalCandidateCost(seed.f0 * 1.2, seed.q, targetSign) },
+          { f0: seed.f0, q: seed.q * 1.25, cost: evalCandidateCost(seed.f0, seed.q * 1.25, targetSign) }
+        ];
+        for (let it = 0; it < 150; it++) {
+          simplex.sort((a, b) => a.cost - b.cost);
+          if (
+            Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5 &&
+            Math.abs(simplex[2].f0 - simplex[0].f0) / Math.max(simplex[0].f0, 1.0) < 1e-4 &&
+            Math.abs(simplex[2].q - simplex[0].q) / Math.max(simplex[0].q, 0.1) < 1e-4
+          ) break;
+          const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
+          const cQ = (simplex[0].q + simplex[1].q) / 2.0;
+          const xrF0 = cF0 + (cF0 - simplex[2].f0);
+          const xrQ = cQ + (cQ - simplex[2].q);
+          const xrCost = evalCandidateCost(xrF0, xrQ, targetSign);
+          if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) { simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost }; continue; }
+          if (xrCost < simplex[0].cost) {
+            const xeF0 = cF0 + 2.0 * (xrF0 - cF0), xeQ = cQ + 2.0 * (xrQ - cQ), xeCost = evalCandidateCost(xeF0, xeQ, targetSign);
+            simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost }; continue;
+          }
+          if (xrCost < simplex[2].cost) {
+            const xcF0 = cF0 + 0.5 * (xrF0 - cF0), xcQ = cQ + 0.5 * (xrQ - cQ), xcCost = evalCandidateCost(xcF0, xcQ, targetSign);
+            if (xcCost < xrCost) { simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
+          } else {
+            const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0), xcQ = cQ - 0.5 * (cQ - simplex[2].q), xcCost = evalCandidateCost(xcF0, xcQ, targetSign);
+            if (xcCost < simplex[2].cost) { simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
+          }
+          for (let i = 1; i <= 2; i++) {
+            const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
+            const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
+            simplex[i] = { f0: sf0, q: sq, cost: evalCandidateCost(sf0, sq, targetSign) };
+          }
+        }
         simplex.sort((a, b) => a.cost - b.cost);
-        if (Math.abs(simplex[2].cost - simplex[0].cost) < 1e-5) break;
-        const cF0 = (simplex[0].f0 + simplex[1].f0) / 2.0;
-        const cQ = (simplex[0].q + simplex[1].q) / 2.0;
-        const xrF0 = cF0 + (cF0 - simplex[2].f0);
-        const xrQ = cQ + (cQ - simplex[2].q);
-        const xrCost = evalCost(xrF0, xrQ);
-        if (xrCost < simplex[1].cost && xrCost >= simplex[0].cost) { simplex[2] = { f0: xrF0, q: xrQ, cost: xrCost }; continue; }
-        if (xrCost < simplex[0].cost) {
-          const xeF0 = cF0 + 2.0 * (xrF0 - cF0), xeQ = cQ + 2.0 * (xrQ - cQ), xeCost = evalCost(xeF0, xeQ);
-          simplex[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost }; continue;
-        }
-        if (xrCost < simplex[2].cost) {
-          const xcF0 = cF0 + 0.5 * (xrF0 - cF0), xcQ = cQ + 0.5 * (xrQ - cQ), xcCost = evalCost(xcF0, xcQ);
-          if (xcCost < xrCost) { simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
-        } else {
-          const xcF0 = cF0 - 0.5 * (cF0 - simplex[2].f0), xcQ = cQ - 0.5 * (cQ - simplex[2].q), xcCost = evalCost(xcF0, xcQ);
-          if (xcCost < simplex[2].cost) { simplex[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
-        }
-        for (let i = 1; i <= 2; i++) {
-          const sf0 = simplex[0].f0 + 0.5 * (simplex[i].f0 - simplex[0].f0);
-          const sq = simplex[0].q + 0.5 * (simplex[i].q - simplex[0].q);
-          simplex[i] = { f0: sf0, q: sq, cost: evalCost(sf0, sq) };
-        }
+        if (simplex[0].cost < globalOpt.cost) globalOpt = simplex[0];
       }
-      simplex.sort((a, b) => a.cost - b.cost);
-      if (simplex[0].cost < globalOpt.cost) globalOpt = simplex[0];
     }
 
-    const rms = Math.sqrt(globalOpt.cost / sampleCount);
+    let actualSSE = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const x = freqs[i] / globalOpt.f0;
+      const hAP = new Complex(1.0 - x * x, -x / globalOpt.q).div(new Complex(1.0 - x * x, x / globalOpt.q));
+      const pWooferFinal = pWooferBase[i].mul(hAP);
+      let delta = pWooferFinal.phaseDeg - pTweeterFixed[i].phaseDeg;
+      while (delta > 180.0) delta -= 360.0;
+      while (delta < -180.0) delta += 360.0;
+      actualSSE += delta * delta;
+    }
+    const rms = Math.sqrt(actualSSE / sampleCount);
     return { f0: globalOpt.f0, q: globalOpt.q, rmsErrorDeg: rms, status: getPhaseAlignmentStatus(rms) };
   }
 
@@ -1654,10 +1674,12 @@ test('Crossover Network Dialog - Tweeter Polarity Inversion Reflects in RMS Phas
   const defNormal = evaluatePhaseOptimization({ invertTweeterPolarity: false, enableAllpass: true });
   const defInverted = evaluatePhaseOptimization({ invertTweeterPolarity: true, enableAllpass: true });
 
+  assert.equal(defNormal.f0, defInverted.f0, 'Woofer All-Pass F0 must remain strictly identical when tweeter polarity is inverted');
+  assert.equal(defNormal.q, defInverted.q, 'Woofer All-Pass Q must remain strictly identical when tweeter polarity is inverted');
   assert.notEqual(defNormal.rmsErrorDeg, defInverted.rmsErrorDeg, 'Inverting tweeter polarity must change RMS phase error');
-  assert.ok(Math.abs(defNormal.rmsErrorDeg - defInverted.rmsErrorDeg) > 8.0, `Expected > 8° RMS difference, got ${defNormal.rmsErrorDeg.toFixed(2)}° vs ${defInverted.rmsErrorDeg.toFixed(2)}°`);
-  assert.equal(defNormal.status.level, 'yellow', 'Normal polarity on 2nd-order LR at 35mm should be Yellow (~10.5°)');
-  assert.equal(defInverted.status.level, 'green', 'Inverted polarity on 2nd-order LR at 35mm should be Green (~2.1°)');
+  assert.ok(Math.abs(defNormal.rmsErrorDeg - defInverted.rmsErrorDeg) > 150.0, `Expected > 150° RMS difference on 2nd-order LR, got ${defNormal.rmsErrorDeg.toFixed(2)}° vs ${defInverted.rmsErrorDeg.toFixed(2)}°`);
+  assert.equal(defNormal.status.level, 'red', 'Normal polarity on 2nd-order LR at 35mm is ~178° out-of-phase (Red)');
+  assert.equal(defInverted.status.level, 'green', 'Inverted polarity on 2nd-order LR at 35mm achieves Green (~2.1°) without touching woofer phase');
 
   // 2. 4th-order Linkwitz-Riley (naturally 360° = 0° in-phase): normal polarity aligns better than inverted
   const lr4Normal = evaluatePhaseOptimization({ wooferOrder: 'fourthOrderLR', tweeterOrder: 'fourthOrderLR', invertTweeterPolarity: false, enableAllpass: true });
@@ -1815,6 +1837,481 @@ test('Pure Native macOS SwiftUI DMG Package - UDIF HFS+ Mountability, Mach-O ARM
   assert.equal(rawImg.toString('ascii', 512, 514), 'PM', 'Decompressed image must contain Apple Partition Map');
   assert.ok(rawImg.includes(Buffer.from('H+\x00\x04', 'binary')), 'Decompressed image must contain Apple HFS+ v4 volume header');
 });
+
+test('Woofer Phase Invariance Under Tweeter Polarity Inversion - Physics, APF Network, Unwrapped Y-Axis & Canvas Pixel Stability', async () => {
+  const fs = await import('node:fs');
+  const {
+    altec604WooferTS,
+    altec604Tweeter,
+    altec604RecommendedCrossover,
+    altec604WooferCurve,
+    altec604TweeterCurve
+  } = await import('../src/utils/altec604Data.js');
+
+  class Complex {
+    constructor(re, im = 0) { this.re = re; this.im = im; }
+    static polar(r, thetaRad) { return new Complex(r * Math.cos(thetaRad), r * Math.sin(thetaRad)); }
+    add(c) { return c instanceof Complex ? new Complex(this.re + c.re, this.im + c.im) : new Complex(this.re + c, this.im); }
+    mul(c) { return c instanceof Complex ? new Complex(this.re * c.re - this.im * c.im, this.re * c.im + this.im * c.re) : new Complex(this.re * c, this.im * c); }
+    div(c) {
+      if (typeof c === 'number') return new Complex(this.re / c, this.im / c);
+      const d = c.re * c.re + c.im * c.im;
+      return d === 0 ? new Complex(0, 0) : new Complex((this.re * c.re + this.im * c.im) / d, (this.im * c.re - this.re * c.im) / d);
+    }
+    scale(s) { return new Complex(this.re * s, this.im * s); }
+    get mag() { return Math.hypot(this.re, this.im); }
+    get phaseDeg() { return Math.atan2(this.im, this.re) * (180 / Math.PI); }
+  }
+
+  function computeMinimumPhase(points) {
+    if (!points || points.length < 4) return points || [];
+    const n = points.length;
+    const result = points.map(p => ({ ...p }));
+    for (let i = 0; i < n; i++) {
+      const f0 = points[i].frequency;
+      let phaseRad = 0.0;
+      for (let j = 0; j < n - 1; j++) {
+        const f1 = points[j].frequency, f2 = points[j + 1].frequency;
+        const mag1 = points[j].magnitude, mag2 = points[j + 1].magnitude;
+        if (f1 === f2 || f1 <= 0 || f2 <= 0) continue;
+        const dLnA = Math.log(Math.max(Math.pow(10.0, mag2 / 20.0), 1e-6)) - Math.log(Math.max(Math.pow(10.0, mag1 / 20.0), 1e-6));
+        const dLnF = Math.log(f2 / f1);
+        const slope = dLnA / dLnF;
+        const fAvg = Math.sqrt(f1 * f2);
+        const diff = Math.abs(fAvg - f0);
+        if (diff > 1e-4) {
+          const ratio = (fAvg + f0) / diff;
+          if (ratio > 1e-6) {
+            const term = (1.0 / Math.PI) * slope * Math.log(ratio) * dLnF;
+            if (Number.isFinite(term)) phaseRad -= term;
+          }
+        }
+      }
+      let phaseDeg = (phaseRad * (180.0 / Math.PI)) % 360.0;
+      if (phaseDeg > 180.0) phaseDeg -= 360.0;
+      if (phaseDeg < -180.0) phaseDeg += 360.0;
+      result[i].phase = phaseDeg;
+    }
+    return result;
+  }
+
+  function interpolateCurvePoint(freq, curve) {
+    if (!curve || curve.length === 0) return null;
+    if (freq <= curve[0].frequency) return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0.0 };
+    if (freq >= curve[curve.length - 1].frequency) {
+      const last = curve[curve.length - 1];
+      return { magnitude: last.magnitude, phase: last.phase || 0.0 };
+    }
+    for (let j = 0; j < curve.length - 1; j++) {
+      const p1 = curve[j], p2 = curve[j + 1];
+      if (freq >= p1.frequency && freq <= p2.frequency) {
+        const t = (Math.log10(freq) - Math.log10(p1.frequency)) / (Math.log10(p2.frequency) - Math.log10(p1.frequency));
+        let dPh = (p2.phase || 0) - (p1.phase || 0);
+        while (dPh > 180.0) dPh -= 360.0;
+        while (dPh < -180.0) dPh += 360.0;
+        let ph = (p1.phase || 0) + t * dPh;
+        while (ph > 180.0) ph -= 360.0;
+        while (ph < -180.0) ph += 360.0;
+        return { magnitude: p1.magnitude + t * (p2.magnitude - p1.magnitude), phase: ph };
+      }
+    }
+    return { magnitude: curve[0].magnitude, phase: curve[0].phase || 0.0 };
+  }
+
+  function evalLP(order, x) {
+    if (order === 'firstOrder') return new Complex(1, 0).div(new Complex(1, x));
+    if (order === 'secondOrderLR') return new Complex(1, 0).div(new Complex(1 - x * x, 2 * x));
+    if (order === 'secondOrderBW') return new Complex(1, 0).div(new Complex(1 - x * x, Math.SQRT2 * x));
+    if (order === 'thirdOrderBW') return new Complex(1, 0).div(new Complex(1 - 2 * x * x, 2 * x - x * x * x));
+    const h2 = new Complex(1, 0).div(new Complex(1 - x * x, Math.SQRT2 * x));
+    return h2.mul(h2);
+  }
+
+  function evalHP(order, x) {
+    if (order === 'firstOrder') return new Complex(0, x).div(new Complex(1, x));
+    if (order === 'secondOrderLR') return new Complex(-x * x, 0).div(new Complex(1 - x * x, 2 * x));
+    if (order === 'secondOrderBW') return new Complex(-x * x, 0).div(new Complex(1 - x * x, Math.SQRT2 * x));
+    if (order === 'thirdOrderBW') return new Complex(0, -x * x * x).div(new Complex(1 - 2 * x * x, 2 * x - x * x * x));
+    const h2 = new Complex(-x * x, 0).div(new Complex(1 - x * x, Math.SQRT2 * x));
+    return h2.mul(h2);
+  }
+
+  function unwrapPhaseArray(phases) {
+    const unwrapped = [...phases];
+    for (let i = 1; i < unwrapped.length; i++) {
+      let diff = unwrapped[i] - unwrapped[i - 1];
+      while (diff > 180) diff -= 360;
+      while (diff < -180) diff += 360;
+      unwrapped[i] = unwrapped[i - 1] + diff;
+    }
+    return unwrapped;
+  }
+
+  function computeGDArray(frequencies, unwrappedPhases) {
+    const n = frequencies.length;
+    const gd = new Float64Array(n);
+    const scale = -1000.0 / 360.0;
+    for (let i = 0; i < n; i++) {
+      const df = i === 0 ? frequencies[1] - frequencies[0] : (i === n - 1 ? frequencies[n - 1] - frequencies[n - 2] : frequencies[i + 1] - frequencies[i - 1]);
+      const dP = i === 0 ? unwrappedPhases[1] - unwrappedPhases[0] : (i === n - 1 ? unwrappedPhases[n - 1] - unwrappedPhases[n - 2] : unwrappedPhases[i + 1] - unwrappedPhases[i - 1]);
+      gd[i] = scale * (df !== 0 ? dP / df : 0);
+    }
+    return gd;
+  }
+
+  function simulateFullSystem({
+    ts = { fs: 48.0, qts: 0.335, re: 6.2, spl: 89.0 },
+    tweeter = { fs: 1200.0, re: 5.8, spl: 94.0 },
+    wooferCurve = [],
+    tweeterCurve = [],
+    fxW = 2200,
+    fxT = 2200,
+    wooferOrder = 'secondOrderLR',
+    tweeterOrder = 'secondOrderLR',
+    enclosureType = 'sealed',
+    fb = 38.0,
+    lpadAttenDB = 5.0,
+    acousticDelayMM = 35.0,
+    enableAllpass = false,
+    invertTweeterPolarity = false
+  }) {
+    const centerFx = Math.round(Math.sqrt(fxW * fxT));
+    const delaySec = (acousticDelayMM / 1000.0) / 343.0;
+    const polarityMult = invertTweeterPolarity ? -1.0 : 1.0;
+    const ratio = 0.7071 / Math.max(ts.qts, 0.01);
+    const alpha = Math.max(ratio * ratio - 1.0, 0.05);
+    const fc = ts.fs * Math.sqrt(1 + alpha);
+    const qtc = ts.qts * Math.sqrt(1 + alpha);
+    const wc = 2.0 * Math.PI * fc;
+    const lpadGain = Math.pow(10, -lpadAttenDB / 20.0);
+
+    const evalCab = (f, w) => {
+      if (enclosureType === 'vented') {
+        const fn = f / ts.fs, h = fb / ts.fs, ql = 15.0;
+        const c0 = h * h, c1 = (h * h) / ts.qts + h / ql, c2 = 1.0 + h * h + alpha + h / (ts.qts * ql), c3 = 1.0 / ts.qts + h / ql;
+        return new Complex(Math.pow(fn, 4), 0).div(new Complex(Math.pow(fn, 4) - c2 * fn * fn + c0, -c3 * Math.pow(fn, 3) + c1 * fn));
+      }
+      return new Complex(-w * w, 0).div(new Complex(wc * wc - w * w, (w * wc) / qtc));
+    };
+
+    // 1. APF optimization (matching App.jsx & AllpassFilterOptimizer.swift)
+    let apfF0 = centerFx, apfQ = 0.707, rmsErrorDeg = 0;
+    {
+      const fLow = Math.max(20.0, Math.min(fxW, fxT) / 2.0);
+      const fHigh = Math.min(20000.0, Math.max(fxW, fxT) * 2.0);
+      const sampleCount = 31;
+      const optFreqs = Array.from({ length: sampleCount }, (_, i) => Math.exp(Math.log(fLow) + i * (Math.log(fHigh) - Math.log(fLow)) / (sampleCount - 1)));
+      const pTwNormal = [], pTwActual = [], pWfBase = [];
+      for (const f of optFreqs) {
+        const w = 2.0 * Math.PI * f;
+        const twPt = interpolateCurvePoint(f, tweeterCurve);
+        const twSPL = twPt ? twPt.magnitude : (tweeter.spl - (f < 1500 ? 18 * Math.log2(1500 / f) : 0));
+        const twPh = twPt ? twPt.phase * (Math.PI / 180.0) : 0.0;
+        const pTwB = Complex.polar(Math.pow(10, twSPL / 20.0), twPh).mul(evalHP(tweeterOrder, f / fxT)).scale(lpadGain);
+        pTwNormal.push(pTwB.mul(Complex.polar(1.0, -w * delaySec)));
+        pTwActual.push(pTwB.mul(Complex.polar(polarityMult, -w * delaySec)));
+
+        const wfPt = interpolateCurvePoint(f, wooferCurve);
+        const wfSPL = wfPt ? wfPt.magnitude : (ts.spl - (f > 2200 ? 0.003 * (f - 2200) : 0));
+        const wfPh = wfPt ? wfPt.phase * (Math.PI / 180.0) : 0.0;
+        pWfBase.push(Complex.polar(Math.pow(10, wfSPL / 20.0), wfPh).mul(evalCab(f, w)).mul(evalLP(wooferOrder, f / fxW)));
+      }
+
+      if (!enableAllpass || acousticDelayMM <= 0) {
+        let sse = 0;
+        for (let i = 0; i < sampleCount; i++) {
+          let d = pWfBase[i].phaseDeg - pTwActual[i].phaseDeg;
+          while (d > 180) d -= 360; while (d < -180) d += 360;
+          sse += d * d;
+        }
+        rmsErrorDeg = Math.sqrt(sse / sampleCount);
+      } else {
+        const evalCand = (f0, q, sign) => {
+          if (f0 < 0.1 * centerFx || f0 > 10.0 * centerFx || q < 0.05 || q > 25.0) return 1e8;
+          let sse = 0;
+          const off = sign < 0 ? 180.0 : 0.0;
+          for (let i = 0; i < sampleCount; i++) {
+            const x = optFreqs[i] / f0;
+            const hAP = new Complex(1 - x * x, -x / q).div(new Complex(1 - x * x, x / q));
+            let d = pWfBase[i].mul(hAP).phaseDeg - (pTwNormal[i].phaseDeg + off);
+            while (d > 180) d -= 360; while (d < -180) d += 360;
+            sse += d * d;
+          }
+          return sse;
+        };
+        const qInit = Math.max(0.5, Math.min(2.5, 2.0 / (2.0 * Math.PI * centerFx * Math.max(delaySec, 1e-6))));
+        const seeds = [
+          { f0: centerFx * 0.4, q: 0.35 },
+          { f0: centerFx * 0.7, q: qInit },
+          { f0: centerFx, q: qInit },
+          { f0: centerFx * 1.5, q: qInit },
+          { f0: centerFx * 2.4, q: 0.6 },
+          { f0: centerFx * 4.5, q: 0.5 }
+        ];
+        let best = { f0: centerFx, q: qInit, cost: evalCand(centerFx, qInit, 1.0) };
+        for (const sign of [1.0, -1.0]) {
+          for (const seed of seeds) {
+            let s = [
+              { f0: seed.f0, q: seed.q, cost: evalCand(seed.f0, seed.q, sign) },
+              { f0: seed.f0 * 1.2, q: seed.q, cost: evalCand(seed.f0 * 1.2, seed.q, sign) },
+              { f0: seed.f0, q: seed.q * 1.25, cost: evalCand(seed.f0, seed.q * 1.25, sign) }
+            ];
+            for (let it = 0; it < 150; it++) {
+              s.sort((a, b) => a.cost - b.cost);
+              if (Math.abs(s[2].cost - s[0].cost) < 1e-5 && Math.abs(s[2].f0 - s[0].f0) / s[0].f0 < 1e-4 && Math.abs(s[2].q - s[0].q) / s[0].q < 1e-4) break;
+              const cF0 = (s[0].f0 + s[1].f0) / 2, cQ = (s[0].q + s[1].q) / 2;
+              const xrF0 = cF0 + (cF0 - s[2].f0), xrQ = cQ + (cQ - s[2].q), xrCost = evalCand(xrF0, xrQ, sign);
+              if (xrCost < s[1].cost && xrCost >= s[0].cost) { s[2] = { f0: xrF0, q: xrQ, cost: xrCost }; continue; }
+              if (xrCost < s[0].cost) {
+                const xeF0 = cF0 + 2 * (xrF0 - cF0), xeQ = cQ + 2 * (xrQ - cQ), xeCost = evalCand(xeF0, xeQ, sign);
+                s[2] = xeCost < xrCost ? { f0: xeF0, q: xeQ, cost: xeCost } : { f0: xrF0, q: xrQ, cost: xrCost }; continue;
+              }
+              if (xrCost < s[2].cost) {
+                const xcF0 = cF0 + 0.5 * (xrF0 - cF0), xcQ = cQ + 0.5 * (xrQ - cQ), xcCost = evalCand(xcF0, xcQ, sign);
+                if (xcCost < xrCost) { s[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
+              } else {
+                const xcF0 = cF0 - 0.5 * (cF0 - s[2].f0), xcQ = cQ - 0.5 * (cQ - s[2].q), xcCost = evalCand(xcF0, xcQ, sign);
+                if (xcCost < s[2].cost) { s[2] = { f0: xcF0, q: xcQ, cost: xcCost }; continue; }
+              }
+              for (let i = 1; i <= 2; i++) {
+                const sf0 = s[0].f0 + 0.5 * (s[i].f0 - s[0].f0), sq = s[0].q + 0.5 * (s[i].q - s[0].q);
+                s[i] = { f0: sf0, q: sq, cost: evalCand(sf0, sq, sign) };
+              }
+            }
+            s.sort((a, b) => a.cost - b.cost);
+            if (s[0].cost < best.cost) best = s[0];
+          }
+        }
+        apfF0 = best.f0;
+        apfQ = best.q;
+        let actualSSE = 0;
+        for (let i = 0; i < sampleCount; i++) {
+          const x = optFreqs[i] / apfF0;
+          const hAP = new Complex(1 - x * x, -x / apfQ).div(new Complex(1 - x * x, x / apfQ));
+          let d = pWfBase[i].mul(hAP).phaseDeg - pTwActual[i].phaseDeg;
+          while (d > 180) d -= 360; while (d < -180) d += 360;
+          actualSSE += d * d;
+        }
+        rmsErrorDeg = Math.sqrt(actualSSE / sampleCount);
+      }
+    }
+
+    const Zw = Math.max(ts.re, 4.0);
+    const L_AP = (enableAllpass && acousticDelayMM > 0) ? (Zw / (2.0 * Math.PI * apfF0 * apfQ)) * 1000.0 : null;
+    const C_AP = (enableAllpass && acousticDelayMM > 0) ? (1.0 / (2.0 * Math.PI * apfF0 * apfQ * Zw)) * 1e6 : null;
+
+    // 2. 201-point logarithmic simulation
+    const points = [];
+    const steps = 200;
+    for (let i = 0; i <= steps; i++) {
+      const f = Math.pow(10, Math.log10(20.0) + (i / steps) * (Math.log10(20000.0) - Math.log10(20.0)));
+      const w = 2.0 * Math.PI * f;
+      const wfPt = interpolateCurvePoint(f, wooferCurve);
+      const wfSPL = wfPt ? wfPt.magnitude : (ts.spl - (f > 2200 ? 0.003 * (f - 2200) : 0));
+      const wfPh = wfPt ? wfPt.phase * (Math.PI / 180.0) : 0.0;
+      let hAP = new Complex(1, 0);
+      if (enableAllpass && acousticDelayMM > 0) {
+        const xAP = f / apfF0;
+        hAP = new Complex(1.0 - xAP * xAP, -xAP / apfQ).div(new Complex(1.0 - xAP * xAP, xAP / apfQ));
+      }
+      const pWooferFinal = Complex.polar(Math.pow(10, wfSPL / 20.0), wfPh).mul(evalCab(f, w)).mul(evalLP(wooferOrder, f / fxW)).mul(hAP);
+
+      const twPt = interpolateCurvePoint(f, tweeterCurve);
+      const twSPL = twPt ? twPt.magnitude : (tweeter.spl - (f < 1500 ? 18 * Math.log2(1500 / f) : 0));
+      const twPh = twPt ? twPt.phase * (Math.PI / 180.0) : 0.0;
+      const pTwBase = Complex.polar(Math.pow(10, twSPL / 20.0), twPh).mul(evalHP(tweeterOrder, f / fxT)).scale(lpadGain);
+      const pTwPos = pTwBase.mul(Complex.polar(1.0, -w * delaySec));
+      const pTwNeg = pTwBase.mul(Complex.polar(-1.0, -w * delaySec));
+      const pTweeterFinal = invertTweeterPolarity ? pTwNeg : pTwPos;
+      const pTweeterAlt = invertTweeterPolarity ? pTwPos : pTwNeg;
+      const pTwDCPos = pTwBase.scale(1.0);
+      const pTwDCNeg = pTwBase.scale(-1.0);
+      const pTweeterDelayComp = invertTweeterPolarity ? pTwDCNeg : pTwDCPos;
+      const pTweeterDelayCompAlt = invertTweeterPolarity ? pTwDCPos : pTwDCNeg;
+
+      const pTotal = pWooferFinal.add(pTweeterFinal);
+      const pTotalAlt = pWooferFinal.add(pTweeterAlt);
+
+      points.push({
+        frequency: f,
+        wooferFinalSPL: 20 * Math.log10(Math.max(pWooferFinal.mag, 1e-6)),
+        tweeterFinalSPL: 20 * Math.log10(Math.max(pTweeterFinal.mag, 1e-6)),
+        totalSPL: 20 * Math.log10(Math.max(pTotal.mag, 1e-6)),
+        wooferPhase: pWooferFinal.phaseDeg,
+        tweeterPhase: pTweeterFinal.phaseDeg,
+        tweeterAltPhase: pTweeterAlt.phaseDeg,
+        tweeterDelayCompPhase: pTweeterDelayComp.phaseDeg,
+        tweeterDelayCompAltPhase: pTweeterDelayCompAlt.phaseDeg,
+        totalPhase: pTotal.phaseDeg,
+        totalAltPhase: pTotalAlt.phaseDeg
+      });
+    }
+
+    const freqs = points.map(p => p.frequency);
+    const wU = unwrapPhaseArray(points.map(p => p.wooferPhase));
+    const tU = unwrapPhaseArray(points.map(p => p.tweeterPhase));
+    const tAltU = unwrapPhaseArray(points.map(p => p.tweeterAltPhase));
+    const tDCU = unwrapPhaseArray(points.map(p => p.tweeterDelayCompPhase));
+    const tDCAltU = unwrapPhaseArray(points.map(p => p.tweeterDelayCompAltPhase));
+    const totU = unwrapPhaseArray(points.map(p => p.totalPhase));
+    const totAltU = unwrapPhaseArray(points.map(p => p.totalAltPhase));
+    const wGD = computeGDArray(freqs, wU);
+    const tGD = computeGDArray(freqs, tU);
+
+    for (let i = 0; i < points.length; i++) {
+      points[i].wooferUnwrappedPhase = wU[i];
+      points[i].tweeterUnwrappedPhase = tU[i];
+      points[i].tweeterAltUnwrappedPhase = tAltU[i];
+      points[i].tweeterDelayCompUnwrappedPhase = tDCU[i];
+      points[i].tweeterDelayCompAltUnwrappedPhase = tDCAltU[i];
+      points[i].totalUnwrappedPhase = totU[i];
+      points[i].totalAltUnwrappedPhase = totAltU[i];
+      points[i].wooferGD = wGD[i];
+      points[i].tweeterGD = tGD[i];
+    }
+
+    return { points, apfF0, apfQ, L_AP, C_AP, rmsErrorDeg };
+  }
+
+  function determinePhaseRange(points, { unwrapPhase = true, showWoofer = true, showTweeter = true, showTotalSystem = true, compensateTweeterDelay = false } = {}) {
+    if (!unwrapPhase || points.length === 0) return { minDeg: -180.0, maxDeg: 180.0, stepDeg: 45.0 };
+    let minVal = 0.0, maxVal = 0.0;
+    for (const p of points) {
+      if (showWoofer && Number.isFinite(p.wooferUnwrappedPhase)) {
+        minVal = Math.min(minVal, p.wooferUnwrappedPhase);
+        maxVal = Math.max(maxVal, p.wooferUnwrappedPhase);
+      }
+      if (showTweeter) {
+        const twP = compensateTweeterDelay ? p.tweeterDelayCompUnwrappedPhase : p.tweeterUnwrappedPhase;
+        const twAltP = compensateTweeterDelay ? p.tweeterDelayCompAltUnwrappedPhase : p.tweeterAltUnwrappedPhase;
+        minVal = Math.min(minVal, twP, twAltP);
+        maxVal = Math.max(maxVal, twP, twAltP);
+      }
+      if (showTotalSystem) {
+        minVal = Math.min(minVal, p.totalUnwrappedPhase, p.totalAltUnwrappedPhase);
+        maxVal = Math.max(maxVal, p.totalUnwrappedPhase, p.totalAltUnwrappedPhase);
+      }
+    }
+    let minDeg = Math.min(-180, Math.floor((minVal - 15) / 90) * 90);
+    let maxDeg = Math.max(180, Math.ceil((maxVal + 15) / 90) * 90);
+    if (maxDeg - minDeg > 540) {
+      minDeg = Math.min(-180, Math.floor((minVal - 15) / 180) * 180);
+      maxDeg = Math.max(180, Math.ceil((maxVal + 15) / 180) * 180);
+    }
+    const spanDeg = maxDeg - minDeg;
+    const stepDeg = spanDeg > 540 ? 180 : (spanDeg > 360 ? 90 : 45);
+    return { minDeg, maxDeg, stepDeg };
+  }
+
+  const wfAltec = computeMinimumPhase(altec604WooferCurve);
+  const twAltec = computeMinimumPhase(altec604TweeterCurve);
+
+  const testConfigs = [
+    { label: 'Default LR2 APF=OFF Sealed', enableAllpass: false, wooferOrder: 'secondOrderLR', tweeterOrder: 'secondOrderLR', acousticDelayMM: 35 },
+    { label: 'Default LR2 APF=ON Sealed', enableAllpass: true, wooferOrder: 'secondOrderLR', tweeterOrder: 'secondOrderLR', acousticDelayMM: 35 },
+    { label: 'Default LR4 APF=ON Sealed', enableAllpass: true, wooferOrder: 'fourthOrderLR', tweeterOrder: 'fourthOrderLR', acousticDelayMM: 35 },
+    { label: 'Default 1stOrder APF=ON', enableAllpass: true, wooferOrder: 'firstOrder', tweeterOrder: 'firstOrder', acousticDelayMM: 25 },
+    { label: 'Default BW3 APF=ON Vented', enableAllpass: true, wooferOrder: 'thirdOrderBW', tweeterOrder: 'thirdOrderBW', enclosureType: 'vented', acousticDelayMM: 40 },
+    { label: 'Split Fx (1800/2500 Hz) APF=ON', enableAllpass: true, fxW: 1800, fxT: 2500, wooferOrder: 'secondOrderLR', tweeterOrder: 'thirdOrderBW', acousticDelayMM: 35 },
+    { label: 'Zero Delay (0 mm) APF=OFF', enableAllpass: false, wooferOrder: 'secondOrderLR', tweeterOrder: 'secondOrderLR', acousticDelayMM: 0 },
+    {
+      label: 'Altec 604-8K CLIO APF=ON',
+      ts: altec604WooferTS,
+      tweeter: altec604Tweeter,
+      wooferCurve: wfAltec,
+      tweeterCurve: twAltec,
+      fxW: altec604RecommendedCrossover,
+      fxT: altec604RecommendedCrossover,
+      lpadAttenDB: 7.0,
+      enableAllpass: true,
+      acousticDelayMM: 35
+    },
+    {
+      label: 'Altec 604-8K CLIO APF=OFF',
+      ts: altec604WooferTS,
+      tweeter: altec604Tweeter,
+      wooferCurve: wfAltec,
+      tweeterCurve: twAltec,
+      fxW: altec604RecommendedCrossover,
+      fxT: altec604RecommendedCrossover,
+      lpadAttenDB: 7.0,
+      enableAllpass: false,
+      acousticDelayMM: 35
+    }
+  ];
+
+  for (const cfg of testConfigs) {
+    const simNorm = simulateFullSystem({ ...cfg, invertTweeterPolarity: false });
+    const simInv = simulateFullSystem({ ...cfg, invertTweeterPolarity: true });
+
+    // A. Woofer APF network parameters & components MUST NOT change when tweeter polarity flips
+    assert.equal(simNorm.apfF0, simInv.apfF0, `[${cfg.label}] Woofer APF F0 must be strictly invariant to tweeter polarity`);
+    assert.equal(simNorm.apfQ, simInv.apfQ, `[${cfg.label}] Woofer APF Q must be strictly invariant to tweeter polarity`);
+    assert.equal(simNorm.L_AP, simInv.L_AP, `[${cfg.label}] Woofer L_AP must be strictly invariant to tweeter polarity`);
+    assert.equal(simNorm.C_AP, simInv.C_AP, `[${cfg.label}] Woofer C_AP must be strictly invariant to tweeter polarity`);
+
+    // B. Every single woofer point (wrapped phase, unwrapped phase, group delay, SPL) MUST be 100% identical
+    for (let i = 0; i < simNorm.points.length; i++) {
+      const pN = simNorm.points[i];
+      const pI = simInv.points[i];
+      assert.equal(pN.wooferPhase, pI.wooferPhase, `[${cfg.label}] wooferPhase changed at f=${pN.frequency.toFixed(1)}Hz`);
+      assert.equal(pN.wooferUnwrappedPhase, pI.wooferUnwrappedPhase, `[${cfg.label}] wooferUnwrappedPhase changed at f=${pN.frequency.toFixed(1)}Hz`);
+      assert.equal(pN.wooferGD, pI.wooferGD, `[${cfg.label}] wooferGD changed at f=${pN.frequency.toFixed(1)}Hz`);
+      assert.equal(pN.wooferFinalSPL, pI.wooferFinalSPL, `[${cfg.label}] wooferFinalSPL changed at f=${pN.frequency.toFixed(1)}Hz`);
+
+      // C. Tweeter phase MUST shift by exactly 180° (mod 360°), while tweeter SPL and tweeter GD remain invariant
+      let twDiff = Math.abs(pN.tweeterPhase - pI.tweeterPhase) % 360.0;
+      if (twDiff > 180.0) twDiff = 360.0 - twDiff;
+      assert.ok(Math.abs(twDiff - 180.0) < 1e-6, `[${cfg.label}] tweeterPhase must shift by 180° at f=${pN.frequency.toFixed(1)}Hz, got ${twDiff}°`);
+      assert.ok(Math.abs(pN.tweeterFinalSPL - pI.tweeterFinalSPL) < 1e-9, `[${cfg.label}] tweeterFinalSPL must not change`);
+      assert.ok(Math.abs(pN.tweeterGD - pI.tweeterGD) < 1e-6, `[${cfg.label}] tweeterGD must not change under constant 180° polarity shift`);
+    }
+
+    // D. Phase Plot Y-axis bounds & Woofer canvas Y-pixel coordinates MUST be bit-for-bit identical across all UI toggle combinations
+    const viewCombos = [
+      { unwrapPhase: true, compensateTweeterDelay: false, showWoofer: true, showTweeter: true, showTotalSystem: true },
+      { unwrapPhase: true, compensateTweeterDelay: true, showWoofer: true, showTweeter: true, showTotalSystem: true },
+      { unwrapPhase: true, compensateTweeterDelay: false, showWoofer: true, showTweeter: false, showTotalSystem: true },
+      { unwrapPhase: true, compensateTweeterDelay: false, showWoofer: true, showTweeter: true, showTotalSystem: false },
+      { unwrapPhase: false, compensateTweeterDelay: false, showWoofer: true, showTweeter: true, showTotalSystem: true }
+    ];
+
+    for (const vc of viewCombos) {
+      const rangeN = determinePhaseRange(simNorm.points, vc);
+      const rangeI = determinePhaseRange(simInv.points, vc);
+      assert.equal(rangeN.minDeg, rangeI.minDeg, `[${cfg.label}] Phase Y-axis minDeg jumped (${rangeN.minDeg} -> ${rangeI.minDeg}) for ${JSON.stringify(vc)}`);
+      assert.equal(rangeN.maxDeg, rangeI.maxDeg, `[${cfg.label}] Phase Y-axis maxDeg jumped (${rangeN.maxDeg} -> ${rangeI.maxDeg}) for ${JSON.stringify(vc)}`);
+      assert.equal(rangeN.stepDeg, rangeI.stepDeg, `[${cfg.label}] Phase Y-axis stepDeg changed`);
+
+      // Verify 0° reference gridline is always aligned on an exact step multiple
+      assert.equal(Math.abs(rangeN.minDeg) % rangeN.stepDeg, 0, `[${cfg.label}] minDeg (${rangeN.minDeg}) must be an exact multiple of stepDeg (${rangeN.stepDeg}) so 0° gridline is drawn`);
+
+      // Verify exact canvas Y pixel coordinate of woofer curve across all 201 points on a 400px canvas
+      const canvasHeight = 400.0;
+      for (let i = 0; i < simNorm.points.length; i++) {
+        const wDegN = vc.unwrapPhase ? simNorm.points[i].wooferUnwrappedPhase : simNorm.points[i].wooferPhase;
+        const wDegI = vc.unwrapPhase ? simInv.points[i].wooferUnwrappedPhase : simInv.points[i].wooferPhase;
+        const yN = canvasHeight * (1.0 - (Math.max(Math.min(wDegN, rangeN.maxDeg), rangeN.minDeg) - rangeN.minDeg) / (rangeN.maxDeg - rangeN.minDeg));
+        const yI = canvasHeight * (1.0 - (Math.max(Math.min(wDegI, rangeI.maxDeg), rangeI.minDeg) - rangeI.minDeg) / (rangeI.maxDeg - rangeI.minDeg));
+        assert.equal(yN, yI, `[${cfg.label}] Woofer canvas Y pixel shifted at index ${i}`);
+      }
+    }
+  }
+
+  // E. Source-level verification across React (src/App.jsx) and Swift (AllpassFilterOptimizer, SimulationEngine, PhaseBodeChartView)
+  const appJSX = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const optimizerSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Services/AllpassFilterOptimizer.swift', import.meta.url), 'utf8');
+  const simSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Services/SimulationEngine.swift', import.meta.url), 'utf8');
+  const phaseViewSwift = fs.readFileSync(new URL('../CoaxialSpeakerDesigner/Sources/CoaxialSpeakerDesigner/Views/PhaseBodeChartView.swift', import.meta.url), 'utf8');
+
+  assert.ok(appJSX.includes('evalCandidatePolarityCost'), 'App.jsx must decouple woofer APF F0/Q optimization from tweeter polarity');
+  assert.ok(appJSX.includes('tweeterAltUnwrappedPhase'), 'App.jsx must compute polarity-invariant unwrapped bounds for Phase plot Y-axis');
+  assert.ok(appJSX.includes('totalAltUnwrappedPhase'), 'App.jsx must include alternate total unwrapped phase in Y-axis bounds');
+  assert.ok(optimizerSwift.includes('evaluateCandidatePolarityCost'), 'AllpassFilterOptimizer.swift must decouple woofer APF F0/Q optimization from tweeter polarity');
+  assert.ok(simSwift.includes('tweeterAltUnwrappedPhaseDeg'), 'SimulationEngine.swift must compute polarity-invariant unwrapped bounds');
+  assert.ok(phaseViewSwift.includes('public static func determinePhaseRange'), 'PhaseBodeChartView.swift must provide polarity-invariant determinePhaseRange');
+});
+
 
 
 

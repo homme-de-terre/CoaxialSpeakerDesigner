@@ -1,7 +1,5 @@
 import SwiftUI
 
-import SwiftUI
-
 public struct PhaseBodeChartView: View {
     @ObservedObject var viewModel: MainDesignerViewModel
     public var isDetachedWindow: Bool
@@ -117,8 +115,15 @@ public struct PhaseBodeChartView: View {
             let _ = viewModel.simulationPoints.count
 
             Canvas { context, size in
-                let (minDeg, maxDeg) = determinePhaseRange()
-                drawLogGrid(context: context, size: size, minDeg: minDeg, maxDeg: maxDeg)
+                let (minDeg, maxDeg, stepDeg) = Self.determinePhaseRange(
+                    points: viewModel.simulationPoints,
+                    unwrapPhase: viewModel.unwrapPhase,
+                    showWoofer: viewModel.showWoofer,
+                    showTweeter: viewModel.showTweeter,
+                    showTotalSystem: viewModel.showTotalSystem,
+                    compensateTweeterDelay: viewModel.compensateTweeterDelay
+                )
+                drawLogGrid(context: context, size: size, minDeg: minDeg, maxDeg: maxDeg, stepDeg: stepDeg)
                 drawPhaseCurves(context: context, size: size, minDeg: minDeg, maxDeg: maxDeg)
             }
             .id(viewModel.simulationRevision)
@@ -131,34 +136,62 @@ public struct PhaseBodeChartView: View {
         .padding()
     }
 
-    private func determinePhaseRange() -> (minDeg: Double, maxDeg: Double) {
-        guard viewModel.unwrapPhase, !viewModel.simulationPoints.isEmpty else {
-            return (-180.0, 180.0)
+    /// Computes Y-axis phase bounds and grid step, keeping bounds invariant to tweeter polarity toggle
+    /// so inverting tweeter polarity never rescales or visually shifts the woofer phase curve.
+    public static func determinePhaseRange(
+        points: [SimulationPoint],
+        unwrapPhase: Bool,
+        showWoofer: Bool,
+        showTweeter: Bool,
+        showTotalSystem: Bool,
+        compensateTweeterDelay: Bool
+    ) -> (minDeg: Double, maxDeg: Double, stepDeg: Double) {
+        guard unwrapPhase, !points.isEmpty else {
+            return (-180.0, 180.0, 45.0)
         }
         var minVal = 0.0
-        var maxVal = 180.0
+        var maxVal = 0.0
 
-        for p in viewModel.simulationPoints {
-            if viewModel.showWoofer {
+        for p in points {
+            if showWoofer && p.wooferUnwrappedPhaseDeg.isFinite {
                 minVal = min(minVal, p.wooferUnwrappedPhaseDeg)
                 maxVal = max(maxVal, p.wooferUnwrappedPhaseDeg)
             }
-            if viewModel.showTweeter {
-                let twPhase = viewModel.compensateTweeterDelay ? p.tweeterDelayCompensatedPhaseDeg : p.tweeterUnwrappedPhaseDeg
-                minVal = min(minVal, twPhase)
-                maxVal = max(maxVal, twPhase)
+            if showTweeter {
+                let twPhase = compensateTweeterDelay ? p.tweeterDelayCompUnwrappedPhaseDeg : p.tweeterUnwrappedPhaseDeg
+                let twAltPhase = compensateTweeterDelay ? p.tweeterDelayCompAltUnwrappedPhaseDeg : p.tweeterAltUnwrappedPhaseDeg
+                if twPhase.isFinite {
+                    minVal = min(minVal, twPhase)
+                    maxVal = max(maxVal, twPhase)
+                }
+                if twAltPhase.isFinite {
+                    minVal = min(minVal, twAltPhase)
+                    maxVal = max(maxVal, twAltPhase)
+                }
             }
-            if viewModel.showTotalSystem {
-                minVal = min(minVal, p.totalSystemUnwrappedPhaseDeg)
-                maxVal = max(maxVal, p.totalSystemUnwrappedPhaseDeg)
+            if showTotalSystem {
+                if p.totalSystemUnwrappedPhaseDeg.isFinite {
+                    minVal = min(minVal, p.totalSystemUnwrappedPhaseDeg)
+                    maxVal = max(maxVal, p.totalSystemUnwrappedPhaseDeg)
+                }
+                if p.totalSystemAltUnwrappedPhaseDeg.isFinite {
+                    minVal = min(minVal, p.totalSystemAltUnwrappedPhaseDeg)
+                    maxVal = max(maxVal, p.totalSystemAltUnwrappedPhaseDeg)
+                }
             }
         }
-        let snappedMin = floor((minVal - 15.0) / 90.0) * 90.0
-        let snappedMax = ceil((maxVal + 15.0) / 90.0) * 90.0
-        return (min(snappedMin, -180.0), max(snappedMax, 180.0))
+        var minDeg = min(floor((minVal - 15.0) / 90.0) * 90.0, -180.0)
+        var maxDeg = max(ceil((maxVal + 15.0) / 90.0) * 90.0, 180.0)
+        if maxDeg - minDeg > 540.0 {
+            minDeg = min(floor((minVal - 15.0) / 180.0) * 180.0, -180.0)
+            maxDeg = max(ceil((maxVal + 15.0) / 180.0) * 180.0, 180.0)
+        }
+        let span = maxDeg - minDeg
+        let stepDeg: Double = span > 540.0 ? 180.0 : (span > 360.0 ? 90.0 : 45.0)
+        return (minDeg, maxDeg, stepDeg)
     }
 
-    private func drawLogGrid(context: GraphicsContext, size: CGSize, minDeg: Double, maxDeg: Double) {
+    private func drawLogGrid(context: GraphicsContext, size: CGSize, minDeg: Double, maxDeg: Double, stepDeg: Double) {
         let minF = 20.0
         let maxF = 20000.0
         let logMin = log10(minF)
@@ -192,7 +225,6 @@ public struct PhaseBodeChartView: View {
 
         // Horizontal Phase Gridlines
         let span = maxDeg - minDeg
-        let step: Double = span > 540.0 ? 180.0 : (span > 360.0 ? 90.0 : 45.0)
         var deg = minDeg
         while deg <= maxDeg + 0.1 {
             let y = size.height * CGFloat(1.0 - (deg - minDeg) / span)
@@ -205,7 +237,7 @@ public struct PhaseBodeChartView: View {
                 let textY = y <= 2.0 ? y + 8 : y - 8
                 context.draw(Text("\(Int(deg))°").font(.caption2).foregroundColor(.secondary), at: CGPoint(x: 18, y: textY))
             }
-            deg += step
+            deg += stepDeg
         }
     }
 
@@ -268,7 +300,9 @@ public struct PhaseBodeChartView: View {
         if viewModel.showTweeter {
             let tPhases: [Double]
             if viewModel.compensateTweeterDelay {
-                tPhases = points.map { $0.tweeterDelayCompensatedPhaseDeg }
+                tPhases = viewModel.unwrapPhase
+                    ? points.map { $0.tweeterDelayCompUnwrappedPhaseDeg }
+                    : points.map { $0.tweeterDelayCompensatedPhaseDeg }
             } else if viewModel.unwrapPhase {
                 tPhases = points.map { $0.tweeterUnwrappedPhaseDeg }
             } else {

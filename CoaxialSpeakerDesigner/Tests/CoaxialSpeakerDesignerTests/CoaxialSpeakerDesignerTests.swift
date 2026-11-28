@@ -303,6 +303,7 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
             tweeterOrder: .secondOrderLR,
             enableZobelNetwork: true,
             acousticCenterOffsetMM: 30.0,
+            invertTweeterPolarity: true,
             enableAllpassFilter: true
         )
 
@@ -1456,20 +1457,59 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
 
         let rmsNormal = vm.crossover.allpassOptimizationErrorDeg!
         let f0Normal = vm.crossover.allpassOptimizedF0!
+        let qNormal = vm.crossover.allpassOptimizedQ!
         let statusNormal = vm.crossover.allpassAlignmentStatus
+        let pointsNormal = vm.simulationPoints
+        let lapNormal = vm.calculatedComponents.L_AP_mH
+        let capNormal = vm.calculatedComponents.C_AP_uF
 
         // Invert tweeter polarity (+180 deg)
         vm.crossover.invertTweeterPolarity = true
 
         let rmsInverted = vm.crossover.allpassOptimizationErrorDeg!
         let f0Inverted = vm.crossover.allpassOptimizedF0!
+        let qInverted = vm.crossover.allpassOptimizedQ!
         let statusInverted = vm.crossover.allpassAlignmentStatus
+        let pointsInverted = vm.simulationPoints
+        let lapInverted = vm.calculatedComponents.L_AP_mH
+        let capInverted = vm.calculatedComponents.C_AP_uF
+
+        // Woofer APF network and woofer phase response must remain 100% unchanged when tweeter polarity is inverted
+        XCTAssertEqual(f0Normal, f0Inverted, accuracy: 1e-9, "Woofer All-Pass F0 must NOT change when tweeter polarity is inverted")
+        XCTAssertEqual(qNormal, qInverted, accuracy: 1e-9, "Woofer All-Pass Q must NOT change when tweeter polarity is inverted")
+        XCTAssertEqual(lapNormal!, lapInverted!, accuracy: 1e-9, "Woofer L_AP must NOT change when tweeter polarity is inverted")
+        XCTAssertEqual(capNormal!, capInverted!, accuracy: 1e-9, "Woofer C_AP must NOT change when tweeter polarity is inverted")
+        for i in 0..<pointsNormal.count {
+            XCTAssertEqual(pointsNormal[i].wooferPhaseDeg, pointsInverted[i].wooferPhaseDeg, accuracy: 1e-12, "Woofer wrapped phase must be invariant to tweeter polarity")
+            XCTAssertEqual(pointsNormal[i].wooferUnwrappedPhaseDeg, pointsInverted[i].wooferUnwrappedPhaseDeg, accuracy: 1e-12, "Woofer unwrapped phase must be invariant to tweeter polarity")
+            XCTAssertEqual(pointsNormal[i].wooferGroupDelayMs, pointsInverted[i].wooferGroupDelayMs, accuracy: 1e-12, "Woofer group delay must be invariant to tweeter polarity")
+        }
+
+        // Phase chart Y-axis bounds must also remain strictly identical so woofer curve never jumps visually
+        let rangeNormal = PhaseBodeChartView.determinePhaseRange(
+            points: pointsNormal,
+            unwrapPhase: true,
+            showWoofer: true,
+            showTweeter: true,
+            showTotalSystem: true,
+            compensateTweeterDelay: false
+        )
+        let rangeInverted = PhaseBodeChartView.determinePhaseRange(
+            points: pointsInverted,
+            unwrapPhase: true,
+            showWoofer: true,
+            showTweeter: true,
+            showTotalSystem: true,
+            compensateTweeterDelay: false
+        )
+        XCTAssertEqual(rangeNormal.minDeg, rangeInverted.minDeg, accuracy: 1e-9, "Phase chart minDeg must not shift when tweeter polarity is inverted")
+        XCTAssertEqual(rangeNormal.maxDeg, rangeInverted.maxDeg, accuracy: 1e-9, "Phase chart maxDeg must not shift when tweeter polarity is inverted")
+        XCTAssertEqual(rangeNormal.stepDeg, rangeInverted.stepDeg, accuracy: 1e-9)
 
         XCTAssertNotEqual(rmsNormal, rmsInverted, "Inverting tweeter polarity must reflect in the RMS phase error value")
-        XCTAssertGreaterThan(abs(rmsNormal - rmsInverted), 5.0, "Inverting tweeter polarity must produce a significant > 5° change in RMS error")
-        XCTAssertNotEqual(f0Normal, f0Inverted, "All-Pass optimal F0 must update when tweeter polarity is inverted")
-        XCTAssertEqual(statusNormal, .acceptable, "Normal polarity at 35mm 2nd-order LR should be in Yellow tier (~10.5°)")
-        XCTAssertEqual(statusInverted, .optimal, "Inverted polarity at 35mm 2nd-order LR should achieve Green optimal alignment (~2.1°)")
+        XCTAssertGreaterThan(abs(rmsNormal - rmsInverted), 150.0, "2nd-order LR must transition from ~178° out-of-phase to ~2.1° in-phase")
+        XCTAssertEqual(statusNormal, .largeOffset, "Normal polarity at 35mm 2nd-order LR is out of phase (Red tier)")
+        XCTAssertEqual(statusInverted, .optimal, "Inverted polarity at 35mm 2nd-order LR achieves Green optimal alignment (~2.1°)")
 
         // 2. Altec 604-8K Preset with All-Pass Filter enabled (1500 Hz, 35 mm delay)
         vm.loadAltec604Preset()
@@ -1478,25 +1518,43 @@ final class CoaxialSpeakerDesignerTests: XCTestCase {
         vm.crossover.invertTweeterPolarity = false
 
         let altecRmsNormal = vm.crossover.allpassOptimizationErrorDeg!
+        let altecF0Normal = vm.crossover.allpassOptimizedF0!
+        let altecQNormal = vm.crossover.allpassOptimizedQ!
         let altecStatusNormal = vm.crossover.allpassAlignmentStatus
+        let altecPointsNormal = vm.simulationPoints
         XCTAssertEqual(altecStatusNormal, .largeOffset, "Altec 604-8K with normal polarity should indicate Large Phase Offset (> 20°)")
 
         // Follow the warning recommendation: "Try Inverting Tweeter Polarity"
         vm.crossover.invertTweeterPolarity = true
         let altecRmsInverted = vm.crossover.allpassOptimizationErrorDeg!
+        let altecF0Inverted = vm.crossover.allpassOptimizedF0!
+        let altecQInverted = vm.crossover.allpassOptimizedQ!
         let altecStatusInverted = vm.crossover.allpassAlignmentStatus
+        let altecPointsInverted = vm.simulationPoints
 
-        XCTAssertLessThan(altecRmsInverted, altecRmsNormal - 15.0, "Inverting tweeter polarity on Altec 604-8K must substantially reduce RMS phase error")
+        XCTAssertEqual(altecF0Normal, altecF0Inverted, accuracy: 1e-9, "Altec 604-8K woofer APF F0 must not change when tweeter polarity is inverted")
+        XCTAssertEqual(altecQNormal, altecQInverted, accuracy: 1e-9, "Altec 604-8K woofer APF Q must not change when tweeter polarity is inverted")
+        for i in 0..<altecPointsNormal.count {
+            XCTAssertEqual(altecPointsNormal[i].wooferPhaseDeg, altecPointsInverted[i].wooferPhaseDeg, accuracy: 1e-12)
+            XCTAssertEqual(altecPointsNormal[i].wooferUnwrappedPhaseDeg, altecPointsInverted[i].wooferUnwrappedPhaseDeg, accuracy: 1e-12)
+        }
+        XCTAssertLessThan(altecRmsInverted, altecRmsNormal - 20.0, "Inverting tweeter polarity on Altec 604-8K must substantially reduce RMS phase error")
         XCTAssertEqual(altecStatusInverted, .acceptable, "Inverting tweeter polarity on Altec 604-8K must improve status from Red to Yellow (< 20°)")
 
-        // 3. With All-Pass Filter disabled (uncompensated crossover RMS phase error)
+        // 3. With All-Pass Filter disabled (uncompensated crossover RMS phase error & chart range invariance)
         vm.crossover.enableAllpassFilter = false
         vm.crossover.invertTweeterPolarity = false
         let uncompNormal = vm.crossover.allpassOptimizationErrorDeg!
+        let uncompPtsNormal = vm.simulationPoints
 
         vm.crossover.invertTweeterPolarity = true
         let uncompInverted = vm.crossover.allpassOptimizationErrorDeg!
+        let uncompPtsInverted = vm.simulationPoints
 
         XCTAssertNotEqual(uncompNormal, uncompInverted, "Inverting tweeter polarity must also reflect in uncompensated RMS error when APF is disabled")
+        let altecRangeN = PhaseBodeChartView.determinePhaseRange(points: uncompPtsNormal, unwrapPhase: true, showWoofer: true, showTweeter: true, showTotalSystem: true, compensateTweeterDelay: false)
+        let altecRangeI = PhaseBodeChartView.determinePhaseRange(points: uncompPtsInverted, unwrapPhase: true, showWoofer: true, showTweeter: true, showTotalSystem: true, compensateTweeterDelay: false)
+        XCTAssertEqual(altecRangeN.minDeg, altecRangeI.minDeg, accuracy: 1e-9)
+        XCTAssertEqual(altecRangeN.maxDeg, altecRangeI.maxDeg, accuracy: 1e-9)
     }
 }

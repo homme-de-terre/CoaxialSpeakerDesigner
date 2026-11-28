@@ -30,8 +30,12 @@ public struct SimulationPoint: Identifiable, Codable, Sendable {
     // Unwrapped Continuous Phase (Degrees)
     public var wooferUnwrappedPhaseDeg: Double
     public var tweeterUnwrappedPhaseDeg: Double
+    public var tweeterAltUnwrappedPhaseDeg: Double
     public var totalSystemUnwrappedPhaseDeg: Double
+    public var totalSystemAltUnwrappedPhaseDeg: Double
     public var tweeterDelayCompensatedPhaseDeg: Double
+    public var tweeterDelayCompUnwrappedPhaseDeg: Double
+    public var tweeterDelayCompAltUnwrappedPhaseDeg: Double
 
     // Acoustic & Electrical Group Delay (Milliseconds)
     public var wooferGroupDelayMs: Double
@@ -56,8 +60,12 @@ public struct SimulationPoint: Identifiable, Codable, Sendable {
         totalSystemImpedancePhaseDeg: Double,
         wooferUnwrappedPhaseDeg: Double = 0.0,
         tweeterUnwrappedPhaseDeg: Double = 0.0,
+        tweeterAltUnwrappedPhaseDeg: Double = 0.0,
         totalSystemUnwrappedPhaseDeg: Double = 0.0,
+        totalSystemAltUnwrappedPhaseDeg: Double = 0.0,
         tweeterDelayCompensatedPhaseDeg: Double = 0.0,
+        tweeterDelayCompUnwrappedPhaseDeg: Double = 0.0,
+        tweeterDelayCompAltUnwrappedPhaseDeg: Double = 0.0,
         wooferGroupDelayMs: Double = 0.0,
         tweeterGroupDelayMs: Double = 0.0,
         totalSystemGroupDelayMs: Double = 0.0
@@ -79,8 +87,12 @@ public struct SimulationPoint: Identifiable, Codable, Sendable {
         self.totalSystemImpedancePhaseDeg = totalSystemImpedancePhaseDeg
         self.wooferUnwrappedPhaseDeg = wooferUnwrappedPhaseDeg
         self.tweeterUnwrappedPhaseDeg = tweeterUnwrappedPhaseDeg
+        self.tweeterAltUnwrappedPhaseDeg = tweeterAltUnwrappedPhaseDeg
         self.totalSystemUnwrappedPhaseDeg = totalSystemUnwrappedPhaseDeg
+        self.totalSystemAltUnwrappedPhaseDeg = totalSystemAltUnwrappedPhaseDeg
         self.tweeterDelayCompensatedPhaseDeg = tweeterDelayCompensatedPhaseDeg
+        self.tweeterDelayCompUnwrappedPhaseDeg = tweeterDelayCompUnwrappedPhaseDeg
+        self.tweeterDelayCompAltUnwrappedPhaseDeg = tweeterDelayCompAltUnwrappedPhaseDeg
         self.wooferGroupDelayMs = wooferGroupDelayMs
         self.tweeterGroupDelayMs = tweeterGroupDelayMs
         self.totalSystemGroupDelayMs = totalSystemGroupDelayMs

@@ -48,6 +48,13 @@ public enum SimulationEngine {
 
         let wooferAcousticP = driver.hasCustomWooferCurve ? ensurePhase(curve: rawWooferCurve) : rawWooferCurve
         let tweeterAcousticP = driver.hasCustomTweeterCurve ? ensurePhase(curve: rawTweeterCurve) : rawTweeterCurve
+        let delaySeconds = (crossover.acousticCenterOffsetMM / 1000.0) / 343.0
+        var tweeterAltPhases: [Double] = []
+        var tweeterDelayCompAltPhases: [Double] = []
+        var totalAltPhases: [Double] = []
+        tweeterAltPhases.reserveCapacity(stepCount + 1)
+        tweeterDelayCompAltPhases.reserveCapacity(stepCount + 1)
+        totalAltPhases.reserveCapacity(stepCount + 1)
         
         for i in 0...stepCount {
             let logF = logMin + Double(i) * logStep
@@ -66,20 +73,27 @@ public enum SimulationEngine {
             let hAP = crossover.allpassFilterTransferFunction(frequency: f)
             
             // 4. Acoustic Delay & Polarity & L-Pad / CD Horn EQ Transfer Function
-            let hDelay = crossover.tweeterAcousticDelayFactor(frequency: f)
+            let phaseShiftRad = 2.0 * .pi * f * delaySeconds
             let hLpadCD = crossover.tweeterLPadAndCDHornTransferFunction(frequency: f, tweeterRe: driver.tweeter.re)
-            let polarityMultiplier = crossover.invertTweeterPolarity ? -1.0 : 1.0
+            let pTweeterBase = pTweeterRaw * hHP * hLpadCD
+            let pTweeterPos = pTweeterBase * ComplexNumber(r: 1.0, theta: -phaseShiftRad)
+            let pTweeterNeg = pTweeterBase * ComplexNumber(r: -1.0, theta: -phaseShiftRad)
 
             // 5. Compute Woofer Final Acoustic Pressure
             let pWooferCab = pWooferRaw * hCab
             let pWooferFinal = pWooferCab * hLP * hAP
 
             // 6. Compute Tweeter Final Acoustic Pressure (and pure delay-compensated pressure)
-            let pTweeterFinal = pTweeterRaw * hHP * hLpadCD * hDelay
-            let pTweeterDelayComp = pTweeterRaw * hHP * hLpadCD * polarityMultiplier
+            let pTweeterFinal = crossover.invertTweeterPolarity ? pTweeterNeg : pTweeterPos
+            let pTweeterAlt = crossover.invertTweeterPolarity ? pTweeterPos : pTweeterNeg
+            let pTweeterDelayCompPos = pTweeterBase * 1.0
+            let pTweeterDelayCompNeg = pTweeterBase * (-1.0)
+            let pTweeterDelayComp = crossover.invertTweeterPolarity ? pTweeterDelayCompNeg : pTweeterDelayCompPos
+            let pTweeterDelayCompAlt = crossover.invertTweeterPolarity ? pTweeterDelayCompPos : pTweeterDelayCompNeg
 
             // 7. Summed Complex Acoustic Pressure Vector
             let pTotal = pWooferFinal + pTweeterFinal
+            let pTotalAlt = pWooferFinal + pTweeterAlt
 
             // 8. Magnitudes and Phase Angles
             let wooferRawSPL = 20.0 * log10(max(pWooferRaw.magnitude, 1e-6))
@@ -94,6 +108,10 @@ public enum SimulationEngine {
 
             let totalSPL = 20.0 * log10(max(pTotal.magnitude, 1e-6))
             let totalPhaseDeg = pTotal.phaseDegrees
+
+            tweeterAltPhases.append(pTweeterAlt.phaseDegrees)
+            tweeterDelayCompAltPhases.append(pTweeterDelayCompAlt.phaseDegrees)
+            totalAltPhases.append(pTotalAlt.phaseDegrees)
 
             // Inter-driver phase difference delta phi
             var deltaPhase = abs(wooferPhaseDeg - tweeterPhaseDeg).truncatingRemainder(dividingBy: 360.0)
@@ -136,7 +154,11 @@ public enum SimulationEngine {
         let freqs = points.map { $0.frequency }
         let wooferUnwrapped = unwrapPhase(phases: points.map { $0.wooferPhaseDeg })
         let tweeterUnwrapped = unwrapPhase(phases: points.map { $0.tweeterPhaseDeg })
+        let tweeterAltUnwrapped = unwrapPhase(phases: tweeterAltPhases)
+        let tweeterDelayCompUnwrapped = unwrapPhase(phases: points.map { $0.tweeterDelayCompensatedPhaseDeg })
+        let tweeterDelayCompAltUnwrapped = unwrapPhase(phases: tweeterDelayCompAltPhases)
         let totalUnwrapped = unwrapPhase(phases: points.map { $0.totalSystemPhaseDeg })
+        let totalAltUnwrapped = unwrapPhase(phases: totalAltPhases)
 
         let wooferGD = computeGroupDelay(frequencies: freqs, unwrappedPhases: wooferUnwrapped)
         let tweeterGD = computeGroupDelay(frequencies: freqs, unwrappedPhases: tweeterUnwrapped)
@@ -145,7 +167,11 @@ public enum SimulationEngine {
         for i in 0..<points.count {
             points[i].wooferUnwrappedPhaseDeg = wooferUnwrapped[i]
             points[i].tweeterUnwrappedPhaseDeg = tweeterUnwrapped[i]
+            points[i].tweeterAltUnwrappedPhaseDeg = tweeterAltUnwrapped[i]
+            points[i].tweeterDelayCompUnwrappedPhaseDeg = tweeterDelayCompUnwrapped[i]
+            points[i].tweeterDelayCompAltUnwrappedPhaseDeg = tweeterDelayCompAltUnwrapped[i]
             points[i].totalSystemUnwrappedPhaseDeg = totalUnwrapped[i]
+            points[i].totalSystemAltUnwrappedPhaseDeg = totalAltUnwrapped[i]
             points[i].wooferGroupDelayMs = wooferGD[i]
             points[i].tweeterGroupDelayMs = tweeterGD[i]
             points[i].totalSystemGroupDelayMs = totalGD[i]
